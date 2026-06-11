@@ -4,7 +4,8 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 
-const convexUrl = import.meta.env.VITE_CONVEX_URL
+const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
+const convexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
 
 function createMissingConvexConfig() {
   return (
