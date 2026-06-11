@@ -1,0 +1,21 @@
+{
+  "quickActions": {
+    "table": "quickActions",
+    "source": "all-grantee-information-header",
+    "defaultStatus": "new",
+    "fields": {
+      "email": {
+        "label": "Email account",
+        "type": "email",
+        "required": true,
+        "placeholder": "name@example.com"
+      },
+      "question": {
+        "label": "Question",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Type your question or request here..."
+      }
+    }
+  }
+}
