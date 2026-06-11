@@ -4,10 +4,10 @@ import babel from '@rolldown/plugin-babel'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH || '/IBACMI-Scholarship-Office/',
   plugins: [
     react(),
-    babel({ presets: [reactCompilerPreset()] })
-    base: process.env.VITE_BASE_PATH || "/IBACMI-Scholarship-Office",
+    babel({ presets: [reactCompilerPreset()] }),
   ],
   // Disable HMR during development to prevent automatic full-page refreshes
   // which can produce a white flash when the UI reloads. Restart dev server after this change.
