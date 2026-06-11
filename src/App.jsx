@@ -139,6 +139,7 @@ function App() {
     return (
       <ErrorBoundary>
         <Student
+          key={studentSession?.schoolId ?? 'student'}
           studentSession={studentSession}
           onLogout={handleStudentLogout}
           onStudentSessionUpdate={handleStudentSessionUpdate}

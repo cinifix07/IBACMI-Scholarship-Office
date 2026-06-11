@@ -179,14 +179,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     })
   }
 
-  // Convex connection status helper
-  const convexUrl = import.meta.env.VITE_CONVEX_URL || null
-  const convexStatus = useMemo(() => {
-    if (!convexUrl) return 'Convex: no URL'
-    if (allInfoRecords === undefined) return 'Convex: connecting...'
-    return 'Convex: connected'
-  }, [convexUrl, allInfoRecords])
-
   const continueToStudentFromRegistration = useCallback(() => {
     setSignUpSuccess('')
     setRegisteredStudentAccount(null)

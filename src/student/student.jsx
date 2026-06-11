@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import './student.css'
@@ -112,24 +112,6 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const hasSavedFrontId = Boolean(studentRecord?.frontIdStorageId)
   const uploadedIdUrl = studentRecord?.frontIdUrl ?? ''
   const isUploadedIdImage = /\.(png|jpe?g)(?:$|\?)/i.test(uploadedIdUrl)
-
-  useEffect(() => {
-    setFrontIdFile(null)
-    setUploadError('')
-    setUploadSuccess('')
-  }, [studentRecord?._id])
-
-  useEffect(() => {
-    setPhoneNumber(studentSession?.phoneNumber ?? '')
-    setPhoneError('')
-    setPhoneSuccess('')
-  }, [studentSession?.phoneNumber])
-
-  useEffect(() => {
-    setCurrentAddress(studentSession?.currentAddress ?? '')
-    setAddressError('')
-    setAddressSuccess('')
-  }, [studentSession?.currentAddress])
 
   const handleLogout = () => {
     if (typeof onLogout === 'function') {

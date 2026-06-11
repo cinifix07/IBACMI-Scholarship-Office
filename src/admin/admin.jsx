@@ -386,7 +386,7 @@ function Admin({ onLogout }) {
     isSchoolIdDownloadOpen ||
     Boolean(selectedGranteeRecord)
 
-  const granteeRows = allInfoRecords ?? []
+  const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
   const quickActionRows = quickActions ?? []
   const activityLogRows = activityLogs ?? []
   const studentAccountRows = studentAccounts ?? []
@@ -486,6 +486,16 @@ function Admin({ onLogout }) {
   const resetFilters = () => {
     setSearchQuery('')
     setSelectedBatch('')
+    setCurrentGranteePage(1)
+  }
+
+  const handleSearchQueryChange = (event) => {
+    setSearchQuery(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const handleSelectedBatchChange = (event) => {
+    setSelectedBatch(event.target.value)
     setCurrentGranteePage(1)
   }
 
@@ -792,16 +802,6 @@ function Admin({ onLogout }) {
   }
 
   useEffect(() => {
-    setCurrentGranteePage(1)
-  }, [searchQuery, selectedBatch])
-
-  useEffect(() => {
-    if (currentGranteePage > totalGranteePages) {
-      setCurrentGranteePage(totalGranteePages)
-    }
-  }, [currentGranteePage, totalGranteePages])
-
-  useEffect(() => {
     const handleScroll = () => {
       const scrollTop = document.documentElement.scrollTop || document.body.scrollTop
       const scrollable =
@@ -964,11 +964,11 @@ function Admin({ onLogout }) {
                 placeholder="Search by Student ID, award number, status, semester..."
                 type="text"
                 value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
+                onChange={handleSearchQueryChange}
               />
             </div>
 
-            <select value={selectedBatch} onChange={(event) => setSelectedBatch(event.target.value)}>
+            <select value={selectedBatch} onChange={handleSelectedBatchChange}>
               <option value="">All Batches</option>
               {availableBatches.map((batch) => (
                 <option key={batch} value={batch}>
