@@ -7,6 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     babel({ presets: [reactCompilerPreset()] })
+    base: process.env.VITE_BASE_PATH || "/IBACMI-Scholarship-Office",
   ],
   // Disable HMR during development to prevent automatic full-page refreshes
   // which can produce a white flash when the UI reloads. Restart dev server after this change.
