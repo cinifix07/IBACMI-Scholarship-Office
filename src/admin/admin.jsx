@@ -6,6 +6,8 @@ import ibacmiLogo from '../assets/IBACMI.png'
 const granteesPerPage = 5
 const quickActionsPerPage = 5
 const logsPerPage = 5
+const batchExportsPerPage = 5
+const schoolIdDownloadsPerPage = 5
 
 function formatLogDate(timestamp) {
   if (!timestamp) return '—'
@@ -127,6 +129,32 @@ function sanitizeDownloadPart(value, fallback) {
     .replace(/^-+|-+$/g, '')
 
   return sanitizedValue || fallback
+}
+
+function getPaginationItems(currentPage, totalPages) {
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  const items = [1]
+  const startPage = Math.max(2, currentPage - 1)
+  const endPage = Math.min(totalPages - 1, currentPage + 1)
+
+  if (startPage > 2) {
+    items.push('left-ellipsis')
+  }
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    items.push(page)
+  }
+
+  if (endPage < totalPages - 1) {
+    items.push('right-ellipsis')
+  }
+
+  items.push(totalPages)
+
+  return items
 }
 
 function getFileExtension(contentType, url) {
@@ -369,6 +397,8 @@ function Admin({ onLogout }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedBatch, setSelectedBatch] = useState('')
   const [currentLogPage, setCurrentLogPage] = useState(1)
+  const [currentBatchExportPage, setCurrentBatchExportPage] = useState(1)
+  const [currentSchoolIdDownloadPage, setCurrentSchoolIdDownloadPage] = useState(1)
 
   const quickActions = useQuery(api.quickActions.list)
   const activityLogs = useQuery(api.activityLogs.list)
@@ -400,6 +430,26 @@ function Admin({ onLogout }) {
       ),
     ).sort()
   }, [granteeRows])
+
+  const batchExportRows = useMemo(() => {
+    return availableBatches.map((batchId) => {
+      const batchRecords = granteeRows.filter((record) => {
+        return String(record.batchId ?? '').trim() === batchId
+      })
+      const batchStudentIds = new Set(
+        batchRecords.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
+      )
+      const accountCount = studentAccountRows.filter((account) => {
+        return batchStudentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
+      }).length
+
+      return {
+        accountCount,
+        batchId,
+        recordCount: batchRecords.length,
+      }
+    })
+  }, [availableBatches, granteeRows, studentAccountRows])
 
   const filteredGranteeRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -433,6 +483,7 @@ function Admin({ onLogout }) {
   const totalGranteePages = Math.max(1, Math.ceil(filteredGranteeRows.length / granteesPerPage))
   const activeGranteePage = Math.min(currentGranteePage, totalGranteePages)
   const firstGranteeIndex = (activeGranteePage - 1) * granteesPerPage
+  const granteePaginationItems = getPaginationItems(activeGranteePage, totalGranteePages)
 
   const currentGrantees = filteredGranteeRows.slice(
     firstGranteeIndex,
@@ -448,6 +499,19 @@ function Admin({ onLogout }) {
       ),
     ).sort((firstYear, secondYear) => secondYear.localeCompare(firstYear))
   }, [granteesWithSchoolIdFiles])
+
+  const schoolIdDownloadRows = useMemo(() => {
+    return schoolIdFileYears.map((schoolYear) => {
+      const fileCount = granteesWithSchoolIdFiles.filter((grantee) => {
+        return String(grantee.schoolYear ?? '').trim() === schoolYear
+      }).length
+
+      return {
+        fileCount,
+        schoolYear,
+      }
+    })
+  }, [granteesWithSchoolIdFiles, schoolIdFileYears])
 
   const showingStart = filteredGranteeRows.length === 0 ? 0 : firstGranteeIndex + 1
   const showingEnd = firstGranteeIndex + currentGrantees.length
@@ -471,6 +535,38 @@ function Admin({ onLogout }) {
   const logShowingStart = activityLogRows.length === 0 ? 0 : firstLogIndex + 1
   const logShowingEnd = firstLogIndex + currentActivityLogs.length
 
+  const totalBatchExportPages = Math.max(1, Math.ceil(batchExportRows.length / batchExportsPerPage))
+  const activeBatchExportPage = Math.min(currentBatchExportPage, totalBatchExportPages)
+  const firstBatchExportIndex = (activeBatchExportPage - 1) * batchExportsPerPage
+
+  const currentBatchExports = batchExportRows.slice(
+    firstBatchExportIndex,
+    firstBatchExportIndex + batchExportsPerPage,
+  )
+
+  const batchExportShowingStart = batchExportRows.length === 0 ? 0 : firstBatchExportIndex + 1
+  const batchExportShowingEnd = firstBatchExportIndex + currentBatchExports.length
+
+  const totalSchoolIdDownloadPages = Math.max(
+    1,
+    Math.ceil(schoolIdDownloadRows.length / schoolIdDownloadsPerPage),
+  )
+  const activeSchoolIdDownloadPage = Math.min(
+    currentSchoolIdDownloadPage,
+    totalSchoolIdDownloadPages,
+  )
+  const firstSchoolIdDownloadIndex =
+    (activeSchoolIdDownloadPage - 1) * schoolIdDownloadsPerPage
+
+  const currentSchoolIdDownloads = schoolIdDownloadRows.slice(
+    firstSchoolIdDownloadIndex,
+    firstSchoolIdDownloadIndex + schoolIdDownloadsPerPage,
+  )
+
+  const schoolIdDownloadShowingStart =
+    schoolIdDownloadRows.length === 0 ? 0 : firstSchoolIdDownloadIndex + 1
+  const schoolIdDownloadShowingEnd = firstSchoolIdDownloadIndex + currentSchoolIdDownloads.length
+
   const goToGranteePage = (pageNumber) => {
     setCurrentGranteePage(Math.min(Math.max(pageNumber, 1), totalGranteePages))
   }
@@ -481,6 +577,14 @@ function Admin({ onLogout }) {
 
   const goToLogPage = (pageNumber) => {
     setCurrentLogPage(Math.min(Math.max(pageNumber, 1), totalLogPages))
+  }
+
+  const goToBatchExportPage = (pageNumber) => {
+    setCurrentBatchExportPage(Math.min(Math.max(pageNumber, 1), totalBatchExportPages))
+  }
+
+  const goToSchoolIdDownloadPage = (pageNumber) => {
+    setCurrentSchoolIdDownloadPage(Math.min(Math.max(pageNumber, 1), totalSchoolIdDownloadPages))
   }
 
   const resetFilters = () => {
@@ -823,6 +927,7 @@ function Admin({ onLogout }) {
       if (event.key === 'Escape') {
         setIsQuickActionsOpen(false)
         setIsAddRecordOpen(false)
+        setIsBatchExportOpen(false)
         setIsSchoolIdDownloadOpen(false)
         setSelectedUploadFile(null)
         setUploadMessage('')
@@ -897,7 +1002,10 @@ function Admin({ onLogout }) {
               <button
                 className="admin-button admin-button--secondary"
                 disabled={availableBatches.length === 0}
-                onClick={() => setIsBatchExportOpen(true)}
+                onClick={() => {
+                  setCurrentBatchExportPage(1)
+                  setIsBatchExportOpen(true)
+                }}
                 title={
                   availableBatches.length === 0
                     ? 'No batches available to export'
@@ -912,7 +1020,10 @@ function Admin({ onLogout }) {
               <button
                 className="admin-button admin-button--secondary"
                 disabled={granteesWithSchoolIdFiles.length === 0}
-                onClick={() => setIsSchoolIdDownloadOpen(true)}
+                onClick={() => {
+                  setCurrentSchoolIdDownloadPage(1)
+                  setIsSchoolIdDownloadOpen(true)
+                }}
                 title={
                   granteesWithSchoolIdFiles.length === 0
                     ? 'No School ID files available to download'
@@ -1141,11 +1252,20 @@ function Admin({ onLogout }) {
                   <span className="material-symbols-outlined">chevron_left</span>
                 </button>
 
-                {Array.from({ length: totalGranteePages }, (_, index) => {
-                  const pageNumber = index + 1
+                {granteePaginationItems.map((pageItem) => {
+                  if (typeof pageItem === 'string') {
+                    return (
+                      <span className="admin-pagination__ellipsis" key={pageItem}>
+                        ...
+                      </span>
+                    )
+                  }
+
+                  const pageNumber = pageItem
 
                   return (
                     <button
+                      aria-current={activeGranteePage === pageNumber ? 'page' : undefined}
                       className={
                         activeGranteePage === pageNumber ? 'admin-page-button--active' : undefined
                       }
@@ -1338,17 +1458,7 @@ function Admin({ onLogout }) {
             </div>
 
             <div className="admin-school-year-downloads">
-              {availableBatches.map((batchId) => {
-                const batchRecords = granteeRows.filter((record) => {
-                  return String(record.batchId ?? '').trim() === batchId
-                })
-                const batchStudentIds = new Set(
-                  batchRecords.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
-                )
-                const accountCount = studentAccountRows.filter((account) => {
-                  return batchStudentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
-                }).length
-
+              {currentBatchExports.map(({ accountCount, batchId, recordCount }) => {
                 return (
                   <button
                     className="admin-school-year-button"
@@ -1361,11 +1471,56 @@ function Admin({ onLogout }) {
                     <strong>
                       {studentAccounts === undefined
                         ? 'Loading accounts...'
-                        : `${batchRecords.length} records / ${accountCount} accounts`}
+                        : `${recordCount} records / ${accountCount} accounts`}
                     </strong>
                   </button>
                 )
               })}
+            </div>
+
+            <div className="admin-pagination admin-batch-export-pagination">
+              <p>
+                Showing <strong>{batchExportShowingStart}</strong>-<strong>{batchExportShowingEnd}</strong>{' '}
+                of <strong>{batchExportRows.length}</strong> batches
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  disabled={activeBatchExportPage === 1}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage - 1)}
+                  type="button"
+                  aria-label="Previous batch export page"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalBatchExportPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={activeBatchExportPage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeBatchExportPage === pageNumber ? 'admin-page-button--active' : undefined
+                      }
+                      key={pageNumber}
+                      onClick={() => goToBatchExportPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  disabled={activeBatchExportPage === totalBatchExportPages}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage + 1)}
+                  type="button"
+                  aria-label="Next batch export page"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
             </div>
 
             <div className="admin-upload-actions">
@@ -1415,11 +1570,7 @@ function Admin({ onLogout }) {
             </div>
 
             <div className="admin-school-year-downloads">
-              {schoolIdFileYears.map((schoolYear) => {
-                const fileCount = granteesWithSchoolIdFiles.filter((grantee) => {
-                  return String(grantee.schoolYear ?? '').trim() === schoolYear
-                }).length
-
+              {currentSchoolIdDownloads.map(({ fileCount, schoolYear }) => {
                 return (
                   <button
                     className="admin-school-year-button"
@@ -1437,6 +1588,58 @@ function Admin({ onLogout }) {
                   </button>
                 )
               })}
+            </div>
+
+            <div className="admin-pagination admin-school-id-pagination">
+              <p>
+                Showing <strong>{schoolIdDownloadShowingStart}</strong>-
+                <strong>{schoolIdDownloadShowingEnd}</strong> of{' '}
+                <strong>{schoolIdDownloadRows.length}</strong> school years
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous School ID page"
+                  disabled={activeSchoolIdDownloadPage === 1 || isDownloadingSchoolIdFiles}
+                  onClick={() => goToSchoolIdDownloadPage(activeSchoolIdDownloadPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalSchoolIdDownloadPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={activeSchoolIdDownloadPage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeSchoolIdDownloadPage === pageNumber
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={isDownloadingSchoolIdFiles}
+                      key={pageNumber}
+                      onClick={() => goToSchoolIdDownloadPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  aria-label="Next School ID page"
+                  disabled={
+                    activeSchoolIdDownloadPage === totalSchoolIdDownloadPages ||
+                    isDownloadingSchoolIdFiles
+                  }
+                  onClick={() => goToSchoolIdDownloadPage(activeSchoolIdDownloadPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
             </div>
 
             <div className="admin-upload-actions">
@@ -2486,6 +2689,18 @@ const adminStyles = `
   opacity: 0.35;
 }
 
+.admin-pagination__ellipsis {
+  display: inline-flex;
+  width: 32px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .admin-pagination__buttons .admin-page-button--active {
   border-color: var(--admin-primary);
   background: var(--admin-primary);
@@ -2606,6 +2821,12 @@ const adminStyles = `
   display: grid;
   gap: 12px;
   padding: 22px 24px;
+}
+
+.admin-batch-export-pagination,
+.admin-school-id-pagination {
+  border-bottom: 1px solid var(--admin-outline);
+  padding: 14px 24px;
 }
 
 .admin-school-year-button {
