@@ -8,6 +8,19 @@ const quickActionsPerPage = 5
 const logsPerPage = 5
 const batchExportsPerPage = 5
 const schoolIdDownloadsPerPage = 5
+const schoolIdBatchDownloadsPerPage = 5
+const courseApplicantsPerPage = 10
+const applicantYearsPerPage = 5
+
+const unifastPortalCourses = [
+  'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
+  'BACHELOR OF SCIENCE IN ENTREPRENEURSHIP',
+  'BACHELOR OF SCIENCE IN CRIMINOLOGY',
+  'BACHELOR OF ELEMENTARY EDUCATION',
+  'BACHELOR OF EARLY CHILDHOOD EDUCATION',
+  'BACHELOR OF SCIENCE IN HOSPITALITY MANAGEMENT',
+  'BACHELOR OF PUBLIC ADMINISTRATION',
+]
 
 function formatLogDate(timestamp) {
   if (!timestamp) return '—'
@@ -131,6 +144,18 @@ function sanitizeDownloadPart(value, fallback) {
   return sanitizedValue || fallback
 }
 
+function getApplicantCourse(record) {
+  return String(record?.course ?? record?.program ?? record?.degreeProgram ?? '').trim()
+}
+
+function getApplicantApplicationYear(applicant) {
+  const savedYear = String(applicant?.applicationYear ?? '').trim()
+  if (savedYear) return savedYear
+
+  const submittedAt = applicant?.submittedAt
+  return submittedAt ? String(new Date(submittedAt).getFullYear()) : ''
+}
+
 function getPaginationItems(currentPage, totalPages) {
   if (totalPages <= 5) {
     return Array.from({ length: totalPages }, (_, index) => index + 1)
@@ -182,13 +207,13 @@ async function getZipFileFromGrantee(grantee, index) {
   const studentId = sanitizeDownloadPart(grantee.studentId, `student-${index + 1}`)
   const lastName = sanitizeDownloadPart(grantee.lastName, 'no-last-name')
   const firstName = sanitizeDownloadPart(grantee.firstName, 'no-first-name')
-  const middleInitial = sanitizeDownloadPart(grantee.middleInitial, 'no-mi')
-  const selectedYear = sanitizeDownloadPart(grantee.schoolYear, 'school-year')
+  const middleName = sanitizeDownloadPart(grantee.middleInitial, 'no-middle-name')
+  const batchId = sanitizeDownloadPart(grantee.batchId, 'no-batch')
   const extension = getFileExtension(blob.type, grantee.frontIdUrl)
 
   return {
     bytes,
-    name: `school-id-${lastName}-${firstName}-${middleInitial}-${studentId}-${selectedYear}-${index + 1}${extension}`,
+    name: `student-id-${studentId}-${lastName}-${firstName}-${middleName}-batch-${batchId}-${index + 1}${extension}`,
   }
 }
 
@@ -378,10 +403,17 @@ function Admin({ onLogout }) {
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
+  const [isUnifastPortalConfirmOpen, setIsUnifastPortalConfirmOpen] = useState(false)
+  const [isUnifastPortalCoursesOpen, setIsUnifastPortalCoursesOpen] = useState(false)
+  const [isApplicantYearOpen, setIsApplicantYearOpen] = useState(false)
+  const [selectedUnifastCourse, setSelectedUnifastCourse] = useState('')
   const [isAddRecordOpen, setIsAddRecordOpen] = useState(false)
   const [isBatchExportOpen, setIsBatchExportOpen] = useState(false)
+  const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false)
   const [isSchoolIdDownloadOpen, setIsSchoolIdDownloadOpen] = useState(false)
+  const [selectedSchoolIdDownloadYear, setSelectedSchoolIdDownloadYear] = useState('')
   const [isDownloadingSchoolIdFiles, setIsDownloadingSchoolIdFiles] = useState(false)
+  const [selectedDeleteBatch, setSelectedDeleteBatch] = useState(null)
   const [selectedUploadFile, setSelectedUploadFile] = useState(null)
   const [uploadMessage, setUploadMessage] = useState('')
   const [deleteMessage, setDeleteMessage] = useState('')
@@ -399,11 +431,18 @@ function Admin({ onLogout }) {
   const [currentLogPage, setCurrentLogPage] = useState(1)
   const [currentBatchExportPage, setCurrentBatchExportPage] = useState(1)
   const [currentSchoolIdDownloadPage, setCurrentSchoolIdDownloadPage] = useState(1)
+  const [currentSchoolIdBatchDownloadPage, setCurrentSchoolIdBatchDownloadPage] = useState(1)
+  const [courseApplicantSearch, setCourseApplicantSearch] = useState('')
+  const [currentCourseApplicantPage, setCurrentCourseApplicantPage] = useState(1)
+  const [currentApplicantYearPage, setCurrentApplicantYearPage] = useState(1)
 
   const quickActions = useQuery(api.quickActions.list)
   const activityLogs = useQuery(api.activityLogs.list)
   const allInfoRecords = useQuery(api.allinfo.list)
+  const applicants = useQuery(api.applicants.list)
+  const applicantPortal = useQuery(api.applicantPortal.get)
   const studentAccounts = useQuery(api.adminAuth.listStudentAccounts)
+  const setReceivingApplicants = useMutation(api.applicantPortal.setReceivingApplicants)
   const createAllInfoRecords = useMutation(api.allinfo.bulkCreate)
   const updateAllInfoRecord = useMutation(api.allinfo.update)
   const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
@@ -411,15 +450,64 @@ function Admin({ onLogout }) {
   const isAnyModalOpen =
     isLogsOpen ||
     isQuickActionsOpen ||
+    isUnifastPortalConfirmOpen ||
+    isUnifastPortalCoursesOpen ||
+    isApplicantYearOpen ||
+    Boolean(selectedUnifastCourse) ||
     isAddRecordOpen ||
     isBatchExportOpen ||
+    isBatchDeleteOpen ||
+    Boolean(selectedDeleteBatch) ||
     isSchoolIdDownloadOpen ||
+    Boolean(selectedSchoolIdDownloadYear) ||
     Boolean(selectedGranteeRecord)
 
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
   const quickActionRows = quickActions ?? []
   const activityLogRows = activityLogs ?? []
-  const studentAccountRows = studentAccounts ?? []
+  const applicantRows = useMemo(() => applicants ?? [], [applicants])
+  const studentAccountRows = useMemo(() => studentAccounts ?? [], [studentAccounts])
+  const portalApplicationYear = applicantPortal?.applicationYear
+  const activeApplicantYear = String(portalApplicationYear ?? new Date().getFullYear())
+
+  const applicantYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear()
+    const years = new Set([
+      String(currentYear - 1),
+      String(currentYear),
+      String(currentYear + 1),
+      String(currentYear + 2),
+      String(currentYear + 3),
+      String(currentYear + 4),
+      String(currentYear + 5),
+    ])
+
+    if (portalApplicationYear) years.add(String(portalApplicationYear))
+    applicantRows.forEach((applicant) => {
+      const applicationYear = getApplicantApplicationYear(applicant)
+      if (applicationYear) years.add(applicationYear)
+    })
+
+    return Array.from(years).sort()
+  }, [applicantRows, portalApplicationYear])
+
+  const totalApplicantYearPages = Math.max(
+    1,
+    Math.ceil(applicantYearOptions.length / applicantYearsPerPage),
+  )
+  const activeApplicantYearPage = Math.min(currentApplicantYearPage, totalApplicantYearPages)
+  const firstApplicantYearIndex = (activeApplicantYearPage - 1) * applicantYearsPerPage
+  const currentApplicantYearOptions = applicantYearOptions.slice(
+    firstApplicantYearIndex,
+    firstApplicantYearIndex + applicantYearsPerPage,
+  )
+  const applicantYearPaginationItems = getPaginationItems(
+    activeApplicantYearPage,
+    totalApplicantYearPages,
+  )
+  const applicantYearShowingStart =
+    applicantYearOptions.length === 0 ? 0 : firstApplicantYearIndex + 1
+  const applicantYearShowingEnd = firstApplicantYearIndex + currentApplicantYearOptions.length
 
   const availableBatches = useMemo(() => {
     return Array.from(
@@ -450,6 +538,90 @@ function Admin({ onLogout }) {
       }
     })
   }, [availableBatches, granteeRows, studentAccountRows])
+
+  const unifastCourseRows = useMemo(() => {
+    return unifastPortalCourses.map((course) => {
+      const applicantCount = applicantRows.filter((applicant) => {
+        return (
+          getApplicantApplicationYear(applicant) === activeApplicantYear &&
+          getApplicantCourse(applicant).toLowerCase() === course.toLowerCase()
+        )
+      }).length
+
+      return {
+        applicantCount,
+        course,
+      }
+    })
+  }, [activeApplicantYear, applicantRows])
+
+  const selectedCourseApplicants = useMemo(() => {
+    const selectedCourse = selectedUnifastCourse.trim().toLowerCase()
+    if (!selectedCourse) return []
+
+    return applicantRows.filter((applicant) => {
+      return (
+        getApplicantApplicationYear(applicant) === activeApplicantYear &&
+        getApplicantCourse(applicant).toLowerCase() === selectedCourse
+      )
+    })
+  }, [activeApplicantYear, applicantRows, selectedUnifastCourse])
+
+  const filteredCourseApplicants = useMemo(() => {
+    const query = courseApplicantSearch.trim().toLowerCase()
+    if (!query) return selectedCourseApplicants
+
+    return selectedCourseApplicants.filter((applicant) => {
+      const fullName = [
+        applicant.firstName,
+        applicant.middleName,
+        applicant.lastName,
+        applicant.extensionName,
+      ]
+        .filter(Boolean)
+        .join(' ')
+
+      return [
+        applicant.studentId,
+        fullName,
+        applicant.gender,
+        applicant.birthDate,
+        applicant.year,
+        applicant.address,
+        applicant.mobileNumber,
+        applicant.emailAddress,
+        applicant.status,
+        applicant.psaFileName,
+        applicant.schoolIdFileName,
+        formatSubmittedAt(applicant.submittedAt),
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+        .includes(query)
+    })
+  }, [courseApplicantSearch, selectedCourseApplicants])
+
+  const totalCourseApplicantPages = Math.max(
+    1,
+    Math.ceil(filteredCourseApplicants.length / courseApplicantsPerPage),
+  )
+  const activeCourseApplicantPage = Math.min(
+    currentCourseApplicantPage,
+    totalCourseApplicantPages,
+  )
+  const firstCourseApplicantIndex =
+    (activeCourseApplicantPage - 1) * courseApplicantsPerPage
+  const currentCourseApplicants = filteredCourseApplicants.slice(
+    firstCourseApplicantIndex,
+    firstCourseApplicantIndex + courseApplicantsPerPage,
+  )
+  const courseApplicantPaginationItems = getPaginationItems(
+    activeCourseApplicantPage,
+    totalCourseApplicantPages,
+  )
+  const courseApplicantShowingStart =
+    filteredCourseApplicants.length === 0 ? 0 : firstCourseApplicantIndex + 1
+  const courseApplicantShowingEnd = firstCourseApplicantIndex + currentCourseApplicants.length
 
   const filteredGranteeRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -513,6 +685,32 @@ function Admin({ onLogout }) {
     })
   }, [granteesWithSchoolIdFiles, schoolIdFileYears])
 
+  const schoolIdBatchDownloadRows = useMemo(() => {
+    if (!selectedSchoolIdDownloadYear) return []
+
+    const batchMap = new Map()
+
+    granteesWithSchoolIdFiles.forEach((grantee) => {
+      const schoolYear = String(grantee.schoolYear ?? '').trim()
+      if (schoolYear !== selectedSchoolIdDownloadYear) return
+
+      const batchId = String(grantee.batchId ?? '').trim()
+      if (!batchId) return
+
+      const currentBatch = batchMap.get(batchId) ?? {
+        batchId,
+        fileCount: 0,
+      }
+
+      currentBatch.fileCount += 1
+      batchMap.set(batchId, currentBatch)
+    })
+
+    return Array.from(batchMap.values()).sort((firstBatch, secondBatch) => {
+      return firstBatch.batchId.localeCompare(secondBatch.batchId)
+    })
+  }, [granteesWithSchoolIdFiles, selectedSchoolIdDownloadYear])
+
   const showingStart = filteredGranteeRows.length === 0 ? 0 : firstGranteeIndex + 1
   const showingEnd = firstGranteeIndex + currentGrantees.length
 
@@ -567,6 +765,27 @@ function Admin({ onLogout }) {
     schoolIdDownloadRows.length === 0 ? 0 : firstSchoolIdDownloadIndex + 1
   const schoolIdDownloadShowingEnd = firstSchoolIdDownloadIndex + currentSchoolIdDownloads.length
 
+  const totalSchoolIdBatchDownloadPages = Math.max(
+    1,
+    Math.ceil(schoolIdBatchDownloadRows.length / schoolIdBatchDownloadsPerPage),
+  )
+  const activeSchoolIdBatchDownloadPage = Math.min(
+    currentSchoolIdBatchDownloadPage,
+    totalSchoolIdBatchDownloadPages,
+  )
+  const firstSchoolIdBatchDownloadIndex =
+    (activeSchoolIdBatchDownloadPage - 1) * schoolIdBatchDownloadsPerPage
+
+  const currentSchoolIdBatchDownloads = schoolIdBatchDownloadRows.slice(
+    firstSchoolIdBatchDownloadIndex,
+    firstSchoolIdBatchDownloadIndex + schoolIdBatchDownloadsPerPage,
+  )
+
+  const schoolIdBatchDownloadShowingStart =
+    schoolIdBatchDownloadRows.length === 0 ? 0 : firstSchoolIdBatchDownloadIndex + 1
+  const schoolIdBatchDownloadShowingEnd =
+    firstSchoolIdBatchDownloadIndex + currentSchoolIdBatchDownloads.length
+
   const goToGranteePage = (pageNumber) => {
     setCurrentGranteePage(Math.min(Math.max(pageNumber, 1), totalGranteePages))
   }
@@ -587,6 +806,50 @@ function Admin({ onLogout }) {
     setCurrentSchoolIdDownloadPage(Math.min(Math.max(pageNumber, 1), totalSchoolIdDownloadPages))
   }
 
+  const goToSchoolIdBatchDownloadPage = (pageNumber) => {
+    setCurrentSchoolIdBatchDownloadPage(
+      Math.min(Math.max(pageNumber, 1), totalSchoolIdBatchDownloadPages),
+    )
+  }
+
+  const goToCourseApplicantPage = (pageNumber) => {
+    setCurrentCourseApplicantPage(Math.min(Math.max(pageNumber, 1), totalCourseApplicantPages))
+  }
+
+  const goToApplicantYearPage = (pageNumber) => {
+    setCurrentApplicantYearPage(Math.min(Math.max(pageNumber, 1), totalApplicantYearPages))
+  }
+
+  const openCourseApplicantModal = (course) => {
+    setSelectedUnifastCourse(course)
+    setCourseApplicantSearch('')
+    setCurrentCourseApplicantPage(1)
+  }
+
+  const closeCourseApplicantModal = () => {
+    setSelectedUnifastCourse('')
+    setCourseApplicantSearch('')
+    setCurrentCourseApplicantPage(1)
+  }
+
+  const handleCourseApplicantSearchChange = (event) => {
+    setCourseApplicantSearch(event.target.value)
+    setCurrentCourseApplicantPage(1)
+  }
+
+  const openSchoolIdBatchDownloadModal = (schoolYear) => {
+    setSelectedSchoolIdDownloadYear(schoolYear)
+    setCurrentSchoolIdBatchDownloadPage(1)
+  }
+
+  const closeSchoolIdDownloadModal = () => {
+    if (isDownloadingSchoolIdFiles) return
+
+    setIsSchoolIdDownloadOpen(false)
+    setSelectedSchoolIdDownloadYear('')
+    setCurrentSchoolIdBatchDownloadPage(1)
+  }
+
   const resetFilters = () => {
     setSearchQuery('')
     setSelectedBatch('')
@@ -603,9 +866,14 @@ function Admin({ onLogout }) {
     setCurrentGranteePage(1)
   }
 
-  const downloadSchoolIdFiles = async (schoolYear) => {
+  const downloadSchoolIdFiles = async (schoolYear, batchId) => {
+    const selectedYear = String(schoolYear ?? '').trim()
+    const selectedBatchId = String(batchId ?? '').trim()
     const matchingFiles = granteesWithSchoolIdFiles.filter((grantee) => {
-      return String(grantee.schoolYear ?? '').trim() === schoolYear
+      return (
+        String(grantee.schoolYear ?? '').trim() === selectedYear &&
+        String(grantee.batchId ?? '').trim() === selectedBatchId
+      )
     })
 
     if (matchingFiles.length === 0) return
@@ -625,16 +893,17 @@ function Admin({ onLogout }) {
       }
 
       if (zipFiles.length === 0) {
-        throw new Error('No School ID files could be downloaded for this School Year.')
+        throw new Error('No School ID files could be downloaded for this batch.')
       }
 
       const zipBlob = createStoredZipBlob(zipFiles)
       const zipUrl = URL.createObjectURL(zipBlob)
       const link = document.createElement('a')
-      const selectedYear = sanitizeDownloadPart(schoolYear, 'school-year')
+      const safeYear = sanitizeDownloadPart(selectedYear, 'school-year')
+      const safeBatch = sanitizeDownloadPart(selectedBatchId, 'batch')
 
       link.href = zipUrl
-      link.download = `school-id-files-${selectedYear}.zip`
+      link.download = `school-id-files-${safeYear}-batch-${safeBatch}.zip`
       link.rel = 'noreferrer'
       document.body.appendChild(link)
       link.click()
@@ -642,6 +911,8 @@ function Admin({ onLogout }) {
       URL.revokeObjectURL(zipUrl)
 
       setIsSchoolIdDownloadOpen(false)
+      setSelectedSchoolIdDownloadYear('')
+      setCurrentSchoolIdBatchDownloadPage(1)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Unable to download School ID files.')
     } finally {
@@ -710,6 +981,124 @@ function Admin({ onLogout }) {
     const safeBatch = sanitizeDownloadPart(selectedBatch, 'batch')
     downloadCsvFile(`batch-info-${safeBatch}.csv`, csvRows)
     setIsBatchExportOpen(false)
+  }
+
+  const exportUnifastCourseCsv = (course) => {
+    if (applicants === undefined) {
+      window.alert('Please wait while applicant information is loading.')
+      return
+    }
+
+    const selectedCourse = String(course ?? '').trim()
+    const courseRecords = applicantRows.filter((applicant) => {
+      return (
+        getApplicantApplicationYear(applicant) === activeApplicantYear &&
+        getApplicantCourse(applicant).toLowerCase() === selectedCourse.toLowerCase()
+      )
+    })
+
+    const csvRows = [
+      [
+        'Application Year',
+        'Course',
+        'Student ID',
+        'Last Name',
+        'First Name',
+        'Ext Name',
+        'Middle Name',
+        'Gender',
+        'Birth Date',
+        'Year',
+        'Father Last Name',
+        'Father First Name',
+        'Father Middle Name',
+        'Mother Last Name',
+        'Mother First Name',
+        'Mother Middle Name',
+        'Address',
+        'Zip Code',
+        'PWD ID',
+        'Mobile No.',
+        'Email Address',
+        'Status',
+        'Submitted At',
+      ],
+      ...courseRecords.map((applicant) => [
+        getApplicantApplicationYear(applicant),
+        getApplicantCourse(applicant) || selectedCourse,
+        applicant.studentId ?? '',
+        applicant.lastName ?? '',
+        applicant.firstName ?? '',
+        applicant.extensionName ?? '',
+        applicant.middleName ?? '',
+        applicant.gender ?? '',
+        applicant.birthDate ?? '',
+        applicant.year ?? '',
+        applicant.fatherLastName ?? '',
+        applicant.fatherFirstName ?? '',
+        applicant.fatherMiddleName ?? '',
+        applicant.motherLastName ?? '',
+        applicant.motherFirstName ?? '',
+        applicant.motherMiddleName ?? '',
+        applicant.address ?? '',
+        applicant.zipCode ?? '',
+        applicant.pwdId ?? '',
+        applicant.mobileNumber ?? '',
+        applicant.emailAddress ?? '',
+        applicant.status ?? '',
+        formatSubmittedAt(applicant.submittedAt),
+      ]),
+    ]
+
+    const safeCourse = sanitizeDownloadPart(selectedCourse, 'course')
+    const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
+    downloadCsvFile(`unifast-applicants-${safeYear}-${safeCourse}.csv`, csvRows)
+  }
+
+  const updateApplicantPortalStatus = async (isReceivingApplicants, applicationYear) => {
+    try {
+      const result = await setReceivingApplicants({
+        isReceivingApplicants,
+        ...(applicationYear ? { applicationYear } : {}),
+      })
+
+      if (!result.success) {
+        window.alert(result.message || 'Unable to update applicant portal status.')
+      }
+    } catch (error) {
+      window.alert(
+        error instanceof Error ? error.message : 'Unable to update applicant portal status.',
+      )
+    }
+  }
+
+  const receiveApplicantsForYear = async (applicationYear) => {
+    await updateApplicantPortalStatus(true, applicationYear)
+    setIsApplicantYearOpen(false)
+    setCurrentApplicantYearPage(1)
+  }
+
+  const closeUnifastPortalModals = () => {
+    setIsUnifastPortalConfirmOpen(false)
+    setIsUnifastPortalCoursesOpen(false)
+    setIsApplicantYearOpen(false)
+    setCurrentApplicantYearPage(1)
+    setSelectedUnifastCourse('')
+    setCourseApplicantSearch('')
+    setCurrentCourseApplicantPage(1)
+  }
+
+  const openBatchDeleteModal = () => {
+    setCurrentBatchExportPage(1)
+    setDeleteMessage('')
+    setIsBatchDeleteOpen(true)
+  }
+
+  const closeBatchDeleteModal = () => {
+    if (isDeletingRecords) return
+
+    setIsBatchDeleteOpen(false)
+    setSelectedDeleteBatch(null)
   }
 
   const openQuickActions = () => {
@@ -857,6 +1246,46 @@ function Admin({ onLogout }) {
     }
   }
 
+  const handleDeleteBatch = async () => {
+    if (!selectedDeleteBatch) return
+
+    const batchId = selectedDeleteBatch.batchId
+    const batchRecordIds = granteeRows
+      .filter((record) => String(record.batchId ?? '').trim() === batchId)
+      .map((record) => record._id)
+
+    if (batchRecordIds.length === 0) {
+      setDeleteMessage('No records found for this batch.')
+      setSelectedDeleteBatch(null)
+      return
+    }
+
+    setIsDeletingRecords(true)
+    setDeleteMessage(`Deleting batch ${batchId}...`)
+
+    try {
+      const result = await deleteAllInfoRecords({
+        ids: batchRecordIds,
+      })
+
+      setSelectedGranteeIds((currentIds) => {
+        return currentIds.filter((id) => !batchRecordIds.includes(id))
+      })
+      setDeleteMessage(
+        `${result?.deleted ?? batchRecordIds.length} record${
+          (result?.deleted ?? batchRecordIds.length) === 1 ? '' : 's'
+        } deleted from batch ${batchId}.`,
+      )
+      setSelectedDeleteBatch(null)
+      setIsBatchDeleteOpen(false)
+      setCurrentGranteePage(1)
+    } catch (error) {
+      setDeleteMessage(error instanceof Error ? error.message : 'Unable to delete batch records.')
+    } finally {
+      setIsDeletingRecords(false)
+    }
+  }
+
   const handleUploadFileChange = (event) => {
     const file = event.target.files?.[0] ?? null
 
@@ -925,10 +1354,22 @@ function Admin({ onLogout }) {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        setIsLogsOpen(false)
         setIsQuickActionsOpen(false)
+        setIsUnifastPortalConfirmOpen(false)
+        setIsUnifastPortalCoursesOpen(false)
+        setIsApplicantYearOpen(false)
+        setCurrentApplicantYearPage(1)
+        setSelectedUnifastCourse('')
+        setCourseApplicantSearch('')
+        setCurrentCourseApplicantPage(1)
         setIsAddRecordOpen(false)
         setIsBatchExportOpen(false)
+        setIsBatchDeleteOpen(false)
+        setSelectedDeleteBatch(null)
         setIsSchoolIdDownloadOpen(false)
+        setSelectedSchoolIdDownloadYear('')
+        setCurrentSchoolIdBatchDownloadPage(1)
         setSelectedUploadFile(null)
         setUploadMessage('')
         setIsUploadingRecords(false)
@@ -972,6 +1413,15 @@ function Admin({ onLogout }) {
           >
             <span className="material-symbols-outlined">history</span>
             Logs
+          </button>
+
+          <button
+            className="admin-button admin-button--ghost"
+            onClick={() => setIsUnifastPortalConfirmOpen(true)}
+            type="button"
+          >
+            <span className="material-symbols-outlined">folder_open</span>
+            UNIFAST PORTAL
           </button>
 
           <button className="admin-button admin-button--ghost" onClick={openQuickActions} type="button">
@@ -1042,6 +1492,21 @@ function Admin({ onLogout }) {
               >
                 <span className="material-symbols-outlined">add</span>
                 Add New Record
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={availableBatches.length === 0}
+                onClick={openBatchDeleteModal}
+                title={
+                  availableBatches.length === 0
+                    ? 'No batches available to delete'
+                    : 'Choose a batch to delete'
+                }
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete</span>
+                Delete Batch
               </button>
             </div>
           </section>
@@ -1536,6 +2001,719 @@ function Admin({ onLogout }) {
         </div>
       )}
 
+      {isBatchDeleteOpen && (
+        <div
+          aria-labelledby="admin-batch-delete-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close batch delete modal"
+            className="admin-modal-backdrop"
+            onClick={closeBatchDeleteModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Delete Batch</p>
+                <h2 id="admin-batch-delete-title">Choose Batch</h2>
+                <p>Select a batch to delete all information records under that batch.</p>
+              </div>
+
+              <button
+                aria-label="Close batch delete"
+                className="admin-modal-close"
+                disabled={isDeletingRecords}
+                onClick={closeBatchDeleteModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {currentBatchExports.map(({ batchId, recordCount }) => (
+                <button
+                  className="admin-school-year-button admin-school-year-button--danger"
+                  disabled={isDeletingRecords}
+                  key={batchId}
+                  onClick={() => setSelectedDeleteBatch({ batchId, recordCount })}
+                  type="button"
+                >
+                  <span>{batchId}</span>
+                  <strong>{recordCount} {recordCount === 1 ? 'record' : 'records'}</strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="admin-pagination admin-batch-export-pagination">
+              <p>
+                Showing <strong>{batchExportShowingStart}</strong>-<strong>{batchExportShowingEnd}</strong>{' '}
+                of <strong>{batchExportRows.length}</strong> batches
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous batch delete page"
+                  disabled={activeBatchExportPage === 1 || isDeletingRecords}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalBatchExportPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={activeBatchExportPage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeBatchExportPage === pageNumber ? 'admin-page-button--active' : undefined
+                      }
+                      disabled={isDeletingRecords}
+                      key={pageNumber}
+                      onClick={() => goToBatchExportPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  aria-label="Next batch delete page"
+                  disabled={activeBatchExportPage === totalBatchExportPages || isDeletingRecords}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingRecords}
+                onClick={closeBatchDeleteModal}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedDeleteBatch && (
+        <div
+          aria-labelledby="admin-batch-delete-confirm-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close batch delete confirmation"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDeletingRecords) setSelectedDeleteBatch(null)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact admin-modal-card--applicant-years">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Confirm Delete</p>
+                <h2 id="admin-batch-delete-confirm-title">Delete this batch information?</h2>
+                <p>Are you sure you want to delete this batch information?</p>
+              </div>
+
+              <button
+                aria-label="Close batch delete confirmation"
+                className="admin-modal-close"
+                disabled={isDeletingRecords}
+                onClick={() => setSelectedDeleteBatch(null)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-confirm-body">
+              <strong>{selectedDeleteBatch.batchId}</strong>
+              <p>
+                This will permanently delete {selectedDeleteBatch.recordCount}{' '}
+                {selectedDeleteBatch.recordCount === 1 ? 'record' : 'records'} from this batch.
+              </p>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingRecords}
+                onClick={() => setSelectedDeleteBatch(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isDeletingRecords}
+                onClick={handleDeleteBatch}
+                type="button"
+              >
+                {isDeletingRecords ? 'Deleting...' : 'Delete Batch'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isUnifastPortalConfirmOpen && (
+        <div
+          aria-labelledby="admin-unifast-open-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close UNIFAST portal confirmation"
+            className="admin-modal-backdrop"
+            onClick={closeUnifastPortalModals}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">UNIFAST Portal</p>
+                <h2 id="admin-unifast-open-title">Open the portal?</h2>
+                <p>Do you want to open the portal for receiving applicants information?</p>
+              </div>
+
+              <button
+                aria-label="Close UNIFAST portal confirmation"
+                className="admin-modal-close"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-confirm-body">
+              <p>Select Yes to view applicants by course and prepare a course download.</p>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                No
+              </button>
+
+              <button
+                className="admin-button admin-button--primary"
+                onClick={() => {
+                  setIsUnifastPortalConfirmOpen(false)
+                  setIsUnifastPortalCoursesOpen(true)
+                }}
+                type="button"
+              >
+                Yes
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isUnifastPortalCoursesOpen && (
+        <div
+          aria-labelledby="admin-unifast-courses-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close UNIFAST portal courses"
+            className="admin-modal-backdrop"
+            onClick={closeUnifastPortalModals}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Receiving Applicants Information</p>
+                <h2 id="admin-unifast-courses-title">Choose Course</h2>
+                <p>
+                  Select a specific course to download applicant information for {activeApplicantYear}.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close UNIFAST portal courses"
+                className="admin-modal-close"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-applicant-portal-controls">
+              <div>
+                <span>Landing Portal Status</span>
+                <strong>
+                  {applicantPortal?.isReceivingApplicants
+                    ? `Receiving ${activeApplicantYear} applicants`
+                    : 'Closed for applicants'}
+                </strong>
+              </div>
+
+              <div className="admin-applicant-portal-actions">
+                <button
+                  className="admin-button admin-button--primary"
+                  disabled={applicantPortal === undefined || applicantPortal?.isReceivingApplicants}
+                  onClick={() => {
+                    setCurrentApplicantYearPage(1)
+                    setIsApplicantYearOpen(true)
+                  }}
+                  type="button"
+                >
+                  Receive Applicants
+                </button>
+
+                <button
+                  className="admin-button admin-button--secondary"
+                  disabled={applicantPortal === undefined || !applicantPortal?.isReceivingApplicants}
+                  onClick={() => updateApplicantPortalStatus(false)}
+                  type="button"
+                >
+                  Close Applicants
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-school-year-downloads admin-course-downloads">
+              {unifastCourseRows.map(({ applicantCount, course }) => (
+                <button
+                  className="admin-school-year-button"
+                  disabled={applicants === undefined}
+                  key={course}
+                  onClick={() => openCourseApplicantModal(course)}
+                  type="button"
+                >
+                  <span>{course}</span>
+                  <strong>
+                    {applicants === undefined
+                      ? 'Loading...'
+                      : `${applicantCount} ${applicantCount === 1 ? 'applicant' : 'applicants'}`}
+                  </strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isApplicantYearOpen && (
+        <div
+          aria-labelledby="admin-applicant-year-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant year selection"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              setIsApplicantYearOpen(false)
+              setCurrentApplicantYearPage(1)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Receive Applicants</p>
+                <h2 id="admin-applicant-year-title">Choose Application Year</h2>
+                <p>Select the year for the new applicant cycle. Counts and downloads will use this year.</p>
+              </div>
+
+              <button
+                aria-label="Close applicant year selection"
+                className="admin-modal-close"
+                onClick={() => {
+                  setIsApplicantYearOpen(false)
+                  setCurrentApplicantYearPage(1)
+                }}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-year-options">
+              {currentApplicantYearOptions.map((applicationYear) => (
+                <button
+                  className="admin-year-option"
+                  key={applicationYear}
+                  onClick={() => receiveApplicantsForYear(applicationYear)}
+                  type="button"
+                >
+                  <span>{applicationYear}</span>
+                  <strong>
+                    {
+                      applicantRows.filter((applicant) => {
+                        return getApplicantApplicationYear(applicant) === applicationYear
+                      }).length
+                    }{' '}
+                    existing applicants
+                  </strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="admin-pagination admin-applicant-year-pagination">
+              <p>
+                Showing <strong>{applicantYearShowingStart}</strong> to{' '}
+                <strong>{applicantYearShowingEnd}</strong> of{' '}
+                <strong>{applicantYearOptions.length}</strong> years
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous application years page"
+                  disabled={activeApplicantYearPage === 1 || applicantYearOptions.length === 0}
+                  onClick={() => goToApplicantYearPage(activeApplicantYearPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {applicantYearPaginationItems.map((pageItem) =>
+                  typeof pageItem === 'number' ? (
+                    <button
+                      className={
+                        activeApplicantYearPage === pageItem
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={applicantYearOptions.length === 0}
+                      key={pageItem}
+                      onClick={() => goToApplicantYearPage(pageItem)}
+                      type="button"
+                    >
+                      {pageItem}
+                    </button>
+                  ) : (
+                    <span className="admin-pagination__ellipsis" key={pageItem}>
+                      ...
+                    </span>
+                  ),
+                )}
+
+                <button
+                  aria-label="Next application years page"
+                  disabled={
+                    activeApplicantYearPage === totalApplicantYearPages ||
+                    applicantYearOptions.length === 0
+                  }
+                  onClick={() => goToApplicantYearPage(activeApplicantYearPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={() => {
+                  setIsApplicantYearOpen(false)
+                  setCurrentApplicantYearPage(1)
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedUnifastCourse && (
+        <div
+          aria-labelledby="admin-course-applicants-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close course applicants"
+            className="admin-modal-backdrop"
+            onClick={closeCourseApplicantModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-course-applicants-modal">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Course Applicants Information</p>
+                <h2 id="admin-course-applicants-title">Applicants Table</h2>
+                <p>
+                  {selectedUnifastCourse} applicants for {activeApplicantYear}.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close course applicants"
+                className="admin-modal-close"
+                onClick={closeCourseApplicantModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-course-applicants-toolbar">
+              <div className="admin-search-field admin-course-applicant-search">
+                <span className="material-symbols-outlined">search</span>
+                <input
+                  aria-label="Search course applicants"
+                  placeholder="Search applicant name, ID, email, mobile, status..."
+                  type="search"
+                  value={courseApplicantSearch}
+                  onChange={handleCourseApplicantSearchChange}
+                />
+              </div>
+
+              <button
+                className="admin-button admin-button--primary"
+                disabled={applicants === undefined || selectedCourseApplicants.length === 0}
+                onClick={() => exportUnifastCourseCsv(selectedUnifastCourse)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">download</span>
+                Download All Applicants Info
+              </button>
+            </div>
+
+            <div className="admin-course-applicants-summary">
+              <div>
+                <span>Total Course Applicants</span>
+                <strong>{selectedCourseApplicants.length}</strong>
+              </div>
+
+              <div>
+                <span>Filtered Results</span>
+                <strong>{filteredCourseApplicants.length}</strong>
+              </div>
+
+              <div>
+                <span>Rows Per Page</span>
+                <strong>{courseApplicantsPerPage}</strong>
+              </div>
+            </div>
+
+            <div className="admin-course-applicants-table-wrap">
+              <table className="admin-course-applicants-table">
+                <thead>
+                  <tr>
+                    <th>No.</th>
+                    <th>Student ID</th>
+                    <th>Applicant Name</th>
+                    <th>Gender</th>
+                    <th>Birth Date</th>
+                    <th>Year</th>
+                    <th>Mobile No.</th>
+                    <th>Email Address</th>
+                    <th>Address</th>
+                    <th>PSA</th>
+                    <th>School ID</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {applicants === undefined && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={13}>
+                        Loading applicants...
+                      </td>
+                    </tr>
+                  )}
+
+                  {applicants !== undefined && filteredCourseApplicants.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={13}>
+                        No applicants found for this course.
+                      </td>
+                    </tr>
+                  )}
+
+                  {currentCourseApplicants.map((applicant, index) => {
+                    const applicantName =
+                      [
+                        applicant.firstName,
+                        applicant.middleName,
+                        applicant.lastName,
+                        applicant.extensionName,
+                      ]
+                        .filter(Boolean)
+                        .join(' ') || 'No name'
+
+                    return (
+                      <tr key={applicant._id}>
+                        <td data-label="No.">{firstCourseApplicantIndex + index + 1}</td>
+                        <td data-label="Student ID">{applicant.studentId}</td>
+                        <td className="admin-applicant-name" data-label="Applicant Name">
+                          {applicantName}
+                        </td>
+                        <td data-label="Gender">{applicant.gender}</td>
+                        <td data-label="Birth Date">{applicant.birthDate}</td>
+                        <td data-label="Year">{applicant.year}</td>
+                        <td data-label="Mobile No.">{applicant.mobileNumber}</td>
+                        <td className="admin-applicant-email" data-label="Email Address">
+                          {applicant.emailAddress}
+                        </td>
+                        <td className="admin-applicant-address" data-label="Address">
+                          {applicant.address}
+                        </td>
+                        <td data-label="PSA">
+                          {applicant.psaFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.psaFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">picture_as_pdf</span>
+                              View PSA
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="School ID">
+                          {applicant.schoolIdFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.schoolIdFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">badge</span>
+                              View School ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="Status">
+                          <AdminStatusBadge
+                            status={applicant.status}
+                            tone={getQuickActionStatusTone(applicant.status)}
+                          />
+                        </td>
+                        <td data-label="Submitted">{formatSubmittedAt(applicant.submittedAt)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-course-applicants-pagination">
+              <p>
+                Showing <strong>{courseApplicantShowingStart}</strong> to{' '}
+                <strong>{courseApplicantShowingEnd}</strong> of{' '}
+                <strong>{filteredCourseApplicants.length}</strong> applicants
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous course applicants page"
+                  disabled={
+                    activeCourseApplicantPage === 1 || filteredCourseApplicants.length === 0
+                  }
+                  onClick={() => goToCourseApplicantPage(activeCourseApplicantPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {courseApplicantPaginationItems.map((pageItem) =>
+                  typeof pageItem === 'number' ? (
+                    <button
+                      className={
+                        activeCourseApplicantPage === pageItem
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={filteredCourseApplicants.length === 0}
+                      key={pageItem}
+                      onClick={() => goToCourseApplicantPage(pageItem)}
+                      type="button"
+                    >
+                      {pageItem}
+                    </button>
+                  ) : (
+                    <span className="admin-pagination__ellipsis" key={pageItem}>
+                      ...
+                    </span>
+                  ),
+                )}
+
+                <button
+                  aria-label="Next course applicants page"
+                  disabled={
+                    activeCourseApplicantPage === totalCourseApplicantPages ||
+                    filteredCourseApplicants.length === 0
+                  }
+                  onClick={() => goToCourseApplicantPage(activeCourseApplicantPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeCourseApplicantModal}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {isSchoolIdDownloadOpen && (
         <div
           aria-labelledby="admin-school-id-download-title"
@@ -1546,7 +2724,7 @@ function Admin({ onLogout }) {
           <button
             aria-label="Close School ID download modal"
             className="admin-modal-backdrop"
-            onClick={() => setIsSchoolIdDownloadOpen(false)}
+            onClick={closeSchoolIdDownloadModal}
             type="button"
           />
 
@@ -1562,7 +2740,7 @@ function Admin({ onLogout }) {
                 aria-label="Close School ID download"
                 className="admin-modal-close"
                 disabled={isDownloadingSchoolIdFiles}
-                onClick={() => setIsSchoolIdDownloadOpen(false)}
+                onClick={closeSchoolIdDownloadModal}
                 type="button"
               >
                 <span className="material-symbols-outlined">close</span>
@@ -1576,7 +2754,7 @@ function Admin({ onLogout }) {
                     className="admin-school-year-button"
                     disabled={isDownloadingSchoolIdFiles}
                     key={schoolYear}
-                    onClick={() => downloadSchoolIdFiles(schoolYear)}
+                    onClick={() => openSchoolIdBatchDownloadModal(schoolYear)}
                     type="button"
                   >
                     <span>{schoolYear}</span>
@@ -1646,10 +2824,141 @@ function Admin({ onLogout }) {
               <button
                 className="admin-button admin-button--secondary"
                 disabled={isDownloadingSchoolIdFiles}
-                onClick={() => setIsSchoolIdDownloadOpen(false)}
+                onClick={closeSchoolIdDownloadModal}
                 type="button"
               >
                 Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedSchoolIdDownloadYear && (
+        <div
+          aria-labelledby="admin-school-id-batch-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID batch modal"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDownloadingSchoolIdFiles) setSelectedSchoolIdDownloadYear('')
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">School ID Files</p>
+                <h2 id="admin-school-id-batch-title">Choose Batch</h2>
+                <p>
+                  Download uploaded School ID files for {selectedSchoolIdDownloadYear} by batch.
+                  File names include Student ID, last name, first name, middle name, and batch no.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close School ID batch download"
+                className="admin-modal-close"
+                disabled={isDownloadingSchoolIdFiles}
+                onClick={() => setSelectedSchoolIdDownloadYear('')}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {currentSchoolIdBatchDownloads.map(({ batchId, fileCount }) => (
+                <button
+                  className="admin-school-year-button"
+                  disabled={isDownloadingSchoolIdFiles}
+                  key={batchId}
+                  onClick={() => downloadSchoolIdFiles(selectedSchoolIdDownloadYear, batchId)}
+                  type="button"
+                >
+                  <span>{batchId}</span>
+                  <strong>
+                    {isDownloadingSchoolIdFiles
+                      ? 'Preparing...'
+                      : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
+                  </strong>
+                </button>
+              ))}
+
+              {schoolIdBatchDownloadRows.length === 0 && (
+                <div className="admin-modal-empty-state">
+                  No batches with uploaded School ID files were found for this School Year.
+                </div>
+              )}
+            </div>
+
+            <div className="admin-pagination admin-school-id-pagination">
+              <p>
+                Showing <strong>{schoolIdBatchDownloadShowingStart}</strong>-
+                <strong>{schoolIdBatchDownloadShowingEnd}</strong> of{' '}
+                <strong>{schoolIdBatchDownloadRows.length}</strong> batches
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous School ID batch page"
+                  disabled={activeSchoolIdBatchDownloadPage === 1 || isDownloadingSchoolIdFiles}
+                  onClick={() => goToSchoolIdBatchDownloadPage(activeSchoolIdBatchDownloadPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalSchoolIdBatchDownloadPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={
+                        activeSchoolIdBatchDownloadPage === pageNumber ? 'page' : undefined
+                      }
+                      className={
+                        activeSchoolIdBatchDownloadPage === pageNumber
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={isDownloadingSchoolIdFiles}
+                      key={pageNumber}
+                      onClick={() => goToSchoolIdBatchDownloadPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  aria-label="Next School ID batch page"
+                  disabled={
+                    activeSchoolIdBatchDownloadPage === totalSchoolIdBatchDownloadPages ||
+                    isDownloadingSchoolIdFiles
+                  }
+                  onClick={() => goToSchoolIdBatchDownloadPage(activeSchoolIdBatchDownloadPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDownloadingSchoolIdFiles}
+                onClick={() => setSelectedSchoolIdDownloadYear('')}
+                type="button"
+              >
+                Back
               </button>
             </div>
           </section>
@@ -2221,11 +3530,23 @@ const adminStyles = `
   color: var(--admin-text);
 }
 
+.admin-button--danger {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
 .admin-button--secondary:hover,
 .admin-button--ghost:hover,
 .admin-button--admin:hover {
   background: #fff7ed;
   color: var(--admin-primary-dark);
+}
+
+.admin-button--danger:hover {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #7f1d1d;
 }
 
 .admin-button:disabled,
@@ -2251,6 +3572,24 @@ const adminStyles = `
   align-items: end;
   gap: 24px;
   margin-bottom: 24px;
+}
+
+.admin-heading__actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(190px, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  width: min(100%, 1068px);
+}
+
+.admin-heading__actions .admin-button {
+  width: 100%;
+  min-height: 62px;
+  padding: 13px 22px;
+}
+
+.admin-heading__actions .material-symbols-outlined {
+  font-size: 25px;
 }
 
 .admin-heading__copy {
@@ -2759,6 +4098,16 @@ const adminStyles = `
   width: min(100%, 1120px);
 }
 
+.admin-modal-card--compact {
+  width: min(100%, 560px);
+}
+
+.admin-modal-card--applicant-years {
+  display: flex;
+  flex-direction: column;
+  max-height: min(820px, calc(100vh - 32px));
+}
+
 .admin-modal-header {
   display: flex;
   align-items: flex-start;
@@ -2823,6 +4172,261 @@ const adminStyles = `
   padding: 22px 24px;
 }
 
+.admin-applicant-portal-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 24px;
+}
+
+.admin-applicant-portal-controls span,
+.admin-applicant-portal-controls strong {
+  display: block;
+}
+
+.admin-applicant-portal-controls span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-applicant-portal-controls strong {
+  margin-top: 3px;
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.admin-applicant-portal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-course-downloads {
+  max-height: min(520px, calc(100vh - 260px));
+  overflow-y: auto;
+}
+
+.admin-confirm-body {
+  display: grid;
+  gap: 8px;
+  padding: 22px 24px;
+}
+
+.admin-confirm-body p,
+.admin-confirm-body strong {
+  margin: 0;
+}
+
+.admin-confirm-body p {
+  color: var(--admin-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-confirm-body strong {
+  color: var(--admin-text);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.admin-course-applicants-modal {
+  width: min(100%, 1180px);
+}
+
+.admin-course-applicants-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 24px;
+}
+
+.admin-course-applicant-search {
+  flex: 1 1 420px;
+  min-width: 240px;
+}
+
+.admin-course-applicants-toolbar .admin-button {
+  flex: 0 0 auto;
+}
+
+.admin-course-applicants-toolbar .admin-button .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.admin-course-applicants-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  padding: 16px 24px;
+}
+
+.admin-course-applicants-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.admin-course-applicants-summary span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.admin-course-applicants-summary strong {
+  color: var(--admin-text);
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.admin-course-applicants-table-wrap {
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  padding: 12px 24px;
+}
+
+.admin-course-applicants-table {
+  width: 100%;
+  min-width: 1280px;
+  border-collapse: collapse;
+}
+
+.admin-course-applicants-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff7ed;
+}
+
+.admin-course-applicants-table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-course-applicants-table th,
+.admin-course-applicants-table td {
+  border-bottom: 1px solid var(--admin-outline);
+  padding: 12px 10px;
+  color: var(--admin-text);
+  font-size: 13px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-course-applicants-table th {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-applicant-name,
+.admin-applicant-email,
+.admin-applicant-address {
+  overflow-wrap: anywhere;
+}
+
+.admin-applicant-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--admin-primary-dark);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-applicant-file-link:hover {
+  text-decoration: underline;
+}
+
+.admin-applicant-file-link .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.admin-applicant-file-missing {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-course-applicants-pagination {
+  border-top: 1px solid var(--admin-outline);
+  padding: 14px 24px;
+}
+
+.admin-modal-empty-state {
+  border: 1px dashed var(--admin-outline);
+  border-radius: 14px;
+  background: #fffaf5;
+  color: var(--admin-muted);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.5;
+  padding: 18px;
+  text-align: center;
+}
+
+.admin-year-options {
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 22px 24px;
+}
+
+.admin-year-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--admin-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 16px;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.admin-year-option:hover {
+  border-color: var(--admin-primary);
+  background: #fff7ed;
+  transform: translateY(-1px);
+}
+
+.admin-year-option span {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.admin-year-option strong {
+  color: var(--admin-primary-dark);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.admin-applicant-year-pagination,
 .admin-batch-export-pagination,
 .admin-school-id-pagination {
   border-bottom: 1px solid var(--admin-outline);
@@ -2850,6 +4454,15 @@ const adminStyles = `
   border-color: var(--admin-primary);
   background: #fff7ed;
   transform: translateY(-1px);
+}
+
+.admin-school-year-button--danger strong {
+  color: #991b1b;
+}
+
+.admin-school-year-button--danger:hover {
+  border-color: #fca5a5;
+  background: #fff1f2;
 }
 
 .admin-school-year-button:disabled {
@@ -3250,9 +4863,9 @@ const adminStyles = `
   }
 
   .admin-heading__actions {
-    display: grid;
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
   }
 
   .admin-stats-grid {
@@ -3291,7 +4904,7 @@ const adminStyles = `
 
   .header-actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
     margin-left: 0;
   }
@@ -3315,13 +4928,13 @@ const adminStyles = `
     font-size: 14px;
   }
 
-  .admin-heading__actions,
-  .admin-heading__actions .admin-button {
-    width: 100%;
-  }
-
   .admin-heading__actions {
     grid-template-columns: 1fr;
+  }
+
+  .admin-heading__actions .admin-button {
+    width: 100%;
+    min-height: 52px;
   }
 
   .admin-stats-grid {
@@ -3436,6 +5049,11 @@ const adminStyles = `
     border-radius: 18px 18px 10px 10px;
   }
 
+  .admin-modal-card--applicant-years {
+    max-height: calc(100dvh - 20px);
+    overflow: hidden;
+  }
+
   .admin-modal-header {
     gap: 16px;
     padding: 18px;
@@ -3443,6 +5061,33 @@ const adminStyles = `
 
   .admin-modal-header h2 {
     font-size: 22px;
+  }
+
+  .admin-modal-card--applicant-years .admin-modal-header {
+    flex: 0 0 auto;
+  }
+
+  .admin-modal-card--applicant-years .admin-modal-header p {
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .admin-year-options {
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 8px;
+    overflow-y: auto;
+    padding: 14px 18px;
+  }
+
+  .admin-year-option {
+    min-height: 56px;
+    padding: 12px 14px;
+  }
+
+  .admin-applicant-year-pagination {
+    flex: 0 0 auto;
+    padding: 12px 18px;
   }
 
   .admin-school-year-downloads {
@@ -3454,6 +5099,33 @@ const adminStyles = `
     flex-direction: column;
     justify-content: center;
     padding: 14px;
+  }
+
+  .admin-applicant-portal-controls {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-applicant-portal-actions,
+  .admin-applicant-portal-actions .admin-button {
+    width: 100%;
+  }
+
+  .admin-course-applicants-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-course-applicant-search,
+  .admin-course-applicants-toolbar .admin-button {
+    width: 100%;
+  }
+
+  .admin-course-applicants-summary {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
   }
 
   .admin-edit-summary {
@@ -3492,21 +5164,24 @@ const adminStyles = `
   }
 
   .admin-quick-actions-table-wrap,
-  .admin-logs-table-wrap {
+  .admin-logs-table-wrap,
+  .admin-course-applicants-table-wrap {
     max-height: none;
     overflow: visible;
     padding: 12px;
   }
 
   .admin-quick-actions-table,
-  .admin-logs-table {
+  .admin-logs-table,
+  .admin-course-applicants-table {
     min-width: 0;
     border-collapse: separate;
     border-spacing: 0 10px;
   }
 
   .admin-quick-actions-table thead,
-  .admin-logs-table thead {
+  .admin-logs-table thead,
+  .admin-course-applicants-table thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -3516,13 +5191,15 @@ const adminStyles = `
   }
 
   .admin-quick-actions-table tbody,
-  .admin-logs-table tbody {
+  .admin-logs-table tbody,
+  .admin-course-applicants-table tbody {
     display: grid;
     gap: 10px;
   }
 
   .admin-quick-actions-table tbody tr,
-  .admin-logs-table tbody tr {
+  .admin-logs-table tbody tr,
+  .admin-course-applicants-table tbody tr {
     display: grid;
     gap: 10px;
     border: 1px solid var(--admin-outline);
@@ -3534,7 +5211,9 @@ const adminStyles = `
   .admin-quick-actions-table th,
   .admin-quick-actions-table td,
   .admin-logs-table th,
-  .admin-logs-table td {
+  .admin-logs-table td,
+  .admin-course-applicants-table th,
+  .admin-course-applicants-table td {
     display: grid;
     grid-template-columns: minmax(112px, 42%) 1fr;
     align-items: start;
@@ -3545,7 +5224,8 @@ const adminStyles = `
   }
 
   .admin-quick-actions-table td::before,
-  .admin-logs-table td::before {
+  .admin-logs-table td::before,
+  .admin-course-applicants-table td::before {
     content: attr(data-label);
     color: var(--admin-muted);
     font-size: 11px;
@@ -3555,19 +5235,24 @@ const adminStyles = `
   }
 
   .admin-quick-actions-table .admin-empty-state,
-  .admin-logs-table .admin-empty-state {
+  .admin-logs-table .admin-empty-state,
+  .admin-course-applicants-table .admin-empty-state {
     display: block;
     height: auto;
     padding: 28px 14px;
   }
 
   .admin-quick-actions-table .admin-empty-state::before,
-  .admin-logs-table .admin-empty-state::before {
+  .admin-logs-table .admin-empty-state::before,
+  .admin-course-applicants-table .admin-empty-state::before {
     content: none;
   }
 
   .admin-request-email,
-  .admin-request-question {
+  .admin-request-question,
+  .admin-applicant-name,
+  .admin-applicant-email,
+  .admin-applicant-address {
     max-width: none;
     overflow-wrap: anywhere;
     white-space: normal;
@@ -3592,7 +5277,7 @@ const adminStyles = `
   .brand-title {
     font-size: 13px;
   }
-a
+
   .brand-subtitle {
     font-size: 11px;
   }
@@ -3602,9 +5287,33 @@ a
   .admin-quick-actions-table th,
   .admin-quick-actions-table td,
   .admin-logs-table th,
-  .admin-logs-table td {
+  .admin-logs-table td,
+  .admin-course-applicants-table th,
+  .admin-course-applicants-table td {
     grid-template-columns: 1fr;
     gap: 5px;
+  }
+
+  .admin-modal-card--applicant-years .admin-modal-header {
+    padding: 16px;
+  }
+
+  .admin-year-options {
+    padding: 12px;
+  }
+
+  .admin-year-option {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .admin-year-option span {
+    font-size: 20px;
+  }
+
+  .admin-applicant-year-pagination {
+    padding: 12px;
   }
 
   .admin-status,

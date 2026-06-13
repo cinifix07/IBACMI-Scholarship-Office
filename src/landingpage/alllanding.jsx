@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import quickActionsData from '../../data.json'
@@ -79,20 +79,100 @@ function normalizePhoneNumber(phoneNumber) {
   return phoneNumber.replace(/[\s-]/g, '').trim()
 }
 
+function sanitizePhoneNumberInput(phoneNumber) {
+  return phoneNumber.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
+}
+
 function isValidPhoneNumber(phoneNumber) {
   const normalizedPhone = normalizePhoneNumber(phoneNumber)
 
   return /^09\d{9}$/.test(normalizedPhone) || /^\+639\d{9}$/.test(normalizedPhone)
 }
 
+const applicantPdfMaxSize = 5 * 1024 * 1024
+
+function isValidApplicantPdf(file) {
+  if (!file) return false
+
+  return file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+}
+
+function formatFileSize(size) {
+  if (!size) return ''
+
+  const megabytes = size / (1024 * 1024)
+  return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`
+}
+
 function isValidPassword(password) {
   return password.length >= 6
 }
 
+const studentPortalFields = [
+  { label: 'Student ID', name: 'studentId', autoComplete: 'off', required: true },
+  { label: 'Last Name', name: 'lastName', autoComplete: 'family-name', required: true },
+  { label: 'First Name', name: 'firstName', autoComplete: 'given-name', required: true },
+  { label: 'Ext Name (JR)', name: 'extensionName', autoComplete: 'honorific-suffix' },
+  { label: 'Middle Name', name: 'middleName', autoComplete: 'additional-name' },
+]
+
+const fatherPortalFields = [
+  { label: 'Last Name', name: 'fatherLastName', autoComplete: 'family-name' },
+  { label: 'First Name', name: 'fatherFirstName', autoComplete: 'given-name' },
+  { label: 'Middle Name', name: 'fatherMiddleName', autoComplete: 'additional-name' },
+]
+
+const motherPortalFields = [
+  { label: 'Last Name', name: 'motherLastName', autoComplete: 'family-name' },
+  { label: 'First Name', name: 'motherFirstName', autoComplete: 'given-name' },
+  { label: 'Middle Name', name: 'motherMiddleName', autoComplete: 'additional-name' },
+]
+
+const portalCourseOptions = [
+  'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
+  'BACHELOR OF SCIENCE IN ENTREPRENEURSHIP',
+  'BACHELOR OF SCIENCE IN CRIMINOLOGY',
+  'BACHELOR OF ELEMENTARY EDUCATION',
+  'BACHELOR OF EARLY CHILDHOOD EDUCATION',
+  'BACHELOR OF SCIENCE IN HOSPITALITY MANAGEMENT',
+  'BACHELOR OF PUBLIC ADMINISTRATION',
+]
+
+const contactPortalFields = [
+  {
+    label: 'Address',
+    name: 'address',
+    autoComplete: 'street-address',
+    className: 'portal-full-field',
+    required: true,
+  },
+  { label: 'Zip Code', name: 'zipCode', autoComplete: 'postal-code', inputMode: 'numeric' },
+  { label: 'PWD ID', name: 'pwdId', autoComplete: 'off' },
+  {
+    label: 'Mobile No.',
+    name: 'mobileNumber',
+    autoComplete: 'tel',
+    inputMode: 'tel',
+    type: 'tel',
+    pattern: '\\+?[0-9]*',
+    required: true,
+  },
+  {
+    label: 'Email Address',
+    name: 'emailAddress',
+    autoComplete: 'email',
+    inputMode: 'email',
+    type: 'email',
+    required: true,
+  },
+]
+
 function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
+  const portalFormRef = useRef(null)
   const [progress, setProgress] = useState(0)
 
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
+  const [isUnifastPortalOpen, setIsUnifastPortalOpen] = useState(false)
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false)
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
   const [isSignUpOpen, setIsSignUpOpen] = useState(false)
@@ -101,9 +181,18 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [adminLoginError, setAdminLoginError] = useState('')
   const [quickActionError, setQuickActionError] = useState('')
   const [quickActionSuccess, setQuickActionSuccess] = useState('')
+  const [portalError, setPortalError] = useState('')
+  const [portalSuccess, setPortalSuccess] = useState('')
+  const [portalStatusMessage, setPortalStatusMessage] = useState('')
+  const [portalDocumentFiles, setPortalDocumentFiles] = useState({
+    psaFile: null,
+    schoolIdFile: null,
+  })
+  const [portalReviewData, setPortalReviewData] = useState(null)
 
   const [isSubmittingAdminLogin, setIsSubmittingAdminLogin] = useState(false)
   const [isSubmittingQuickAction, setIsSubmittingQuickAction] = useState(false)
+  const [isSubmittingPortal, setIsSubmittingPortal] = useState(false)
   const [isRegisteringAccount, setIsRegisteringAccount] = useState(false)
 
   const [currentPage, setCurrentPage] = useState(1)
@@ -136,12 +225,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const rowsPerPage = 6
 
+  const createApplicant = useMutation(api.applicants.create)
+  const generateApplicantUploadUrl = useMutation(api.applicants.generateUploadUrl)
   const createQuickAction = useMutation(api.quickActions.create)
   const loginAdmin = useMutation(api.adminAuth.login)
   const registerAdmin = useMutation(api.adminAuth.register)
   const requestPasswordResetOtp = useMutation(api.adminAuth.requestPasswordResetOtp)
   const changePasswordWithOtp = useMutation(api.adminAuth.changePasswordWithOtp)
   const allInfoRecords = useQuery(api.allinfo.list)
+  const applicantPortal = useQuery(api.applicantPortal.get)
 
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
   const hasStudentIdSearch = studentIdSearch.trim().length > 0
@@ -210,10 +302,12 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   useEffect(() => {
     if (
       !isQuickActionsOpen &&
+      !isUnifastPortalOpen &&
       !isAdminLoginOpen &&
       !isForgotPasswordOpen &&
       !isSignUpOpen &&
       !isSignUpDeniedOpen &&
+      !portalStatusMessage &&
       !signUpSuccess &&
       !quickActionSuccess
     ) {
@@ -223,10 +317,19 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
         setIsQuickActionsOpen(false)
+        setIsUnifastPortalOpen(false)
+        setPortalError('')
+        setPortalSuccess('')
+        setPortalReviewData(null)
+        setPortalDocumentFiles({
+          psaFile: null,
+          schoolIdFile: null,
+        })
         setIsAdminLoginOpen(false)
         setIsForgotPasswordOpen(false)
         setIsSignUpOpen(false)
         setIsSignUpDeniedOpen(false)
+        setPortalStatusMessage('')
         if (signUpSuccess) {
           continueToStudentFromRegistration()
         }
@@ -243,10 +346,12 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     }
   }, [
     isQuickActionsOpen,
+    isUnifastPortalOpen,
     isAdminLoginOpen,
     isForgotPasswordOpen,
     isSignUpOpen,
     isSignUpDeniedOpen,
+    portalStatusMessage,
     signUpSuccess,
     quickActionSuccess,
     continueToStudentFromRegistration,
@@ -261,6 +366,247 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const closeQuickActions = () => {
     setIsQuickActionsOpen(false)
     setQuickActionError('')
+  }
+
+  const openUnifastPortal = () => {
+    if (applicantPortal === undefined) {
+      setPortalStatusMessage('Please wait while the UNIFAST portal status is loading.')
+      return
+    }
+
+    if (!applicantPortal.isReceivingApplicants) {
+      setPortalStatusMessage(
+        'The UNIFAST portal is not receiving applicants right now. Please wait for the administrator to open applications.',
+      )
+      return
+    }
+
+    setPortalError('')
+    setPortalSuccess('')
+    setIsUnifastPortalOpen(true)
+  }
+
+  const closeUnifastPortal = () => {
+    if (isSubmittingPortal) return
+
+    setIsUnifastPortalOpen(false)
+    setPortalError('')
+    setPortalSuccess('')
+    setPortalDocumentFiles({
+      psaFile: null,
+      schoolIdFile: null,
+    })
+    setPortalReviewData(null)
+  }
+
+  const uploadApplicantPdfToStorage = async (file) => {
+    const uploadUrl = await generateApplicantUploadUrl()
+    const uploadResult = await fetch(uploadUrl, {
+      body: file,
+      headers: {
+        'Content-Type': file.type || 'application/pdf',
+      },
+      method: 'POST',
+    })
+
+    if (!uploadResult.ok) {
+      throw new Error(`Unable to upload ${file.name}.`)
+    }
+
+    const { storageId } = await uploadResult.json()
+    return storageId
+  }
+
+  const handlePortalDocumentChange = (event) => {
+    const { files, name } = event.target
+    const file = files?.[0] ?? null
+
+    setPortalError('')
+    setPortalSuccess('')
+    setPortalReviewData(null)
+
+    if (!file) {
+      setPortalDocumentFiles((currentFiles) => ({
+        ...currentFiles,
+        [name]: null,
+      }))
+      return
+    }
+
+    if (!isValidApplicantPdf(file)) {
+      event.target.value = ''
+      setPortalDocumentFiles((currentFiles) => ({
+        ...currentFiles,
+        [name]: null,
+      }))
+      setPortalError('Please upload PDF files only for PSA and School ID requirements.')
+      return
+    }
+
+    if (file.size > applicantPdfMaxSize) {
+      event.target.value = ''
+      setPortalDocumentFiles((currentFiles) => ({
+        ...currentFiles,
+        [name]: null,
+      }))
+      setPortalError('Each uploaded PDF must be 5MB or smaller.')
+      return
+    }
+
+    setPortalDocumentFiles((currentFiles) => ({
+      ...currentFiles,
+      [name]: file,
+    }))
+  }
+
+  const handleUnifastPortalSubmit = async (event) => {
+    event.preventDefault()
+
+    const form = event.currentTarget
+    const formData = new FormData(form)
+    const mobileNumber = normalizePhoneNumber(String(formData.get('mobileNumber') || ''))
+    const emailAddress = String(formData.get('emailAddress') || '').trim().toLowerCase()
+    const psaFile = formData.get('psaFile')
+    const schoolIdFile = formData.get('schoolIdFile')
+
+    setPortalError('')
+    setPortalSuccess('')
+
+    if (!applicantPortal?.isReceivingApplicants) {
+      setPortalError('The UNIFAST portal is closed for applicants right now.')
+      return
+    }
+
+    if (!isValidPhoneNumber(mobileNumber)) {
+      setPortalError('Please enter a valid mobile number. Example: 09123456789 or +639123456789.')
+      return
+    }
+
+    if (!isValidEmailAddress(emailAddress)) {
+      setPortalError('Please enter a valid email address.')
+      return
+    }
+
+    if (!(psaFile instanceof File) || !psaFile.name || !isValidApplicantPdf(psaFile)) {
+      setPortalError('Please upload your PSA as a PDF file.')
+      return
+    }
+
+    if (
+      !(schoolIdFile instanceof File) ||
+      !schoolIdFile.name ||
+      !isValidApplicantPdf(schoolIdFile)
+    ) {
+      setPortalError('Please upload your colored School ID photocopy as a PDF file.')
+      return
+    }
+
+    if (psaFile.size > applicantPdfMaxSize || schoolIdFile.size > applicantPdfMaxSize) {
+      setPortalError('Each uploaded PDF must be 5MB or smaller.')
+      return
+    }
+
+    setPortalReviewData({
+      studentId: String(formData.get('studentId') || '').trim(),
+      lastName: String(formData.get('lastName') || '').trim(),
+      firstName: String(formData.get('firstName') || '').trim(),
+      extensionName: String(formData.get('extensionName') || '').trim(),
+      middleName: String(formData.get('middleName') || '').trim(),
+      gender: String(formData.get('gender') || ''),
+      birthDate: String(formData.get('birthDate') || ''),
+      course: String(formData.get('course') || ''),
+      year: String(formData.get('year') || ''),
+      fatherLastName: String(formData.get('fatherLastName') || '').trim(),
+      fatherFirstName: String(formData.get('fatherFirstName') || '').trim(),
+      fatherMiddleName: String(formData.get('fatherMiddleName') || '').trim(),
+      motherLastName: String(formData.get('motherLastName') || '').trim(),
+      motherFirstName: String(formData.get('motherFirstName') || '').trim(),
+      motherMiddleName: String(formData.get('motherMiddleName') || '').trim(),
+      address: String(formData.get('address') || '').trim(),
+      zipCode: String(formData.get('zipCode') || '').trim(),
+      pwdId: String(formData.get('pwdId') || '').trim(),
+      mobileNumber,
+      emailAddress,
+      psaFile,
+      schoolIdFile,
+    })
+  }
+
+  const handleEditPortalInformation = () => {
+    setPortalError('')
+    setPortalSuccess('')
+    setPortalReviewData(null)
+  }
+
+  const handleConfirmPortalSubmit = async () => {
+    if (!portalReviewData) return
+
+    setPortalError('')
+    setPortalSuccess('')
+
+    if (!applicantPortal?.isReceivingApplicants) {
+      setPortalError('The UNIFAST portal is closed for applicants right now.')
+      return
+    }
+
+    setIsSubmittingPortal(true)
+
+    try {
+      const [psaFileStorageId, schoolIdFileStorageId] = await Promise.all([
+        uploadApplicantPdfToStorage(portalReviewData.psaFile),
+        uploadApplicantPdfToStorage(portalReviewData.schoolIdFile),
+      ])
+
+      const result = await createApplicant({
+        studentId: portalReviewData.studentId,
+        lastName: portalReviewData.lastName,
+        firstName: portalReviewData.firstName,
+        extensionName: portalReviewData.extensionName,
+        middleName: portalReviewData.middleName,
+        gender: portalReviewData.gender,
+        birthDate: portalReviewData.birthDate,
+        course: portalReviewData.course,
+        year: portalReviewData.year,
+        fatherLastName: portalReviewData.fatherLastName,
+        fatherFirstName: portalReviewData.fatherFirstName,
+        fatherMiddleName: portalReviewData.fatherMiddleName,
+        motherLastName: portalReviewData.motherLastName,
+        motherFirstName: portalReviewData.motherFirstName,
+        motherMiddleName: portalReviewData.motherMiddleName,
+        address: portalReviewData.address,
+        zipCode: portalReviewData.zipCode,
+        pwdId: portalReviewData.pwdId,
+        mobileNumber: portalReviewData.mobileNumber,
+        emailAddress: portalReviewData.emailAddress,
+        psaFileStorageId,
+        psaFileName: portalReviewData.psaFile.name,
+        schoolIdFileStorageId,
+        schoolIdFileName: portalReviewData.schoolIdFile.name,
+      })
+
+      if (!result.success) {
+        setPortalError(result.message || 'Unable to submit applicant information.')
+        return
+      }
+
+      portalFormRef.current?.reset()
+      setPortalDocumentFiles({
+        psaFile: null,
+        schoolIdFile: null,
+      })
+      setPortalReviewData(null)
+      setPortalSuccess(result.message || 'Applicant information submitted successfully.')
+      window.setTimeout(() => {
+        setPortalSuccess('')
+        setIsUnifastPortalOpen(false)
+      }, 900)
+    } catch (error) {
+      setPortalError(
+        error instanceof Error ? error.message : 'Unable to submit applicant information right now.',
+      )
+    } finally {
+      setIsSubmittingPortal(false)
+    }
   }
 
   const openAdminLogin = () => {
@@ -362,6 +708,10 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setCurrentPage(1)
   }
 
+  const handlePhoneInput = (event) => {
+    event.target.value = sanitizePhoneNumberInput(event.target.value)
+  }
+
   const resetForgotPasswordStep = () => {
     setIsOtpRequested(false)
     setForgotPasswordSuccess('')
@@ -387,7 +737,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   }
 
   const handleForgotPhoneNumberChange = (event) => {
-    setForgotPhoneNumber(event.target.value)
+    setForgotPhoneNumber(sanitizePhoneNumberInput(event.target.value))
     resetForgotPasswordStep()
   }
 
@@ -955,12 +1305,486 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </div>
             </div>
           </section>
+
+          <section className="portal-cta" aria-labelledby="portal-cta-title">
+            <div className="portal-cta__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">assignment</span>
+            </div>
+
+            <div className="portal-cta__copy">
+              <span className="eyebrow">UNIFAST Portal</span>
+              <h3 id="portal-cta-title">Submit student information</h3>
+              <p>
+                Complete the student, parent, address, and contact information form for UNIFAST
+                applicant processing.
+              </p>
+            </div>
+
+            <button className="button button--portal" onClick={openUnifastPortal} type="button">
+              Open Portal
+            </button>
+          </section>
         </div>
       </main>
 
       <footer className="landing-footer">
         <p>Copyright 2026 | All Rights Reserved IBACMI - Scholarship Office | Developed By CINIFIX</p>
       </footer>
+
+      {isUnifastPortalOpen && (
+        <div
+          aria-labelledby="unifast-portal-title"
+          aria-modal="true"
+          className="modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close UNIFAST portal modal"
+            className="modal-backdrop-button"
+            onClick={closeUnifastPortal}
+            type="button"
+          />
+
+          <form
+            className="modal-card portal-modal-card"
+            ref={portalFormRef}
+            onSubmit={handleUnifastPortalSubmit}
+          >
+            <div className="modal-header portal-modal-header">
+              <div className="modal-title-row">
+                <div>
+                  <p className="modal-kicker">UNIFAST Portal</p>
+                  <h3 id="unifast-portal-title">Student Information Form</h3>
+                  <p>
+                    Complete the student, parent, and contact information fields below
+                    {applicantPortal?.applicationYear
+                      ? ` for ${applicantPortal.applicationYear}.`
+                      : '.'}
+                  </p>
+                </div>
+
+                <button
+                  aria-label="Close UNIFAST portal"
+                  className="icon-button modal-close"
+                  onClick={closeUnifastPortal}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+            </div>
+
+            <div
+              className={`modal-body portal-form${
+                portalReviewData ? ' portal-form--hidden' : ''
+              }`}
+            >
+              <section className="portal-section" aria-labelledby="portal-student-heading">
+                <h4 id="portal-student-heading">Student Information</h4>
+
+                <div className="portal-grid">
+                  {studentPortalFields.map((field) => (
+                    <label className="form-field" key={field.name}>
+                      <span>{field.label}</span>
+                      <input
+                        autoComplete={field.autoComplete}
+                        name={field.name}
+                        placeholder={`Enter ${field.label.toLowerCase()}`}
+                        required={field.required}
+                        type="text"
+                      />
+                    </label>
+                  ))}
+
+                  <label className="form-field">
+                    <span>Gender</span>
+                    <select name="gender" defaultValue="" required>
+                      <option value="" disabled>
+                        Select gender
+                      </option>
+                      <option value="Female">Female</option>
+                      <option value="Male">Male</option>
+                      <option value="Prefer not to say">Prefer not to say</option>
+                    </select>
+                  </label>
+
+                  <label className="form-field">
+                    <span>Birth Date</span>
+                    <input name="birthDate" required type="date" />
+                  </label>
+
+                  <label className="form-field">
+                    <span>Year</span>
+                    <select name="year" defaultValue="" required>
+                      <option value="" disabled>
+                        Select year
+                      </option>
+                      <option value="1st Year">1st Year</option>
+                      <option value="2nd Year">2nd Year</option>
+                      <option value="3rd Year">3rd Year</option>
+                      <option value="4th Year">4th Year</option>
+                      <option value="5th Year">5th Year</option>
+                    </select>
+                  </label>
+
+                  <fieldset className="portal-course-list">
+                    <legend>Course</legend>
+                    {portalCourseOptions.map((course) => (
+                      <label className="portal-course-option" key={course}>
+                        <input name="course" required type="radio" value={course} />
+                        <span>{course}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                </div>
+              </section>
+
+              <section className="portal-section" aria-labelledby="portal-parents-heading">
+                <h4 id="portal-parents-heading">Parents Information</h4>
+
+                <div className="portal-parent-group">
+                  <p>Father Information</p>
+                  <div className="portal-grid portal-grid--three">
+                    {fatherPortalFields.map((field) => (
+                      <label className="form-field" key={field.name}>
+                        <span>{field.label}</span>
+                        <input
+                          autoComplete={field.autoComplete}
+                          name={field.name}
+                          placeholder={`Enter father's ${field.label.toLowerCase()}`}
+                          type="text"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="portal-parent-group">
+                  <p>Mother Information</p>
+                  <div className="portal-grid portal-grid--three">
+                    {motherPortalFields.map((field) => (
+                      <label className="form-field" key={field.name}>
+                        <span>{field.label}</span>
+                        <input
+                          autoComplete={field.autoComplete}
+                          name={field.name}
+                          placeholder={`Enter mother's ${field.label.toLowerCase()}`}
+                          type="text"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="portal-section" aria-labelledby="portal-contact-heading">
+                <h4 id="portal-contact-heading">Address and Contact Information</h4>
+
+                <div className="portal-grid">
+                  {contactPortalFields.map((field) => (
+                    <label
+                      className={`form-field ${field.className ?? ''}`.trim()}
+                      key={field.name}
+                    >
+                      <span>{field.label}</span>
+                      <input
+                        autoComplete={field.autoComplete}
+                        inputMode={field.inputMode}
+                        name={field.name}
+                        onInput={field.name === 'mobileNumber' ? handlePhoneInput : undefined}
+                        pattern={field.pattern}
+                        placeholder={`Enter ${field.label.toLowerCase()}`}
+                        required={field.required}
+                        type={field.type ?? 'text'}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </section>
+
+              <section className="portal-section" aria-labelledby="portal-documents-heading">
+                <div className="portal-section-heading">
+                  <h4 id="portal-documents-heading">Document Requirements</h4>
+                  <p>Upload clear PDF copies. Each file must be 5MB or smaller.</p>
+                </div>
+
+                <div className="portal-document-grid">
+                  <label
+                    className={`portal-document-upload${
+                      portalDocumentFiles.psaFile ? ' portal-document-upload--selected' : ''
+                    }`}
+                  >
+                    <input
+                      accept="application/pdf,.pdf"
+                      name="psaFile"
+                      onChange={handlePortalDocumentChange}
+                      required
+                      type="file"
+                    />
+                    <span className="portal-document-upload__icon">
+                      <span className="material-symbols-outlined">picture_as_pdf</span>
+                    </span>
+                    <span className="portal-document-upload__copy">
+                      <strong>PSA Birth Certificate</strong>
+                      <span>
+                        {portalDocumentFiles.psaFile
+                          ? `${portalDocumentFiles.psaFile.name} (${formatFileSize(
+                              portalDocumentFiles.psaFile.size,
+                            )})`
+                          : 'Select PSA PDF file'}
+                      </span>
+                    </span>
+                  </label>
+
+                  <label
+                    className={`portal-document-upload${
+                      portalDocumentFiles.schoolIdFile ? ' portal-document-upload--selected' : ''
+                    }`}
+                  >
+                    <input
+                      accept="application/pdf,.pdf"
+                      name="schoolIdFile"
+                      onChange={handlePortalDocumentChange}
+                      required
+                      type="file"
+                    />
+                    <span className="portal-document-upload__icon">
+                      <span className="material-symbols-outlined">badge</span>
+                    </span>
+                    <span className="portal-document-upload__copy">
+                      <strong>Colored School ID Photocopy</strong>
+                      <span>
+                        {portalDocumentFiles.schoolIdFile
+                          ? `${portalDocumentFiles.schoolIdFile.name} (${formatFileSize(
+                              portalDocumentFiles.schoolIdFile.size,
+                            )})`
+                          : 'Select colored School ID photocopy PDF'}
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </section>
+            </div>
+
+            {portalReviewData && (
+              <div className="modal-body portal-review">
+                <section className="portal-review-card" aria-labelledby="portal-review-heading">
+                  <div className="portal-section-heading">
+                    <h4 id="portal-review-heading">Review Information</h4>
+                    <p>Please check every detail before final submission.</p>
+                  </div>
+
+                  <div className="portal-review-grid">
+                    <div className="portal-review-group">
+                      <h5>Student Information</h5>
+                      <dl>
+                        <div>
+                          <dt>Student ID</dt>
+                          <dd>{portalReviewData.studentId}</dd>
+                        </div>
+                        <div>
+                          <dt>Full Name</dt>
+                          <dd>
+                            {[
+                              portalReviewData.firstName,
+                              portalReviewData.middleName,
+                              portalReviewData.lastName,
+                              portalReviewData.extensionName,
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Gender</dt>
+                          <dd>{portalReviewData.gender}</dd>
+                        </div>
+                        <div>
+                          <dt>Birth Date</dt>
+                          <dd>{portalReviewData.birthDate}</dd>
+                        </div>
+                        <div>
+                          <dt>Year</dt>
+                          <dd>{portalReviewData.year}</dd>
+                        </div>
+                        <div>
+                          <dt>Course</dt>
+                          <dd>{portalReviewData.course}</dd>
+                        </div>
+                      </dl>
+                    </div>
+
+                    <div className="portal-review-group">
+                      <h5>Parents Information</h5>
+                      <dl>
+                        <div>
+                          <dt>Father</dt>
+                          <dd>
+                            {[
+                              portalReviewData.fatherFirstName,
+                              portalReviewData.fatherMiddleName,
+                              portalReviewData.fatherLastName,
+                            ]
+                              .filter(Boolean)
+                              .join(' ') || 'Not provided'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Mother</dt>
+                          <dd>
+                            {[
+                              portalReviewData.motherFirstName,
+                              portalReviewData.motherMiddleName,
+                              portalReviewData.motherLastName,
+                            ]
+                              .filter(Boolean)
+                              .join(' ') || 'Not provided'}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+
+                    <div className="portal-review-group">
+                      <h5>Address and Contact</h5>
+                      <dl>
+                        <div>
+                          <dt>Address</dt>
+                          <dd>{portalReviewData.address}</dd>
+                        </div>
+                        <div>
+                          <dt>Zip Code</dt>
+                          <dd>{portalReviewData.zipCode || 'Not provided'}</dd>
+                        </div>
+                        <div>
+                          <dt>PWD ID</dt>
+                          <dd>{portalReviewData.pwdId || 'Not provided'}</dd>
+                        </div>
+                        <div>
+                          <dt>Mobile No.</dt>
+                          <dd>{portalReviewData.mobileNumber}</dd>
+                        </div>
+                        <div>
+                          <dt>Email Address</dt>
+                          <dd>{portalReviewData.emailAddress}</dd>
+                        </div>
+                      </dl>
+                    </div>
+
+                    <div className="portal-review-group">
+                      <h5>Documents</h5>
+                      <dl>
+                        <div>
+                          <dt>PSA Birth Certificate</dt>
+                          <dd>
+                            {portalReviewData.psaFile.name} (
+                            {formatFileSize(portalReviewData.psaFile.size)})
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>School ID Photocopy</dt>
+                          <dd>
+                            {portalReviewData.schoolIdFile.name} (
+                            {formatFileSize(portalReviewData.schoolIdFile.size)})
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {(portalError || portalSuccess) && (
+              <div className="portal-message-row">
+                {portalError && <p className="form-error">{portalError}</p>}
+                {portalSuccess && <p className="form-success">{portalSuccess}</p>}
+              </div>
+            )}
+
+            <div className="modal-actions portal-actions">
+              {portalReviewData ? (
+                <>
+                  <button
+                    className="button button--secondary"
+                    disabled={isSubmittingPortal}
+                    onClick={handleEditPortalInformation}
+                    type="button"
+                  >
+                    Edit Information
+                  </button>
+
+                  <button
+                    className="button"
+                    disabled={isSubmittingPortal}
+                    onClick={handleConfirmPortalSubmit}
+                    type="button"
+                  >
+                    {isSubmittingPortal ? 'Submitting...' : 'Submit Information'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="button button--secondary"
+                    disabled={isSubmittingPortal}
+                    onClick={closeUnifastPortal}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+
+                  <button className="button" disabled={isSubmittingPortal} type="submit">
+                    Review Information
+                  </button>
+                </>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
+
+      {portalStatusMessage && (
+        <div
+          aria-labelledby="portal-status-title"
+          aria-modal="true"
+          className="modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close portal status modal"
+            className="modal-backdrop-button"
+            onClick={() => setPortalStatusMessage('')}
+            type="button"
+          />
+
+          <section className="modal-card portal-status-card">
+            <div className="modal-header portal-modal-header">
+              <div className="modal-title-row">
+                <div>
+                  <p className="modal-kicker">UNIFAST Portal</p>
+                  <h3 id="portal-status-title">Portal Status</h3>
+                  <p>{portalStatusMessage}</p>
+                </div>
+
+                <button
+                  aria-label="Close portal status"
+                  className="icon-button modal-close"
+                  onClick={() => setPortalStatusMessage('')}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="modal-actions modal-actions--single">
+              <button className="button" onClick={() => setPortalStatusMessage('')} type="button">
+                OK
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {isQuickActionsOpen && (
         <div
@@ -1250,11 +2074,12 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   autoComplete="tel"
                   inputMode="tel"
                   name="signUpPhoneNumber"
+                  pattern="\+?[0-9]*"
                   placeholder="e.g. 09123456789"
                   required
                   type="tel"
                   value={signUpPhoneNumber}
-                  onChange={(event) => setSignUpPhoneNumber(event.target.value)}
+                  onChange={(event) => setSignUpPhoneNumber(sanitizePhoneNumberInput(event.target.value))}
                 />
               </label>
 
@@ -1466,6 +2291,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   autoComplete="tel"
                   inputMode="tel"
                   name="forgotPhoneNumber"
+                  pattern="\+?[0-9]*"
                   placeholder="09123456789 or +639123456789"
                   required
                   type="tel"
@@ -1707,6 +2533,353 @@ const authResponsiveStyles = `
   padding: 10px 12px;
 }
 
+.button--portal {
+  background: #7c2d12;
+}
+
+.button--portal:hover {
+  background: #5f210d;
+}
+
+.portal-modal-card {
+  width: min(100%, 960px);
+  max-height: min(860px, calc(100vh - 32px));
+  overflow-y: auto;
+}
+
+.portal-status-card {
+  width: min(100%, 520px);
+}
+
+.portal-modal-header {
+  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+}
+
+.portal-form {
+  gap: 18px;
+}
+
+.portal-form--hidden {
+  display: none;
+}
+
+.portal-section {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fffaf5;
+  padding: 16px;
+}
+
+.portal-section h4,
+.portal-parent-group p {
+  margin: 0;
+  color: #431407;
+}
+
+.portal-section h4 {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.portal-parent-group {
+  display: grid;
+  gap: 12px;
+}
+
+.portal-parent-group p {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.portal-section-heading {
+  display: grid;
+  gap: 6px;
+}
+
+.portal-section-heading p {
+  margin: 0;
+  color: #6b4f43;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.portal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.portal-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.portal-full-field {
+  grid-column: 1 / -1;
+}
+
+.portal-course-list {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.portal-course-list legend {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+  margin-bottom: 2px;
+}
+
+.portal-course-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  overflow: hidden;
+  border: 1px solid #e9c6b5;
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.35;
+  padding: 14px 16px;
+  text-transform: uppercase;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.portal-course-option:hover {
+  border-color: var(--primary);
+  background: #fffaf5;
+}
+
+.portal-course-option:has(input:checked) {
+  border-color: var(--primary);
+  background: #fff7ed;
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.portal-course-option:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.2);
+}
+
+.portal-course-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.portal-document-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.portal-document-upload {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  min-height: 92px;
+  border: 1px solid #e9c6b5;
+  border-radius: 12px;
+  background: #ffffff;
+  cursor: pointer;
+  padding: 16px;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.portal-document-upload:hover,
+.portal-document-upload--selected {
+  border-color: var(--primary);
+  background: #fff7ed;
+}
+
+.portal-document-upload:hover {
+  transform: translateY(-1px);
+}
+
+.portal-document-upload:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.2);
+}
+
+.portal-document-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.portal-document-upload__icon {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.portal-document-upload__icon .material-symbols-outlined {
+  font-size: 28px;
+}
+
+.portal-document-upload__copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.portal-document-upload__copy strong {
+  overflow-wrap: anywhere;
+  color: #431407;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
+.portal-document-upload__copy span {
+  overflow-wrap: anywhere;
+  color: #6b4f43;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.portal-review {
+  padding-top: 18px;
+}
+
+.portal-review-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fffaf5;
+  padding: 16px;
+}
+
+.portal-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.portal-review-group {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid #e9c6b5;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.portal-review-group h5 {
+  margin: 0;
+  color: #431407;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.portal-review-group dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.portal-review-group dl div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.portal-review-group dt {
+  color: #8b5e4a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.portal-review-group dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.portal-form .form-field select {
+  width: 100%;
+  border: 1px solid var(--outline-soft);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 12px 14px;
+  box-shadow: inset 0 1px 0 rgba(28, 27, 27, 0.02);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.portal-form .form-field select:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.2);
+}
+
+.portal-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
+.portal-message-row {
+  display: grid;
+  gap: 8px;
+  padding: 0 24px 16px;
+}
+
+.portal-message-row .form-error,
+.portal-message-row .form-success {
+  margin: 0;
+}
+
+.portal-actions .button {
+  width: auto;
+}
+
+@media (max-width: 900px) {
+  .portal-grid,
+  .portal-grid--three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portal-document-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .portal-review-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
   .modal-overlay {
     align-items: flex-end;
@@ -1714,10 +2887,15 @@ const authResponsiveStyles = `
   }
 
   .auth-modal-card,
-  .auth-modal-card--large {
+  .auth-modal-card--large,
+  .portal-modal-card {
     width: 100%;
     max-height: calc(100vh - 20px);
     border-radius: 18px 18px 10px 10px;
+  }
+
+  .button--portal {
+    width: 100%;
   }
 
   .auth-form-grid {
@@ -1725,18 +2903,44 @@ const authResponsiveStyles = `
     gap: 14px;
   }
 
+  .portal-grid,
+  .portal-grid--three {
+    grid-template-columns: 1fr;
+  }
+
+  .portal-section {
+    padding: 14px;
+  }
+
+  .portal-review {
+    padding: 14px 18px 18px;
+  }
+
+  .portal-review-card,
+  .portal-review-group {
+    padding: 14px;
+  }
+
+  .portal-document-upload {
+    align-items: flex-start;
+    min-height: auto;
+    padding: 14px;
+  }
+
   .auth-link-row {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .auth-actions {
+  .auth-actions,
+  .portal-actions {
     display: grid;
     grid-template-columns: 1fr;
     gap: 10px;
   }
 
-  .auth-actions .button {
+  .auth-actions .button,
+  .portal-actions .button {
     width: 100%;
   }
 

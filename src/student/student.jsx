@@ -32,6 +32,10 @@ function normalizePhoneNumber(phoneNumber) {
   return phoneNumber.replace(/[\s-]/g, '').trim()
 }
 
+function sanitizePhoneNumberInput(phoneNumber) {
+  return phoneNumber.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
+}
+
 function isValidPhoneNumber(phoneNumber) {
   const normalizedPhone = normalizePhoneNumber(phoneNumber)
 
@@ -120,7 +124,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   }
 
   const handlePhoneNumberChange = (event) => {
-    setPhoneNumber(event.target.value)
+    setPhoneNumber(sanitizePhoneNumberInput(event.target.value))
     setPhoneError('')
     setPhoneSuccess('')
   }
@@ -376,6 +380,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
               <input
                 id="phone-number"
                 inputMode="tel"
+                pattern="\+?[0-9]*"
                 placeholder="09123456789 or +639123456789"
                 type="tel"
                 value={phoneNumber}

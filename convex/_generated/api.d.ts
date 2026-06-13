@@ -11,6 +11,8 @@
 import type * as activityLogs from "../activityLogs.js";
 import type * as adminAuth from "../adminAuth.js";
 import type * as allinfo from "../allinfo.js";
+import type * as applicantPortal from "../applicantPortal.js";
+import type * as applicants from "../applicants.js";
 import type * as quickActions from "../quickActions.js";
 
 import type {
@@ -23,6 +25,8 @@ declare const fullApi: ApiFromModules<{
   activityLogs: typeof activityLogs;
   adminAuth: typeof adminAuth;
   allinfo: typeof allinfo;
+  applicantPortal: typeof applicantPortal;
+  applicants: typeof applicants;
   quickActions: typeof quickActions;
 }>;
 
