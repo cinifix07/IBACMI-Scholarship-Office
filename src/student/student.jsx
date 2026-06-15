@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import sampleSchoolIdFormat from '../assets/samp.jpg'
 import './student.css'
 
 const initialForm = {
@@ -115,7 +116,6 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const schoolYearOptions = getUniqueOptions([form.schoolYear, '2023-2024', '2024-2025'])
   const hasSavedFrontId = Boolean(studentRecord?.frontIdStorageId)
   const uploadedIdUrl = studentRecord?.frontIdUrl ?? ''
-  const isUploadedIdImage = /\.(png|jpe?g)(?:$|\?)/i.test(uploadedIdUrl)
 
   const handleLogout = () => {
     if (typeof onLogout === 'function') {
@@ -245,10 +245,12 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     setUploadError('')
     setUploadSuccess('')
 
-    const allowedFileTypes = ['application/pdf', 'image/png', 'image/jpeg']
-
-    if (selectedFile && !allowedFileTypes.includes(selectedFile.type)) {
-      setUploadError('Only PDF, PNG, or JPG files are allowed.')
+    if (
+      selectedFile &&
+      selectedFile.type !== 'application/pdf' &&
+      !/\.pdf$/i.test(selectedFile.name)
+    ) {
+      setUploadError('Only PDF files are allowed.')
       event.target.value = ''
       setter(null)
       return
@@ -292,7 +294,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     }
 
     if (!frontIdFile) {
-      setUploadError('Choose a  file before saving.')
+      setUploadError('Choose a PDF file before saving.')
       return
     }
 
@@ -535,6 +537,39 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
               </p>
             </div>
 
+            <aside className="student-sample-card" aria-label="Sample School ID upload format">
+              <div className="student-sample-card__header">
+                <div>
+                  <span className="student-sample-card__eyebrow">Sample Format</span>
+                  <h4>Scan layout guide</h4>
+                </div>
+                <span className="student-sample-card__badge">Required</span>
+              </div>
+              <div className="student-sample-card__body">
+                <a
+                  className="student-sample-card__image-link"
+                  href={sampleSchoolIdFormat}
+                  rel="noreferrer"
+                  target="_blank"
+                  title="Open sample format"
+                >
+                  <img
+                    alt="Sample scan format showing front and back School ID, three signatures, and Batch No."
+                    src={sampleSchoolIdFormat}
+                  />
+                </a>
+                <div className="student-sample-card__checklist">
+                  <p>Before converting to PDF, make sure your scan includes:</p>
+                  <ul>
+                    <li>Colored front and back copy of your School ID</li>
+                    <li>Three clear signatures below the ID copies</li>
+                    <li>Readable Batch No. written on the same page</li>
+                  </ul>
+                  <span>Upload the final file as PDF only, maximum 5MB.</span>
+                </div>
+              </div>
+            </aside>
+
             <div className="student-upload-field">
               <span className="student-upload-label">Upload File</span>
               <label
@@ -544,7 +579,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
                 htmlFor="file-front"
               >
                 <input
-                  accept="application/pdf,image/png,image/jpeg"
+                  accept="application/pdf,.pdf"
                   disabled={!studentRecord || isSavingUploads}
                   id="file-front"
                   type="file"
@@ -557,7 +592,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
                   {frontIdFile?.name ||
                     (hasSavedFrontId ? 'File already uploaded' : 'Tap to upload File')}
                 </span>
-                <span className="student-upload-note">PDF, PNG, JPG up to 5MB</span>
+                <span className="student-upload-note">PDF only up to 5MB</span>
               </label>
             </div>
 
@@ -570,14 +605,10 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
                   </a>
                 </div>
 
-                {isUploadedIdImage ? (
-                  <img alt="Uploaded School ID" src={uploadedIdUrl} />
-                ) : (
-                  <a className="student-id-preview__file" href={uploadedIdUrl} rel="noreferrer" target="_blank">
-                    <span className="material-symbols-outlined">picture_as_pdf</span>
-                    Open uploaded PDF
-                  </a>
-                )}
+                <a className="student-id-preview__file" href={uploadedIdUrl} rel="noreferrer" target="_blank">
+                  <span className="material-symbols-outlined">picture_as_pdf</span>
+                  Open uploaded PDF
+                </a>
               </div>
             )}
 

@@ -1196,7 +1196,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               title="Clear search"
               onClick={handleRefreshTable}
             >
-              <span className="material-symbols-outlined">filter_list</span>
+              <span className="material-symbols-outlined">restart_alt</span>
+              <span className="filter-button__text">Reset</span>
             </button>
           </section>
 
