@@ -108,6 +108,15 @@ function isValidPassword(password) {
   return password.length >= 6
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId))
+}
+
 const studentPortalFields = [
   { label: 'Student ID', name: 'studentId', autoComplete: 'off', required: true },
   { label: 'Last Name', name: 'lastName', autoComplete: 'family-name', required: true },
@@ -244,8 +253,19 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     return granteeRows.filter((grantee) => {
       const studentId = String(grantee.studentId ?? '').trim().toLowerCase()
       const batchId = String(grantee.batchId ?? '').trim().toLowerCase()
+      const lastName = String(grantee.lastName ?? '').trim().toLowerCase()
+      const firstName = String(grantee.firstName ?? '').trim().toLowerCase()
+      const middleName = String(grantee.middleName ?? grantee.middleInitial ?? '').trim().toLowerCase()
+      const fullName = [lastName, firstName, middleName].filter(Boolean).join(' ')
 
-      return studentId === searchValue || batchId === searchValue
+      return (
+        studentId === searchValue ||
+        batchId === searchValue ||
+        lastName.includes(searchValue) ||
+        firstName.includes(searchValue) ||
+        middleName.includes(searchValue) ||
+        fullName.includes(searchValue)
+      )
     })
   }, [granteeRows, studentIdSearch])
 
@@ -326,6 +346,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           schoolIdFile: null,
         })
         setIsAdminLoginOpen(false)
+        setIsSubmittingAdminLogin(false)
         setIsForgotPasswordOpen(false)
         setIsSignUpOpen(false)
         setIsSignUpDeniedOpen(false)
@@ -619,6 +640,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const closeAdminLogin = () => {
     setIsAdminLoginOpen(false)
+    setIsSubmittingAdminLogin(false)
     setAdminLoginError('')
     setAdminLoginEmail('')
     setAdminLoginSchoolId('')
@@ -944,10 +966,14 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsSubmittingAdminLogin(true)
 
     try {
-      const result = await loginAdmin(loginPayload)
+      const result = await withTimeout(
+        loginAdmin(loginPayload),
+        15000,
+        'Login is taking too long. Please check your internet connection is running, then try again.',
+      )
 
       if (!result.success) {
-        setAdminLoginError(result.message)
+        setAdminLoginError(result.message || 'Invalid admin credentials.')
         return
       }
 
@@ -1143,10 +1169,11 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           <section className="page-heading">
             <div className="page-heading__copy">
               <span className="eyebrow">Grantee Records</span>
-              <h2>SEARCH YOUR SCHOOL ID or BATCH NO./ID</h2>
+              <h2>SEARCH YOUR SCHOOL ID, BATCH NO./ID, OR NAME</h2>
               <p>
-                Search a School ID or Batch No./ID to securely view grantee records. Records are
-                hidden by default for privacy and controlled access.
+                Search a School ID, Batch No./ID, Last Name, First Name, or Middle Name to securely
+                view grantee records. Records are hidden by default for privacy and controlled
+                access.
               </p>
             </div>
           </section>
@@ -1155,7 +1182,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             <div className="search-field">
               <span className="material-symbols-outlined">search</span>
               <input
-                placeholder="Enter exact School ID or Batch No./ID..."
+                placeholder="Enter School ID, Batch No./ID, Last Name, First Name, or Middle Name..."
                 type="text"
                 value={studentIdSearch}
                 onChange={handleGranteeSearchChange}
@@ -1181,6 +1208,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                     <th>No.</th>
                     <th>TES Award Number</th>
                     <th>Student ID</th>
+                    <th>Last Name</th>
+                    <th>First Name</th>
+                    <th>Middle Name</th>
                     <th>Batch No.</th>
                     <th>Status</th>
                     <th>Semester</th>
@@ -1191,15 +1221,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 <tbody>
                   {!hasStudentIdSearch && (
                     <tr>
-                      <td className="empty-state" colSpan={7}>
-                        Enter a School ID or Batch No./ID in the search field to view records.
+                      <td className="empty-state" colSpan={10}>
+                        Enter a School ID, Batch No./ID, or name in the search field to view records.
                       </td>
                     </tr>
                   )}
 
                   {hasStudentIdSearch && allInfoRecords === undefined && (
                     <tr>
-                      <td className="empty-state" colSpan={7}>
+                      <td className="empty-state" colSpan={10}>
                         Searching grantee record...
                       </td>
                     </tr>
@@ -1207,8 +1237,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
                   {hasStudentIdSearch && allInfoRecords && filteredGranteeRows.length === 0 && (
                     <tr>
-                      <td className="empty-state" colSpan={7}>
-                        No matching School ID or Batch No./ID found.
+                      <td className="empty-state" colSpan={10}>
+                        No matching School ID, Batch No./ID, or name found.
                       </td>
                     </tr>
                   )}
@@ -1223,6 +1253,14 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                         </td>
 
                         <td data-label="Student ID">{grantee.studentId}</td>
+
+                        <td data-label="Last Name">{grantee.lastName || 'â€”'}</td>
+
+                        <td data-label="First Name">{grantee.firstName || 'â€”'}</td>
+
+                        <td data-label="Middle Name">
+                          {grantee.middleName || grantee.middleInitial || 'â€”'}
+                        </td>
 
                         <td className="batch-cell" data-label="Batch ID">
                           {grantee.batchId}
@@ -1253,8 +1291,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 </p>
               ) : (
                 <p>
-                  Search by <strong>School ID</strong> or <strong>Batch No./ID</strong> to display
-                  grantee records.
+                  Search by <strong>School ID</strong>, <strong>Batch No./ID</strong>, or{' '}
+                  <strong>Name</strong> to display grantee records.
                 </p>
               )}
 
