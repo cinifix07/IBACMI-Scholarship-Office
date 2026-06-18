@@ -410,6 +410,7 @@ function Admin({ onLogout }) {
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
+  const [isQuickActionsClearConfirmOpen, setIsQuickActionsClearConfirmOpen] = useState(false)
   const [isUnifastPortalConfirmOpen, setIsUnifastPortalConfirmOpen] = useState(false)
   const [isUnifastPortalCoursesOpen, setIsUnifastPortalCoursesOpen] = useState(false)
   const [isApplicantYearOpen, setIsApplicantYearOpen] = useState(false)
@@ -461,6 +462,7 @@ function Admin({ onLogout }) {
   const isAnyModalOpen =
     isLogsOpen ||
     isQuickActionsOpen ||
+    isQuickActionsClearConfirmOpen ||
     isUnifastPortalConfirmOpen ||
     isUnifastPortalCoursesOpen ||
     isApplicantYearOpen ||
@@ -1117,22 +1119,21 @@ function Admin({ onLogout }) {
     downloadCsvFile(`student-requests-responses-${exportedDate}.csv`, csvRows)
   }
 
-  const handleClearAllQuickActions = async () => {
+  const openClearAllQuickActionsConfirm = () => {
     if (isClearingQuickActions || quickActionRows.length === 0) return
 
-    const confirmed = window.confirm(
-      `Clear all ${quickActionRows.length} Quick Action message${
-        quickActionRows.length === 1 ? '' : 's'
-      }? This cannot be undone.`,
-    )
+    setIsQuickActionsClearConfirmOpen(true)
+  }
 
-    if (!confirmed) return
+  const handleClearAllQuickActions = async () => {
+    if (isClearingQuickActions || quickActionRows.length === 0) return
 
     setIsClearingQuickActions(true)
 
     try {
       await clearAllQuickActions({})
       setCurrentQuickActionPage(1)
+      setIsQuickActionsClearConfirmOpen(false)
     } catch (error) {
       window.alert(
         error instanceof Error ? error.message : 'Unable to clear Quick Action messages.',
@@ -1462,8 +1463,14 @@ function Admin({ onLogout }) {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (isQuickActionsClearConfirmOpen && !isClearingQuickActions) {
+          setIsQuickActionsClearConfirmOpen(false)
+          return
+        }
+
         setIsLogsOpen(false)
         setIsQuickActionsOpen(false)
+        setIsQuickActionsClearConfirmOpen(false)
         setIsUnifastPortalConfirmOpen(false)
         setIsUnifastPortalCoursesOpen(false)
         setIsApplicantYearOpen(false)
@@ -1492,7 +1499,7 @@ function Admin({ onLogout }) {
       document.body.style.overflow = ''
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isAnyModalOpen])
+  }, [isAnyModalOpen, isClearingQuickActions, isQuickActionsClearConfirmOpen])
 
   return (
     <div className="admin-page">
@@ -3376,7 +3383,9 @@ function Admin({ onLogout }) {
           <button
             aria-label="Close quick actions modal"
             className="admin-modal-backdrop"
-            onClick={() => setIsQuickActionsOpen(false)}
+            onClick={() => {
+              if (!isQuickActionsClearConfirmOpen) setIsQuickActionsOpen(false)
+            }}
             type="button"
           />
 
@@ -3391,7 +3400,10 @@ function Admin({ onLogout }) {
               <button
                 aria-label="Close quick actions"
                 className="admin-modal-close"
-                onClick={() => setIsQuickActionsOpen(false)}
+                onClick={() => {
+                  setIsQuickActionsOpen(false)
+                  setIsQuickActionsClearConfirmOpen(false)
+                }}
                 type="button"
               >
                 <span className="material-symbols-outlined">close</span>
@@ -3443,7 +3455,7 @@ function Admin({ onLogout }) {
                     quickActionRows.length === 0 ||
                     isClearingQuickActions
                   }
-                  onClick={handleClearAllQuickActions}
+                  onClick={openClearAllQuickActionsConfirm}
                   type="button"
                 >
                   <span className="material-symbols-outlined">delete_sweep</span>
@@ -3564,6 +3576,70 @@ function Admin({ onLogout }) {
                   <span className="material-symbols-outlined">chevron_right</span>
                 </button>
               </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isQuickActionsClearConfirmOpen && (
+        <div
+          aria-describedby="clear-quick-actions-description"
+          aria-labelledby="clear-quick-actions-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="alertdialog"
+        >
+          <button
+            aria-label="Keep Quick Action messages"
+            className="admin-modal-backdrop"
+            disabled={isClearingQuickActions}
+            onClick={() => setIsQuickActionsClearConfirmOpen(false)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card">
+            <div className="admin-confirm-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">delete_sweep</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Permanent Action</p>
+              <h2 id="clear-quick-actions-title">Clear all messages?</h2>
+              <p id="clear-quick-actions-description">
+                You are about to permanently delete{' '}
+                <strong>
+                  {quickActionRows.length} message{quickActionRows.length === 1 ? '' : 's'}
+                </strong>
+                . This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__notice">
+              <span className="material-symbols-outlined" aria-hidden="true">
+                warning
+              </span>
+              Export the responses first if you need to keep a copy.
+            </div>
+
+            <div className="admin-confirm-card__actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isClearingQuickActions}
+                onClick={() => setIsQuickActionsClearConfirmOpen(false)}
+                type="button"
+              >
+                No, Keep Messages
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isClearingQuickActions}
+                onClick={handleClearAllQuickActions}
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete_forever</span>
+                {isClearingQuickActions ? 'Clearing Messages...' : 'Yes, Clear All'}
+              </button>
             </div>
           </section>
         </div>
@@ -4304,6 +4380,94 @@ const adminStyles = `
 
 .admin-modal-card--compact {
   width: min(100%, 560px);
+}
+
+.admin-confirm-overlay {
+  z-index: 90;
+  background: rgba(28, 25, 23, 0.64);
+  backdrop-filter: blur(12px);
+}
+
+.admin-confirm-card {
+  width: min(100%, 500px);
+  padding: 28px;
+  text-align: center;
+}
+
+.admin-confirm-card__icon {
+  display: inline-flex;
+  width: 64px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #fecaca;
+  border-radius: 20px;
+  background: #fef2f2;
+  color: #b91c1c;
+  box-shadow: 0 12px 28px rgba(185, 28, 28, 0.12);
+}
+
+.admin-confirm-card__icon .material-symbols-outlined {
+  font-size: 32px;
+}
+
+.admin-confirm-card__copy {
+  margin-top: 18px;
+}
+
+.admin-confirm-card__copy h2,
+.admin-confirm-card__copy p {
+  margin: 0;
+}
+
+.admin-confirm-card__copy h2 {
+  margin-top: 5px;
+  color: var(--admin-text);
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.admin-confirm-card__copy > p:last-child {
+  margin-top: 10px;
+  color: var(--admin-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.admin-confirm-card__copy strong {
+  color: var(--admin-text);
+}
+
+.admin-confirm-card__notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 20px;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.admin-confirm-card__notice .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 21px;
+}
+
+.admin-confirm-card__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.admin-confirm-card__actions .admin-button {
+  width: 100%;
 }
 
 .admin-modal-card--applicant-years {
@@ -5343,6 +5507,14 @@ const adminStyles = `
   .admin-modal-overlay {
     align-items: flex-end;
     padding: 10px;
+  }
+
+  .admin-confirm-card {
+    padding: 24px 18px 18px;
+  }
+
+  .admin-confirm-card__actions {
+    grid-template-columns: 1fr;
   }
 
   .admin-modal-card {
