@@ -252,6 +252,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
   const hasStudentIdSearch = studentIdSearch.trim().length > 0
+  const isPortalStatusLoading = applicantPortal === undefined
+  const isApplicantPortalOpen = applicantPortal?.isReceivingApplicants === true
 
   const filteredGranteeRows = useMemo(() => {
     const searchValue = studentIdSearch.trim().toLowerCase()
@@ -1236,7 +1238,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
         <div className="header-actions">
           <button className="button button--compact" onClick={openQuickActions} type="button">
-            Quick Actions
+            SUPPORT
           </button>
 
           <button
@@ -1254,7 +1256,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           <section className="page-heading">
             <div className="page-heading__copy">
               <span className="eyebrow">Grantee Records</span>
-              <h2>SEARCH YOUR SCHOOL ID EITHER BATCH NO., OR LAST NAME</h2>
+              <h2>IBACMI - Scholarship Office</h2>
 
             </div>
           </section>
@@ -1282,51 +1284,43 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             </button>
           </section>
 
-          <section className="table-card" aria-label="Grantee records">
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>No.</th>
-                    <th>TES Award Number</th>
-                    <th>Student ID</th>
-                    <th>Last Name</th>
-                    <th>First Name</th>
-                    <th>Middle Name</th>
-                    <th>Batch No.</th>
-                    <th>Status</th>
-                    <th>Semester</th>
-                    <th>School Year</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {!hasStudentIdSearch && (
+          {hasStudentIdSearch && (
+            <section className="table-card" aria-label="Filtered grantee records">
+              <div className="table-scroll">
+                <table>
+                  <thead>
                     <tr>
-                      <td className="empty-state" colSpan={10}>
-                        Enter a School ID, Batch No./ID, or name in the search field to view records.
-                      </td>
+                      <th>No.</th>
+                      <th>TES Award Number</th>
+                      <th>Student ID</th>
+                      <th>Last Name</th>
+                      <th>First Name</th>
+                      <th>Middle Name</th>
+                      <th>Batch No.</th>
+                      <th>Status</th>
+                      <th>Semester</th>
+                      <th>School Year</th>
                     </tr>
-                  )}
+                  </thead>
 
-                  {hasStudentIdSearch && allInfoRecords === undefined && (
-                    <tr>
-                      <td className="empty-state" colSpan={10}>
-                        Searching grantee record...
-                      </td>
-                    </tr>
-                  )}
+                  <tbody>
+                    {allInfoRecords === undefined && (
+                      <tr>
+                        <td className="empty-state" colSpan={10}>
+                          Searching grantee record...
+                        </td>
+                      </tr>
+                    )}
 
-                  {hasStudentIdSearch && allInfoRecords && filteredGranteeRows.length === 0 && (
-                    <tr>
-                      <td className="empty-state" colSpan={10}>
-                        No matching School ID, Batch No./ID, or name found.
-                      </td>
-                    </tr>
-                  )}
+                    {allInfoRecords && filteredGranteeRows.length === 0 && (
+                      <tr>
+                        <td className="empty-state" colSpan={10}>
+                          No matching School ID, Batch No./ID, or name found.
+                        </td>
+                      </tr>
+                    )}
 
-                  {hasStudentIdSearch &&
-                    paginatedGranteeRows.map((grantee, index) => (
+                    {paginatedGranteeRows.map((grantee, index) => (
                       <tr key={grantee._id}>
                         <td data-label="No.">{grantee.no || startIndex + index + 1}</td>
 
@@ -1360,71 +1354,65 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                         <td data-label="School Year">{grantee.schoolYear || '—'}</td>
                       </tr>
                     ))}
-                </tbody>
-              </table>
-            </div>
+                  </tbody>
+                </table>
+              </div>
 
-            <div className="table-footer">
-              {hasStudentIdSearch ? (
+              <div className="table-footer">
                 <p>
                   Showing <strong>{totalRows === 0 ? 0 : startIndex + 1}</strong> to{' '}
                   <strong>{endIndex}</strong> of <strong>{totalRows}</strong> result
                   {totalRows === 1 ? '' : 's'}
                 </p>
-              ) : (
-                <p>
-                  Search by <strong>School ID</strong>, <strong>Batch No./ID</strong>, or{' '}
-                  <strong>Name</strong> to display grantee records.
-                </p>
-              )}
 
-              <div className="pagination">
-                <button
-                  className="page-button"
-                  disabled={!hasStudentIdSearch || currentPage === 1 || totalRows === 0}
-                  onClick={goToPreviousPage}
-                  type="button"
-                  aria-label="Previous page"
-                >
-                  <span className="material-symbols-outlined">chevron_left</span>
-                </button>
+                <div className="pagination">
+                  <button
+                    className="page-button"
+                    disabled={currentPage === 1 || totalRows === 0}
+                    onClick={goToPreviousPage}
+                    type="button"
+                    aria-label="Previous page"
+                  >
+                    <span className="material-symbols-outlined">chevron_left</span>
+                  </button>
 
-                {paginationRange.map((pageItem) => {
-                  if (typeof pageItem === 'string') {
+                  {paginationRange.map((pageItem) => {
+                    if (typeof pageItem === 'string') {
+                      return (
+                        <span className="pagination__ellipsis" key={pageItem}>
+                          ...
+                        </span>
+                      )
+                    }
+
                     return (
-                      <span className="pagination__ellipsis" key={pageItem}>
-                        ...
-                      </span>
+                      <button
+                        key={pageItem}
+                        className={`page-button ${
+                          currentPage === pageItem ? 'page-button--active' : ''
+                        }`}
+                        disabled={totalRows === 0}
+                        onClick={() => setCurrentPage(pageItem)}
+                        type="button"
+                      >
+                        {pageItem}
+                      </button>
                     )
-                  }
+                  })}
 
-                  return (
-                    <button
-                      key={pageItem}
-                      className={`page-button ${
-                        currentPage === pageItem ? 'page-button--active' : ''
-                      }`}
-                      disabled={!hasStudentIdSearch || totalRows === 0}
-                      onClick={() => setCurrentPage(pageItem)}
-                      type="button"
-                    >
-                      {pageItem}
-                    </button>
-                  )
-                })}
-
-                <button
-                  className="page-button"
-                  disabled={!hasStudentIdSearch || currentPage === totalPages || totalRows === 0}
-                  onClick={goToNextPage}
-                  type="button"
-                  aria-label="Next page"
-                >
-                  <span className="material-symbols-outlined">chevron_right</span>
-                </button>
+                  <button
+                    className="page-button"
+                    disabled={currentPage === totalPages || totalRows === 0}
+                    onClick={goToNextPage}
+                    type="button"
+                    aria-label="Next page"
+                  >
+                    <span className="material-symbols-outlined">chevron_right</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
 
           <section className="portal-cta" aria-labelledby="portal-cta-title">
             <div className="portal-cta__icon" aria-hidden="true">
@@ -1432,16 +1420,39 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             </div>
 
             <div className="portal-cta__copy">
-              <span className="eyebrow">UNIFAST Portal</span>
-              <h3 id="portal-cta-title">Submit student information</h3>
+              <span className="eyebrow">Unified Student Financial Assistance System for Tertiary Education</span>
+              <h3 id="portal-cta-title">UNIFAST APPLICATION</h3>
               <p>
                 Complete the student, parent, address, and contact information form for UNIFAST
                 applicant processing.
               </p>
             </div>
 
-            <button className="button button--portal" onClick={openUnifastPortal} type="button">
-              Open Portal
+            <button
+              aria-label={
+                isPortalStatusLoading
+                  ? 'Checking UNIFAST portal status'
+                  : isApplicantPortalOpen
+                    ? 'UNIFAST portal is open. Open application form'
+                    : 'UNIFAST portal is closed'
+              }
+              className={`button button--portal ${
+                isPortalStatusLoading
+                  ? 'button--portal-loading'
+                  : isApplicantPortalOpen
+                    ? 'button--portal-open'
+                    : 'button--portal-closed'
+              }`}
+              disabled={isPortalStatusLoading}
+              onClick={openUnifastPortal}
+              type="button"
+            >
+              <span className="portal-status-dot" aria-hidden="true" />
+              {isPortalStatusLoading
+                ? 'CHECKING PORTAL'
+                : isApplicantPortalOpen
+                  ? 'PORTAL OPEN'
+                  : 'PORTAL IS CLOSED'}
             </button>
           </section>
         </div>
@@ -1972,7 +1983,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             <div className="modal-header portal-modal-header">
               <div className="modal-title-row">
                 <div>
-                  <p className="modal-kicker">UNIFAST Portal</p>
+                  
                   <h3 id="portal-status-title">Portal Status</h3>
                   <p>{portalStatusMessage}</p>
                 </div>
@@ -2161,14 +2172,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 <span className="material-symbols-outlined">close</span>
               </button>
 
-              <p className="modal-kicker">Administrator Access</p>
-              <h3 id="admin-login-title">Sign in to Admin View</h3>
-              <p>Use either your valid email address or School ID, then enter your password.</p>
+              <p className="modal-kicker">UNIFAST Portal</p>
+              <h3 id="admin-login-title">Sign in </h3>
+             
             </div>
 
             <div className="modal-body admin-login-body auth-form-grid">
+              
               <label className="form-field">
-                <span>Email address</span>
+                <span>Valid Email address</span>
                 <input
                   autoComplete="email"
                   inputMode="email"
@@ -2819,11 +2831,77 @@ const authResponsiveStyles = `
 }
 
 .button--portal {
-  background: #7c2d12;
+  min-width: 170px;
+  border: 1px solid transparent;
+  letter-spacing: 0.03em;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
-.button--portal:hover {
-  background: #5f210d;
+.button--portal-open {
+  border-color: #15803d;
+  background: #15803d;
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(21, 128, 61, 0.2);
+}
+
+.button--portal-open:hover {
+  background: #166534;
+  box-shadow: 0 12px 26px rgba(21, 128, 61, 0.28);
+}
+
+.button--portal-closed {
+  border-color: #b91c1c;
+  background: #b91c1c;
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(185, 28, 28, 0.18);
+}
+
+.button--portal-closed:hover {
+  background: #991b1b;
+  box-shadow: 0 12px 26px rgba(185, 28, 28, 0.26);
+}
+
+.button--portal-loading,
+.button--portal-loading:disabled {
+  border-color: #cbd5e1;
+  background: #64748b;
+  color: #ffffff;
+  cursor: wait;
+  opacity: 1;
+}
+
+.portal-status-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
+}
+
+.button--portal-open .portal-status-dot {
+  background: #bbf7d0;
+}
+
+.button--portal-closed .portal-status-dot {
+  background: #fecaca;
+}
+
+.button--portal-loading .portal-status-dot {
+  background: #e2e8f0;
+  animation: portal-status-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes portal-status-pulse {
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
 }
 
 .portal-modal-card {
