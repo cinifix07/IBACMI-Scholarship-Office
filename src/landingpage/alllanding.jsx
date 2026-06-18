@@ -83,6 +83,10 @@ function sanitizePhoneNumberInput(phoneNumber) {
   return phoneNumber.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
 }
 
+function sanitizeSingleParagraphInput(value) {
+  return value.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ')
+}
+
 function isValidPhoneNumber(phoneNumber) {
   const normalizedPhone = normalizePhoneNumber(phoneNumber)
 
@@ -196,6 +200,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [portalDocumentFiles, setPortalDocumentFiles] = useState({
     psaFile: null,
     schoolIdFile: null,
+    pwdIdFile: null,
+    fourPsFile: null,
   })
   const [portalReviewData, setPortalReviewData] = useState(null)
 
@@ -344,6 +350,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         setPortalDocumentFiles({
           psaFile: null,
           schoolIdFile: null,
+          pwdIdFile: null,
+          fourPsFile: null,
         })
         setIsAdminLoginOpen(false)
         setIsSubmittingAdminLogin(false)
@@ -416,6 +424,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setPortalDocumentFiles({
       psaFile: null,
       schoolIdFile: null,
+      pwdIdFile: null,
+      fourPsFile: null,
     })
     setPortalReviewData(null)
   }
@@ -460,7 +470,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         ...currentFiles,
         [name]: null,
       }))
-      setPortalError('Please upload PDF files only for PSA and School ID requirements.')
+      setPortalError('Please upload PDF files only for all document requirements.')
       return
     }
 
@@ -489,6 +499,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     const emailAddress = String(formData.get('emailAddress') || '').trim().toLowerCase()
     const psaFile = formData.get('psaFile')
     const schoolIdFile = formData.get('schoolIdFile')
+    const pwdIdFile = formData.get('pwdIdFile')
+    const fourPsFile = formData.get('fourPsFile')
 
     setPortalError('')
     setPortalSuccess('')
@@ -527,6 +539,20 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       return
     }
 
+    const optionalFiles = [pwdIdFile, fourPsFile].filter(
+      (file) => file instanceof File && file.name,
+    )
+
+    if (optionalFiles.some((file) => !isValidApplicantPdf(file))) {
+      setPortalError('Optional PWD ID and 4Ps ID documents must be PDF files.')
+      return
+    }
+
+    if (optionalFiles.some((file) => file.size > applicantPdfMaxSize)) {
+      setPortalError('Each uploaded PDF must be 5MB or smaller.')
+      return
+    }
+
     setPortalReviewData({
       studentId: String(formData.get('studentId') || '').trim(),
       lastName: String(formData.get('lastName') || '').trim(),
@@ -550,6 +576,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       emailAddress,
       psaFile,
       schoolIdFile,
+      pwdIdFile: optionalFiles.includes(pwdIdFile) ? pwdIdFile : null,
+      fourPsFile: optionalFiles.includes(fourPsFile) ? fourPsFile : null,
     })
   }
 
@@ -573,12 +601,19 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsSubmittingPortal(true)
 
     try {
-      const [psaFileStorageId, schoolIdFileStorageId] = await Promise.all([
-        uploadApplicantPdfToStorage(portalReviewData.psaFile),
-        uploadApplicantPdfToStorage(portalReviewData.schoolIdFile),
-      ])
+      const [psaFileStorageId, schoolIdFileStorageId, pwdIdFileStorageId, fourPsFileStorageId] =
+        await Promise.all([
+          uploadApplicantPdfToStorage(portalReviewData.psaFile),
+          uploadApplicantPdfToStorage(portalReviewData.schoolIdFile),
+          portalReviewData.pwdIdFile
+            ? uploadApplicantPdfToStorage(portalReviewData.pwdIdFile)
+            : Promise.resolve(undefined),
+          portalReviewData.fourPsFile
+            ? uploadApplicantPdfToStorage(portalReviewData.fourPsFile)
+            : Promise.resolve(undefined),
+        ])
 
-      const result = await createApplicant({
+      const applicantSubmission = {
         studentId: portalReviewData.studentId,
         lastName: portalReviewData.lastName,
         firstName: portalReviewData.firstName,
@@ -603,7 +638,19 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         psaFileName: portalReviewData.psaFile.name,
         schoolIdFileStorageId,
         schoolIdFileName: portalReviewData.schoolIdFile.name,
-      })
+      }
+
+      if (pwdIdFileStorageId && portalReviewData.pwdIdFile) {
+        applicantSubmission.pwdIdFileStorageId = pwdIdFileStorageId
+        applicantSubmission.pwdIdFileName = portalReviewData.pwdIdFile.name
+      }
+
+      if (fourPsFileStorageId && portalReviewData.fourPsFile) {
+        applicantSubmission.fourPsFileStorageId = fourPsFileStorageId
+        applicantSubmission.fourPsFileName = portalReviewData.fourPsFile.name
+      }
+
+      const result = await createApplicant(applicantSubmission)
 
       if (!result.success) {
         setPortalError(result.message || 'Unable to submit applicant information.')
@@ -614,6 +661,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setPortalDocumentFiles({
         psaFile: null,
         schoolIdFile: null,
+        pwdIdFile: null,
+        fourPsFile: null,
       })
       setPortalReviewData(null)
       setPortalSuccess(result.message || 'Applicant information submitted successfully.')
@@ -1108,15 +1157,51 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
     const form = event.currentTarget
     const formData = new FormData(form)
+    const email = String(formData.get('email') || '').trim().toLowerCase()
+    const studentId = String(formData.get('studentId') || '').trim()
+    const lastName = String(formData.get('lastName') || '').trim()
+    const firstName = String(formData.get('firstName') || '').trim()
+    const middleInitial = String(formData.get('middleInitial') || '').trim()
+    const question = sanitizeSingleParagraphInput(
+      String(formData.get('question') || ''),
+    ).trim()
 
     setQuickActionError('')
     setQuickActionSuccess('')
     setIsSubmittingQuickAction(true)
 
     try {
+      if (!isValidEmailAddress(email)) {
+        throw new Error('Please enter a valid email account.')
+      }
+
+      if (!isValidSchoolId(studentId)) {
+        throw new Error('Please enter a valid Student ID.')
+      }
+
+      if (!lastName || !firstName) {
+        throw new Error('Last name and first name are required.')
+      }
+
+      if (middleInitial && !/^[A-Za-z. -]{1,10}$/.test(middleInitial)) {
+        throw new Error('Please enter a valid middle initial.')
+      }
+
+      if (!question) {
+        throw new Error('Please enter your question or request.')
+      }
+
+      if (question.length > 500) {
+        throw new Error('Your question must be 500 characters or fewer.')
+      }
+
       await createQuickAction({
-        email: String(formData.get('email') || ''),
-        question: String(formData.get('question') || ''),
+        email,
+        studentId,
+        lastName,
+        firstName,
+        middleInitial,
+        question,
         source: quickActionsData.quickActions.source,
         status: quickActionsData.quickActions.defaultStatus,
       })
@@ -1169,12 +1254,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           <section className="page-heading">
             <div className="page-heading__copy">
               <span className="eyebrow">Grantee Records</span>
-              <h2>SEARCH YOUR SCHOOL ID, BATCH NO./ID, OR NAME</h2>
-              <p>
-                Search a School ID, Batch No./ID, Last Name, First Name, or Middle Name to securely
-                view grantee records. Records are hidden by default for privacy and controlled
-                access.
-              </p>
+              <h2>SEARCH YOUR SCHOOL ID EITHER BATCH NO., OR LAST NAME</h2>
+
             </div>
           </section>
 
@@ -1182,7 +1263,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             <div className="search-field">
               <span className="material-symbols-outlined">search</span>
               <input
-                placeholder="Enter School ID, Batch No./ID, Last Name, First Name, or Middle Name..."
+                placeholder="Enter School ID, Either Batch No., or Last Name..."
                 type="text"
                 value={studentIdSearch}
                 onChange={handleGranteeSearchChange}
@@ -1544,7 +1625,10 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               <section className="portal-section" aria-labelledby="portal-documents-heading">
                 <div className="portal-section-heading">
                   <h4 id="portal-documents-heading">Document Requirements</h4>
-                  <p>Upload clear PDF copies. Each file must be 5MB or smaller.</p>
+                  <p>
+                    Upload clear PDF copies up to 5MB each. Required and optional documents are
+                    labeled below.
+                  </p>
                 </div>
 
                 <div className="portal-document-grid">
@@ -1564,7 +1648,12 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       <span className="material-symbols-outlined">picture_as_pdf</span>
                     </span>
                     <span className="portal-document-upload__copy">
-                      <strong>PSA Birth Certificate</strong>
+                      <span className="portal-document-upload__title">
+                        <strong>PSA Birth Certificate</strong>
+                        <span className="portal-document-badge portal-document-badge--required">
+                          Required
+                        </span>
+                      </span>
                       <span>
                         {portalDocumentFiles.psaFile
                           ? `${portalDocumentFiles.psaFile.name} (${formatFileSize(
@@ -1591,13 +1680,76 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       <span className="material-symbols-outlined">badge</span>
                     </span>
                     <span className="portal-document-upload__copy">
-                      <strong>Colored School ID Photocopy</strong>
+                      <span className="portal-document-upload__title">
+                        <strong>Colored School ID Photocopy</strong>
+                        <span className="portal-document-badge portal-document-badge--required">
+                          Required
+                        </span>
+                      </span>
                       <span>
                         {portalDocumentFiles.schoolIdFile
                           ? `${portalDocumentFiles.schoolIdFile.name} (${formatFileSize(
                               portalDocumentFiles.schoolIdFile.size,
                             )})`
                           : 'Select colored School ID photocopy PDF'}
+                      </span>
+                    </span>
+                  </label>
+
+                  <label
+                    className={`portal-document-upload portal-document-upload--optional${
+                      portalDocumentFiles.pwdIdFile ? ' portal-document-upload--selected' : ''
+                    }`}
+                  >
+                    <input
+                      accept="application/pdf,.pdf"
+                      name="pwdIdFile"
+                      onChange={handlePortalDocumentChange}
+                      type="file"
+                    />
+                    <span className="portal-document-upload__icon">
+                      <span className="material-symbols-outlined">accessible</span>
+                    </span>
+                    <span className="portal-document-upload__copy">
+                      <span className="portal-document-upload__title">
+                        <strong>PWD ID</strong>
+                        <span className="portal-document-badge">Optional</span>
+                      </span>
+                      <span>
+                        {portalDocumentFiles.pwdIdFile
+                          ? `${portalDocumentFiles.pwdIdFile.name} (${formatFileSize(
+                              portalDocumentFiles.pwdIdFile.size,
+                            )})`
+                          : 'Attach a clear PWD ID PDF, if applicable'}
+                      </span>
+                    </span>
+                  </label>
+
+                  <label
+                    className={`portal-document-upload portal-document-upload--optional${
+                      portalDocumentFiles.fourPsFile ? ' portal-document-upload--selected' : ''
+                    }`}
+                  >
+                    <input
+                      accept="application/pdf,.pdf"
+                      name="fourPsFile"
+                      onChange={handlePortalDocumentChange}
+                      type="file"
+                    />
+                    <span className="portal-document-upload__icon">
+                      <span className="material-symbols-outlined">family_restroom</span>
+                    </span>
+                    <span className="portal-document-upload__copy">
+                      <span className="portal-document-upload__title">
+                        <strong>4Ps ID</strong>
+                        <span className="portal-document-badge">Optional</span>
+                      </span>
+                      <span>
+                        {portalDocumentFiles.fourPsFile
+                          ? `${portalDocumentFiles.fourPsFile.name} (${formatFileSize(
+                              portalDocumentFiles.fourPsFile.size,
+                            )})`
+                          : 'Attach a clear 4Ps ID PDF, if applicable'}
                       </span>
                     </span>
                   </label>
@@ -1724,6 +1876,26 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                           <dd>
                             {portalReviewData.schoolIdFile.name} (
                             {formatFileSize(portalReviewData.schoolIdFile.size)})
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>PWD ID (Optional)</dt>
+                          <dd>
+                            {portalReviewData.pwdIdFile
+                              ? `${portalReviewData.pwdIdFile.name} (${formatFileSize(
+                                  portalReviewData.pwdIdFile.size,
+                                )})`
+                              : 'Not provided'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>4Ps ID (Optional)</dt>
+                          <dd>
+                            {portalReviewData.fourPsFile
+                              ? `${portalReviewData.fourPsFile.name} (${formatFileSize(
+                                  portalReviewData.fourPsFile.size,
+                                )})`
+                              : 'Not provided'}
                           </dd>
                         </div>
                       </dl>
@@ -1863,10 +2035,22 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               <p>Send a question or request to the scholarship office for review.</p>
             </div>
 
-            <div className="modal-body">
+            <div className="modal-body quick-action-form-grid">
+              <label className="form-field">
+                <span>Student ID</span>
+                <input
+                  autoComplete="off"
+                  name="studentId"
+                  placeholder="Enter Student ID"
+                  required
+                />
+              </label>
+
               <label className="form-field">
                 <span>Email account</span>
                 <input
+                  autoComplete="email"
+                  inputMode="email"
                   name="email"
                   placeholder={quickActionsData.quickActions.fields.email.placeholder}
                   required
@@ -1875,15 +2059,56 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </label>
 
               <label className="form-field">
-                <span>Question</span>
-                <textarea
-                  name="question"
-                  placeholder={quickActionsData.quickActions.fields.question.placeholder}
+                <span>Last name</span>
+                <input
+                  autoComplete="family-name"
+                  name="lastName"
+                  placeholder="Enter last name"
                   required
                 />
               </label>
 
-              {quickActionError && <p className="form-error">{quickActionError}</p>}
+              <label className="form-field">
+                <span>First name</span>
+                <input
+                  autoComplete="given-name"
+                  name="firstName"
+                  placeholder="Enter first name"
+                  required
+                />
+              </label>
+
+              <label className="form-field quick-action-mi-field">
+                <span>MI</span>
+                <input
+                  autoComplete="additional-name"
+                  maxLength={10}
+                  name="middleInitial"
+                  placeholder="M"
+                />
+              </label>
+
+              <label className="form-field auth-full-field">
+                <span>Question</span>
+                <textarea
+                  aria-describedby="quick-action-question-help"
+                  maxLength={500}
+                  name="question"
+                  onInput={(event) => {
+                    event.currentTarget.value = sanitizeSingleParagraphInput(
+                      event.currentTarget.value,
+                    )
+                  }}
+                  placeholder={quickActionsData.quickActions.fields.question.placeholder}
+                  required
+                  rows={4}
+                />
+                <small className="form-field__help" id="quick-action-question-help">
+                  One paragraph only, up to 500 characters.
+                </small>
+              </label>
+
+              {quickActionError && <p className="form-error auth-full-field">{quickActionError}</p>}
             </div>
 
             <div className="modal-actions">
@@ -2475,6 +2700,10 @@ const authResponsiveStyles = `
   width: min(100%, 720px);
 }
 
+.auth-modal-card.modal-card--wide {
+  width: min(100%, 640px);
+}
+
 .auth-modal-hero {
   position: relative;
 }
@@ -2487,6 +2716,23 @@ const authResponsiveStyles = `
 
 .auth-full-field {
   grid-column: 1 / -1;
+}
+
+.quick-action-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.quick-action-mi-field {
+  max-width: 160px;
+}
+
+.form-field__help {
+  color: #76584a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .auth-link-row {
@@ -2791,6 +3037,36 @@ const authResponsiveStyles = `
   line-height: 1.3;
 }
 
+.portal-document-upload--optional {
+  border-style: dashed;
+}
+
+.portal-document-upload__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.portal-document-upload__copy .portal-document-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.portal-document-upload__copy .portal-document-badge--required {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
 .portal-document-upload__copy span {
   overflow-wrap: anywhere;
   color: #6b4f43;
@@ -2940,6 +3216,15 @@ const authResponsiveStyles = `
   .auth-form-grid {
     grid-template-columns: 1fr;
     gap: 14px;
+  }
+
+  .quick-action-form-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .quick-action-mi-field {
+    max-width: none;
   }
 
   .portal-grid,

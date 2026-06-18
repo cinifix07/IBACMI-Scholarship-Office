@@ -56,6 +56,8 @@ function trimApplicant(args) {
     emailAddress: args.emailAddress.trim().toLowerCase(),
     psaFileName: args.psaFileName.trim(),
     schoolIdFileName: args.schoolIdFileName.trim(),
+    pwdIdFileName: args.pwdIdFileName?.trim() ?? '',
+    fourPsFileName: args.fourPsFileName?.trim() ?? '',
   }
 }
 
@@ -108,6 +110,18 @@ function createApplicantFormDataJson(applicant, applicationYear) {
     }
   }
 
+  if (applicant.pwdIdFileName) {
+    documents.pwdId = {
+      fileName: applicant.pwdIdFileName,
+    }
+  }
+
+  if (applicant.fourPsFileName) {
+    documents.fourPs = {
+      fileName: applicant.fourPsFileName,
+    }
+  }
+
   return {
     applicationYear,
     student,
@@ -133,6 +147,12 @@ export const list = query({
           : null,
         schoolIdFileUrl: applicant.schoolIdFileStorageId
           ? await ctx.storage.getUrl(applicant.schoolIdFileStorageId)
+          : null,
+        pwdIdFileUrl: applicant.pwdIdFileStorageId
+          ? await ctx.storage.getUrl(applicant.pwdIdFileStorageId)
+          : null,
+        fourPsFileUrl: applicant.fourPsFileStorageId
+          ? await ctx.storage.getUrl(applicant.fourPsFileStorageId)
           : null,
       })),
     )
@@ -176,6 +196,10 @@ export const create = mutation({
     psaFileName: v.string(),
     schoolIdFileStorageId: v.id('_storage'),
     schoolIdFileName: v.string(),
+    pwdIdFileStorageId: v.optional(v.id('_storage')),
+    pwdIdFileName: v.optional(v.string()),
+    fourPsFileStorageId: v.optional(v.id('_storage')),
+    fourPsFileName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const applicant = trimApplicant(args)
@@ -255,6 +279,10 @@ export const create = mutation({
     addOptionalField(applicantRecord, 'motherMiddleName', applicant.motherMiddleName)
     addOptionalField(applicantRecord, 'zipCode', applicant.zipCode)
     addOptionalField(applicantRecord, 'pwdId', applicant.pwdId)
+    addOptionalField(applicantRecord, 'pwdIdFileStorageId', args.pwdIdFileStorageId)
+    addOptionalField(applicantRecord, 'pwdIdFileName', applicant.pwdIdFileName)
+    addOptionalField(applicantRecord, 'fourPsFileStorageId', args.fourPsFileStorageId)
+    addOptionalField(applicantRecord, 'fourPsFileName', applicant.fourPsFileName)
 
     const applicantId = await ctx.db.insert('applicants', applicantRecord)
 

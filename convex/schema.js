@@ -72,6 +72,10 @@ export default defineSchema({
     psaFileName: v.optional(v.string()),
     schoolIdFileStorageId: v.optional(v.id('_storage')),
     schoolIdFileName: v.optional(v.string()),
+    pwdIdFileStorageId: v.optional(v.id('_storage')),
+    pwdIdFileName: v.optional(v.string()),
+    fourPsFileStorageId: v.optional(v.id('_storage')),
+    fourPsFileName: v.optional(v.string()),
     applicationYear: v.optional(v.string()),
     formDataJson: v.object({
       applicationYear: v.optional(v.string()),
@@ -117,6 +121,16 @@ export default defineSchema({
               fileName: v.string(),
             }),
           ),
+          pwdId: v.optional(
+            v.object({
+              fileName: v.string(),
+            }),
+          ),
+          fourPs: v.optional(
+            v.object({
+              fileName: v.string(),
+            }),
+          ),
         }),
       ),
     }),
@@ -135,6 +149,10 @@ export default defineSchema({
 
   quickActions: defineTable({
     email: v.string(),
+    studentId: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    middleInitial: v.optional(v.string()),
     question: v.string(),
     source: v.string(),
     status: v.string(),

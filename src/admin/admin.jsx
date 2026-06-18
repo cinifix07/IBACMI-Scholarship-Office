@@ -144,6 +144,13 @@ function sanitizeDownloadPart(value, fallback) {
   return sanitizedValue || fallback
 }
 
+function formatQuickActionStudentName(request) {
+  return [request?.lastName, request?.firstName, request?.middleInitial]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+    .join(', ')
+}
+
 function getApplicantCourse(record) {
   return String(record?.course ?? record?.program ?? record?.degreeProgram ?? '').trim()
 }
@@ -419,6 +426,7 @@ function Admin({ onLogout }) {
   const [deleteMessage, setDeleteMessage] = useState('')
   const [isUploadingRecords, setIsUploadingRecords] = useState(false)
   const [isDeletingRecords, setIsDeletingRecords] = useState(false)
+  const [isClearingQuickActions, setIsClearingQuickActions] = useState(false)
   const [currentGranteePage, setCurrentGranteePage] = useState(1)
   const [currentQuickActionPage, setCurrentQuickActionPage] = useState(1)
   const [selectedGranteeIds, setSelectedGranteeIds] = useState([])
@@ -446,6 +454,7 @@ function Admin({ onLogout }) {
   const createAllInfoRecords = useMutation(api.allinfo.bulkCreate)
   const updateAllInfoRecord = useMutation(api.allinfo.update)
   const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
+  const clearAllQuickActions = useMutation(api.quickActions.clearAll)
 
   const isAnyModalOpen =
     isLogsOpen ||
@@ -593,6 +602,8 @@ function Admin({ onLogout }) {
         applicant.status,
         applicant.psaFileName,
         applicant.schoolIdFileName,
+        applicant.pwdIdFileName,
+        applicant.fourPsFileName,
         formatSubmittedAt(applicant.submittedAt),
       ]
         .map((value) => String(value ?? '').toLowerCase())
@@ -1018,6 +1029,8 @@ function Admin({ onLogout }) {
         'Address',
         'Zip Code',
         'PWD ID',
+        'PWD ID PDF',
+        '4Ps ID PDF',
         'Mobile No.',
         'Email Address',
         'Status',
@@ -1043,6 +1056,8 @@ function Admin({ onLogout }) {
         applicant.address ?? '',
         applicant.zipCode ?? '',
         applicant.pwdId ?? '',
+        applicant.pwdIdFileName ?? '',
+        applicant.fourPsFileName ?? '',
         applicant.mobileNumber ?? '',
         applicant.emailAddress ?? '',
         applicant.status ?? '',
@@ -1053,6 +1068,76 @@ function Admin({ onLogout }) {
     const safeCourse = sanitizeDownloadPart(selectedCourse, 'course')
     const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
     downloadCsvFile(`unifast-applicants-${safeYear}-${safeCourse}.csv`, csvRows)
+  }
+
+  const exportQuickActionResponsesCsv = () => {
+    if (quickActions === undefined) {
+      window.alert('Please wait while student requests are loading.')
+      return
+    }
+
+    if (quickActionRows.length === 0) {
+      window.alert('No student requests are available to export.')
+      return
+    }
+
+    const exportedAt = formatSubmittedAt(Date.now())
+    const csvRows = [
+      [
+        'No.',
+        'Student ID',
+        'Last Name',
+        'First Name',
+        'MI',
+        'Email Account',
+        'Question / Request',
+        'Source',
+        'Status',
+        'Submitted At',
+        'Exported At',
+      ],
+      ...quickActionRows.map((request, index) => [
+        index + 1,
+        request.studentId ?? '',
+        request.lastName ?? '',
+        request.firstName ?? '',
+        request.middleInitial ?? '',
+        request.email ?? '',
+        request.question ?? '',
+        request.source ?? '',
+        request.status ?? '',
+        formatSubmittedAt(request.submittedAt),
+        exportedAt,
+      ]),
+    ]
+
+    const exportedDate = new Date().toISOString().slice(0, 10)
+    downloadCsvFile(`student-requests-responses-${exportedDate}.csv`, csvRows)
+  }
+
+  const handleClearAllQuickActions = async () => {
+    if (isClearingQuickActions || quickActionRows.length === 0) return
+
+    const confirmed = window.confirm(
+      `Clear all ${quickActionRows.length} Quick Action message${
+        quickActionRows.length === 1 ? '' : 's'
+      }? This cannot be undone.`,
+    )
+
+    if (!confirmed) return
+
+    setIsClearingQuickActions(true)
+
+    try {
+      await clearAllQuickActions({})
+      setCurrentQuickActionPage(1)
+    } catch (error) {
+      window.alert(
+        error instanceof Error ? error.message : 'Unable to clear Quick Action messages.',
+      )
+    } finally {
+      setIsClearingQuickActions(false)
+    }
   }
 
   const updateApplicantPortalStatus = async (isReceivingApplicants, applicationYear) => {
@@ -2552,6 +2637,8 @@ function Admin({ onLogout }) {
                     <th>Address</th>
                     <th>PSA</th>
                     <th>School ID</th>
+                    <th>PWD ID PDF</th>
+                    <th>4Ps ID PDF</th>
                     <th>Status</th>
                     <th>Submitted</th>
                   </tr>
@@ -2560,7 +2647,7 @@ function Admin({ onLogout }) {
                 <tbody>
                   {applicants === undefined && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={13}>
+                      <td className="admin-empty-state" colSpan={15}>
                         Loading applicants...
                       </td>
                     </tr>
@@ -2568,7 +2655,7 @@ function Admin({ onLogout }) {
 
                   {applicants !== undefined && filteredCourseApplicants.length === 0 && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={13}>
+                      <td className="admin-empty-state" colSpan={15}>
                         No applicants found for this course.
                       </td>
                     </tr>
@@ -2630,6 +2717,36 @@ function Admin({ onLogout }) {
                             </a>
                           ) : (
                             <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="PWD ID PDF">
+                          {applicant.pwdIdFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.pwdIdFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">accessible</span>
+                              View PWD ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">Optional</span>
+                          )}
+                        </td>
+                        <td data-label="4Ps ID PDF">
+                          {applicant.fourPsFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.fourPsFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">family_restroom</span>
+                              View 4Ps ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">Optional</span>
                           )}
                         </td>
                         <td data-label="Status">
@@ -3254,11 +3371,49 @@ function Admin({ onLogout }) {
               </div>
             </div>
 
+            <div className="admin-quick-actions-toolbar">
+              <div>
+                <span>Export Report</span>
+                <strong>Download all student responses with email accounts.</strong>
+              </div>
+
+              <div className="admin-quick-actions-toolbar__actions">
+                <button
+                  className="admin-button admin-button--primary"
+                  disabled={
+                    quickActions === undefined ||
+                    quickActionRows.length === 0 ||
+                    isClearingQuickActions
+                  }
+                  onClick={exportQuickActionResponsesCsv}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">download</span>
+                  Export All Responses
+                </button>
+
+                <button
+                  className="admin-button admin-button--danger"
+                  disabled={
+                    quickActions === undefined ||
+                    quickActionRows.length === 0 ||
+                    isClearingQuickActions
+                  }
+                  onClick={handleClearAllQuickActions}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">delete_sweep</span>
+                  {isClearingQuickActions ? 'Clearing...' : 'Clear All Messages'}
+                </button>
+              </div>
+            </div>
+
             <div className="admin-quick-actions-table-wrap">
               <table className="admin-quick-actions-table">
                 <thead>
                   <tr>
                     <th>No.</th>
+                    <th>Student Details</th>
                     <th>Email Account</th>
                     <th>Question</th>
                     <th>Source</th>
@@ -3270,7 +3425,7 @@ function Admin({ onLogout }) {
                 <tbody>
                   {quickActions === undefined && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={6}>
+                      <td className="admin-empty-state" colSpan={7}>
                         Loading quick actions...
                       </td>
                     </tr>
@@ -3278,7 +3433,7 @@ function Admin({ onLogout }) {
 
                   {quickActions?.length === 0 && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={6}>
+                      <td className="admin-empty-state" colSpan={7}>
                         No quick action requests yet.
                       </td>
                     </tr>
@@ -3287,6 +3442,11 @@ function Admin({ onLogout }) {
                   {currentQuickActions.map((request, index) => (
                     <tr key={request._id}>
                       <td data-label="No.">{firstQuickActionIndex + index + 1}</td>
+
+                      <td className="admin-request-student" data-label="Student Details">
+                        <strong>{formatQuickActionStudentName(request) || 'Not provided'}</strong>
+                        <span>{request.studentId || 'No Student ID'}</span>
+                      </td>
 
                       <td className="admin-request-email" data-label="Email Account">
                         {request.email}
@@ -4721,6 +4881,51 @@ const adminStyles = `
   font-weight: 800;
 }
 
+.admin-quick-actions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 20px;
+}
+
+.admin-quick-actions-toolbar span,
+.admin-quick-actions-toolbar strong {
+  display: block;
+}
+
+.admin-quick-actions-toolbar div > span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-quick-actions-toolbar div > strong {
+  margin-top: 4px;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-quick-actions-toolbar .admin-button {
+  flex: 0 0 auto;
+}
+
+.admin-quick-actions-toolbar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-quick-actions-toolbar .admin-button .material-symbols-outlined {
+  font-size: 20px;
+}
+
 .admin-quick-actions-table-wrap {
   max-height: calc(100vh - 290px);
   overflow: auto;
@@ -4822,6 +5027,30 @@ const adminStyles = `
   font-size: 12px;
   font-weight: 800;
   padding: 4px 9px;
+}
+
+.admin-request-student {
+  min-width: 190px;
+}
+
+.admin-request-student strong,
+.admin-request-student span {
+  display: block;
+}
+
+.admin-request-student strong {
+  color: var(--admin-text);
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.admin-request-student span {
+  margin-top: 4px;
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .admin-request-email {
@@ -5163,6 +5392,21 @@ const adminStyles = `
     grid-template-columns: 1fr;
   }
 
+  .admin-quick-actions-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-quick-actions-toolbar .admin-button {
+    width: 100%;
+  }
+
+  .admin-quick-actions-toolbar__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .admin-quick-actions-table-wrap,
   .admin-logs-table-wrap,
   .admin-course-applicants-table-wrap {
@@ -5249,6 +5493,7 @@ const adminStyles = `
   }
 
   .admin-request-email,
+  .admin-request-student,
   .admin-request-question,
   .admin-applicant-name,
   .admin-applicant-email,
