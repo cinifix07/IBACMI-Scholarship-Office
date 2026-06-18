@@ -3,6 +3,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import quickActionsData from '../../data.json'
 import ibacmiLogo from '../assets/IBACMI.png'
+import scholarshipOfficeBanner from '../assets/desktop.png'
 import './lan.css'
 
 function StatusBadge({ status, tone }) {
@@ -1256,7 +1257,13 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           <section className="page-heading">
             <div className="page-heading__copy">
               <span className="eyebrow">Grantee Records</span>
-              <h2>IBACMI - Scholarship Office</h2>
+              <h2 className="landing-office-title">
+                <span className="landing-office-title__school">IBACMI</span>
+                <span className="landing-office-title__separator" aria-hidden="true">
+                  —
+                </span>
+                <span className="landing-office-title__office">Scholarship Office</span>
+              </h2>
 
             </div>
           </section>
@@ -1283,6 +1290,45 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               <span className="filter-button__text">Reset</span>
             </button>
           </section>
+
+          {!hasStudentIdSearch && (
+            <section
+              className="scholarship-showcase"
+              aria-labelledby="scholarship-showcase-title"
+            >
+              <div className="scholarship-showcase__heading">
+                <div>
+                  <span className="eyebrow">Scholarship Office</span>
+
+                </div>
+
+                <span className="scholarship-showcase__status">
+                  <span aria-hidden="true" />
+                  Official Information
+                </span>
+              </div>
+
+              <a
+                className="scholarship-showcase__image-link"
+                href={scholarshipOfficeBanner}
+                rel="noreferrer"
+                target="_blank"
+                title="Open the Scholarship Office banner in full size"
+              >
+                <img
+                  alt="IBACMI Scholarship Office banner featuring the scholarship coordinator and students assistant"
+                  decoding="async"
+                  src={scholarshipOfficeBanner}
+                />
+                <span className="scholarship-showcase__view">
+                  <span className="material-symbols-outlined" aria-hidden="true">
+                    open_in_full
+                  </span>
+                  View full banner
+                </span>
+              </a>
+            </section>
+          )}
 
           {hasStudentIdSearch && (
             <section className="table-card" aria-label="Filtered grantee records">
