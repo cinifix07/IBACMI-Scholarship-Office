@@ -3311,22 +3311,33 @@ const authResponsiveStyles = `
   }
 
   .portal-section {
-    padding: 14px;
+    gap: 12px;
+    padding: 12px;
   }
 
   .portal-review {
-    padding: 14px 18px 18px;
+    padding: 12px 14px 14px;
   }
 
   .portal-review-card,
   .portal-review-group {
-    padding: 14px;
+    padding: 12px;
   }
 
   .portal-document-upload {
     align-items: flex-start;
     min-height: auto;
-    padding: 14px;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .portal-document-upload__icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .portal-document-upload__icon .material-symbols-outlined {
+    font-size: 23px;
   }
 
   .auth-link-row {
@@ -3351,11 +3362,30 @@ const authResponsiveStyles = `
   }
 
   .admin-login-body {
-    padding: 18px;
+    padding: 16px;
   }
 
   .modal-actions {
-    padding: 16px 18px;
+    padding: 12px 16px 16px;
+  }
+
+  .portal-form {
+    gap: 12px;
+  }
+
+  .portal-grid,
+  .portal-grid--three {
+    gap: 12px;
+  }
+
+  .portal-course-option {
+    min-height: 48px;
+    padding: 11px 12px;
+    font-size: 12px;
+  }
+
+  .portal-modal-header {
+    padding-block: 16px;
   }
 }
 `

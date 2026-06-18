@@ -3,6 +3,7 @@
 
 .student-page {
   min-height: 100dvh;
+  overflow-x: hidden;
   background: #fcf9f8;
   color: #1c1b1b;
   font-family: 'Hanken Grotesk', system-ui, sans-serif;
@@ -610,7 +611,8 @@
 
 @media (max-width: 560px) {
   .student-topbar {
-    height: 60px;
+    height: 56px;
+    padding-inline: 10px;
   }
 
   .student-icon-button {
@@ -619,36 +621,40 @@
   }
 
   .student-topbar h1 {
-    font-size: 24px;
+    margin-left: 4px;
+    font-size: 21px;
     line-height: 1.2;
   }
 
   .student-main {
-    padding-top: 78px;
-    padding-inline: 16px;
-    padding-bottom: 40px;
+    padding: 68px 12px 24px;
   }
 
   .student-hero {
-    margin-bottom: 32px;
+    margin-bottom: 20px;
   }
 
   .student-badge {
-    margin-bottom: 14px;
-    font-size: 12px;
+    margin-bottom: 9px;
+    padding: 4px 9px;
+    font-size: 10px;
   }
 
   .student-hero h2 {
-    font-size: 32px;
+    margin-bottom: 4px;
+    font-size: 27px;
+    line-height: 1.18;
   }
 
   .student-hero p {
-    font-size: 15px;
+    font-size: 13px;
+    line-height: 1.45;
   }
 
   .student-form,
-  .student-select-grid {
-    gap: 20px;
+  .student-select-grid,
+  .student-upload-section {
+    gap: 14px;
   }
 
   .student-select-grid {
@@ -658,9 +664,14 @@
   .student-field input,
   .student-field select,
   .student-field textarea {
-    min-height: 52px;
-    padding: 13px 14px;
-    font-size: 15px;
+    min-height: 48px;
+    padding: 11px 12px;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .student-field textarea {
+    min-height: 84px;
   }
 
   .student-inline-control {
@@ -668,7 +679,9 @@
   }
 
   .student-inline-button {
-    min-height: 52px;
+    min-height: 48px;
+    padding-inline: 16px;
+    font-size: 14px;
   }
 
   .student-field label,
@@ -677,25 +690,72 @@
   }
 
   .student-upload-copy h3 {
-    font-size: 16px;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  .student-upload-copy p {
+    font-size: 13px;
+    line-height: 1.45;
   }
 
   .student-sample-card__header,
   .student-sample-card__body {
-    padding: 16px;
+    padding: 12px;
   }
 
   .student-sample-card__body {
     grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   .student-sample-card__image-link img {
-    max-height: 280px;
+    max-height: 210px;
   }
 
   .student-upload-card {
-    min-height: 168px;
-    padding: 24px;
+    min-height: 128px;
+    padding: 18px 14px;
+  }
+
+  .student-upload-icon {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 8px;
+  }
+
+  .student-upload-section {
+    padding-top: 6px;
+  }
+
+  .student-state-box {
+    margin-bottom: 14px;
+    padding: 11px 12px;
+    font-size: 13px;
+  }
+
+  .student-sample-card__header h4 {
+    font-size: 16px;
+  }
+
+  .student-sample-card__checklist {
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .student-sample-card__checklist ul {
+    gap: 5px;
+    padding-left: 18px;
+  }
+
+  .student-id-preview__file {
+    min-height: 96px;
+  }
+
+  .student-save-button {
+    min-height: 50px;
+    font-size: 15px;
   }
 }
 
@@ -709,6 +769,16 @@
   }
 
   .student-main {
-    padding-inline: 12px;
+    padding-inline: 10px;
+  }
+
+  .student-sample-card__header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .student-sample-card__badge {
+    padding: 5px 8px;
   }
 }
