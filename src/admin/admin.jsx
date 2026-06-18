@@ -427,6 +427,7 @@ function Admin({ onLogout }) {
   const [isUploadingRecords, setIsUploadingRecords] = useState(false)
   const [isDeletingRecords, setIsDeletingRecords] = useState(false)
   const [isClearingQuickActions, setIsClearingQuickActions] = useState(false)
+  const [isClearingActivityLogs, setIsClearingActivityLogs] = useState(false)
   const [currentGranteePage, setCurrentGranteePage] = useState(1)
   const [currentQuickActionPage, setCurrentQuickActionPage] = useState(1)
   const [selectedGranteeIds, setSelectedGranteeIds] = useState([])
@@ -455,6 +456,7 @@ function Admin({ onLogout }) {
   const updateAllInfoRecord = useMutation(api.allinfo.update)
   const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
   const clearAllQuickActions = useMutation(api.quickActions.clearAll)
+  const clearAllActivityLogs = useMutation(api.activityLogs.clearAll)
 
   const isAnyModalOpen =
     isLogsOpen ||
@@ -1137,6 +1139,27 @@ function Admin({ onLogout }) {
       )
     } finally {
       setIsClearingQuickActions(false)
+    }
+  }
+
+  const handleClearAllActivityLogs = async () => {
+    if (isClearingActivityLogs || activityLogRows.length === 0) return
+
+    const confirmed = window.confirm(
+      `Clear all ${activityLogRows.length} visible activity logs? This permanently removes all stored logs and cannot be undone.`,
+    )
+
+    if (!confirmed) return
+
+    setIsClearingActivityLogs(true)
+
+    try {
+      await clearAllActivityLogs({})
+      setCurrentLogPage(1)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to clear activity logs.')
+    } finally {
+      setIsClearingActivityLogs(false)
     }
   }
 
@@ -1874,6 +1897,27 @@ function Admin({ onLogout }) {
                 type="button"
               >
                 <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-logs-toolbar">
+              <div>
+                <span>Log Management</span>
+                <strong>Permanently remove all system activity records.</strong>
+              </div>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={
+                  activityLogs === undefined ||
+                  activityLogRows.length === 0 ||
+                  isClearingActivityLogs
+                }
+                onClick={handleClearAllActivityLogs}
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete_sweep</span>
+                {isClearingActivityLogs ? 'Clearing...' : 'Clear All Logs'}
               </button>
             </div>
 
@@ -4933,9 +4977,39 @@ const adminStyles = `
 }
 
 .admin-logs-table-wrap {
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - 320px);
   overflow: auto;
   background: #ffffff;
+}
+
+.admin-logs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 14px 24px;
+}
+
+.admin-logs-toolbar span,
+.admin-logs-toolbar strong {
+  display: block;
+}
+
+.admin-logs-toolbar span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-logs-toolbar strong {
+  margin-top: 4px;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .admin-quick-actions-table {
@@ -5405,6 +5479,16 @@ const adminStyles = `
   .admin-quick-actions-toolbar__actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-logs-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-logs-toolbar .admin-button {
+    width: 100%;
   }
 
   .admin-quick-actions-table-wrap,
