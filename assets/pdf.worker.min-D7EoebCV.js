@@ -1,0 +1,1 @@
+var e=`/IBACMI-Scholarship-Office/assets/pdf.worker.min-D39lNQBd.mjs`;export{e as default};
