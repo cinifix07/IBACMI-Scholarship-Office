@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import sampleSchoolIdFormat from '../assets/samp.jpg'
@@ -57,6 +57,136 @@ function findCurrentStudentRecord(records) {
 
     return (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
   })[0]
+}
+
+function StudentPdfPreview({ url }) {
+  const containerRef = useRef(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [previewError, setPreviewError] = useState('')
+  const [retryCount, setRetryCount] = useState(0)
+
+  useEffect(() => {
+    const container = containerRef.current
+
+    if (!container) return undefined
+
+    const updateWidth = () => setContainerWidth(Math.floor(container.clientWidth))
+    updateWidth()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateWidth)
+      return () => window.removeEventListener('resize', updateWidth)
+    }
+
+    const resizeObserver = new ResizeObserver(updateWidth)
+    resizeObserver.observe(container)
+
+    return () => resizeObserver.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const container = containerRef.current
+
+    if (!container || !url || !containerWidth) return undefined
+
+    let cancelled = false
+    let loadingTask
+    let renderTask
+
+    const renderPdf = async () => {
+      setPreviewError('')
+      container.replaceChildren()
+      container.setAttribute('aria-busy', 'true')
+
+      try {
+        const [{ getDocument, GlobalWorkerOptions }, { default: pdfWorkerUrl }] =
+          await Promise.all([
+            import('pdfjs-dist/legacy/build/pdf.mjs'),
+            import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
+          ])
+
+        if (cancelled) return
+
+        GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+        const response = await fetch(url, { mode: 'cors' })
+
+        if (!response.ok) {
+          throw new Error(`Unable to download PDF (${response.status}).`)
+        }
+
+        const pdfData = new Uint8Array(await response.arrayBuffer())
+
+        if (cancelled) return
+        if (!pdfData.length) throw new Error('The uploaded PDF is empty.')
+
+        loadingTask = getDocument({
+          data: pdfData,
+          disableAutoFetch: true,
+          disableRange: true,
+          disableStream: true,
+        })
+        const pdf = await loadingTask.promise
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          if (cancelled) return
+
+          const page = await pdf.getPage(pageNumber)
+          const initialViewport = page.getViewport({ scale: 1 })
+          const scale = containerWidth / initialViewport.width
+          const viewport = page.getViewport({ scale })
+          const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+          const canvas = document.createElement('canvas')
+
+          canvas.className = 'student-id-preview__page'
+          canvas.setAttribute('aria-label', `Uploaded School ID page ${pageNumber}`)
+          canvas.width = Math.floor(viewport.width * pixelRatio)
+          canvas.height = Math.floor(viewport.height * pixelRatio)
+          canvas.style.width = `${Math.floor(viewport.width)}px`
+          canvas.style.height = `${Math.floor(viewport.height)}px`
+          container.appendChild(canvas)
+
+          renderTask = page.render({
+            canvas,
+            transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+            viewport,
+          })
+          await renderTask.promise
+        }
+      } catch (error) {
+        if (!cancelled && error?.name !== 'RenderingCancelledException') {
+          console.error('Unable to render uploaded School ID PDF:', error)
+          container.replaceChildren()
+          setPreviewError('The PDF preview could not load.')
+        }
+      } finally {
+        if (!cancelled) container.removeAttribute('aria-busy')
+      }
+    }
+
+    renderPdf()
+
+    return () => {
+      cancelled = true
+      renderTask?.cancel()
+      loadingTask?.destroy()
+    }
+  }, [containerWidth, retryCount, url])
+
+  return (
+    <>
+      <div className="student-id-preview__pages" ref={containerRef}>
+        <span className="student-id-preview__loading">Loading PDF preview...</span>
+      </div>
+      {previewError && (
+        <div className="student-id-preview__error">
+          <span>{previewError}</span>
+          <button onClick={() => setRetryCount((count) => count + 1)} type="button">
+            Retry preview
+          </button>
+        </div>
+      )}
+    </>
+  )
 }
 
 export default function StudentInfoForm({ studentSession, onLogout, onStudentSessionUpdate }) {
@@ -605,12 +735,9 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
                   </a>
                 </div>
 
-                <object
-                  aria-label="Uploaded School ID PDF preview"
-                  className="student-id-preview__document"
-                  data={uploadedIdUrl}
-                  type="application/pdf"
-                >
+                <StudentPdfPreview url={uploadedIdUrl} />
+
+                <noscript>
                   <a
                     className="student-id-preview__file"
                     href={uploadedIdUrl}
@@ -622,7 +749,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
                     </span>
                     <span>Open uploaded PDF</span>
                   </a>
-                </object>
+                </noscript>
               </div>
             )}
 
