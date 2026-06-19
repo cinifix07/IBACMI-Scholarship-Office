@@ -605,10 +605,24 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
                   </a>
                 </div>
 
-                <a className="student-id-preview__file" href={uploadedIdUrl} rel="noreferrer" target="_blank">
-                  <span className="material-symbols-outlined">picture_as_pdf</span>
-                  Open uploaded PDF
-                </a>
+                <object
+                  aria-label="Uploaded School ID PDF preview"
+                  className="student-id-preview__document"
+                  data={uploadedIdUrl}
+                  type="application/pdf"
+                >
+                  <a
+                    className="student-id-preview__file"
+                    href={uploadedIdUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    <span className="student-id-preview__file-icon" aria-hidden="true">
+                      <span className="material-symbols-outlined">picture_as_pdf</span>
+                    </span>
+                    <span>Open uploaded PDF</span>
+                  </a>
+                </object>
               </div>
             )}
 
