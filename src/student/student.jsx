@@ -198,6 +198,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const [uploadError, setUploadError] = useState('')
   const [uploadSuccess, setUploadSuccess] = useState('')
   const [isSavingUploads, setIsSavingUploads] = useState(false)
+  const uploadSuccessButtonRef = useRef(null)
   const [phoneNumber, setPhoneNumber] = useState(studentSession?.phoneNumber ?? '')
   const [phoneError, setPhoneError] = useState('')
   const [phoneSuccess, setPhoneSuccess] = useState('')
@@ -246,6 +247,24 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const schoolYearOptions = getUniqueOptions([form.schoolYear, '2023-2024', '2024-2025'])
   const hasSavedFrontId = Boolean(studentRecord?.frontIdStorageId)
   const uploadedIdUrl = studentRecord?.frontIdUrl ?? ''
+
+  useEffect(() => {
+    if (!uploadSuccess) return undefined
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setUploadSuccess('')
+    }
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', handleKeyDown)
+    uploadSuccessButtonRef.current?.focus()
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [uploadSuccess])
 
   const handleLogout = () => {
     if (typeof onLogout === 'function') {
@@ -754,12 +773,6 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
             )}
 
             {uploadError && <p className="student-upload-message student-upload-message--error">{uploadError}</p>}
-            {uploadSuccess && (
-              <p className="student-upload-message student-upload-message--success">
-                {uploadSuccess}
-              </p>
-            )}
-
             <button
               className="student-save-button"
               disabled={!studentRecord || isSavingUploads}
@@ -772,6 +785,53 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
           </section>
         </form>
       </main>
+
+      {uploadSuccess ? (
+        <div
+          aria-describedby="student-upload-success-description"
+          aria-labelledby="student-upload-success-title"
+          aria-modal="true"
+          className="student-success-modal"
+          role="dialog"
+        >
+          <button
+            aria-label="Close upload success message"
+            className="student-success-modal__backdrop"
+            onClick={() => setUploadSuccess('')}
+            type="button"
+          />
+
+          <section className="student-success-modal__card">
+            <button
+              aria-label="Close"
+              className="student-success-modal__close"
+              onClick={() => setUploadSuccess('')}
+              type="button"
+            >
+              <span className="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
+
+            <div className="student-success-modal__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">check</span>
+            </div>
+
+            <span className="student-success-modal__eyebrow">Upload complete</span>
+            <h2 id="student-upload-success-title">Successfully submitted</h2>
+            <p id="student-upload-success-description">
+              {uploadSuccess} Your document is now available for review.
+            </p>
+
+            <button
+              className="student-success-modal__action"
+              onClick={() => setUploadSuccess('')}
+              ref={uploadSuccessButtonRef}
+              type="button"
+            >
+              Done
+            </button>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }
