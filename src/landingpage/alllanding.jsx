@@ -191,6 +191,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
   const [isSignUpOpen, setIsSignUpOpen] = useState(false)
   const [isSignUpDeniedOpen, setIsSignUpDeniedOpen] = useState(false)
+  const [isPortalPrivacyOpen, setIsPortalPrivacyOpen] = useState(false)
+  const [isPortalSubmissionSuccessOpen, setIsPortalSubmissionSuccessOpen] = useState(false)
 
   const [adminLoginError, setAdminLoginError] = useState('')
   const [quickActionError, setQuickActionError] = useState('')
@@ -336,6 +338,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       !isForgotPasswordOpen &&
       !isSignUpOpen &&
       !isSignUpDeniedOpen &&
+      !isPortalPrivacyOpen &&
+      !isPortalSubmissionSuccessOpen &&
       !portalStatusMessage &&
       !signUpSuccess &&
       !quickActionSuccess
@@ -345,6 +349,18 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (isSubmittingPortal) return
+
+        if (isPortalPrivacyOpen) {
+          setIsPortalPrivacyOpen(false)
+          return
+        }
+
+        if (isPortalSubmissionSuccessOpen) {
+          setIsPortalSubmissionSuccessOpen(false)
+          return
+        }
+
         setIsQuickActionsOpen(false)
         setIsUnifastPortalOpen(false)
         setPortalError('')
@@ -383,6 +399,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     isForgotPasswordOpen,
     isSignUpOpen,
     isSignUpDeniedOpen,
+    isPortalPrivacyOpen,
+    isPortalSubmissionSuccessOpen,
+    isSubmittingPortal,
     portalStatusMessage,
     signUpSuccess,
     quickActionSuccess,
@@ -415,6 +434,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
     setPortalError('')
     setPortalSuccess('')
+    setIsPortalPrivacyOpen(false)
+    setIsPortalSubmissionSuccessOpen(false)
     setIsUnifastPortalOpen(true)
   }
 
@@ -424,6 +445,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsUnifastPortalOpen(false)
     setPortalError('')
     setPortalSuccess('')
+    setIsPortalPrivacyOpen(false)
     setPortalDocumentFiles({
       psaFile: null,
       schoolIdFile: null,
@@ -587,7 +609,22 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const handleEditPortalInformation = () => {
     setPortalError('')
     setPortalSuccess('')
+    setIsPortalPrivacyOpen(false)
     setPortalReviewData(null)
+  }
+
+  const handleOpenPortalPrivacy = () => {
+    if (!portalReviewData) return
+
+    setPortalError('')
+    setPortalSuccess('')
+
+    if (!applicantPortal?.isReceivingApplicants) {
+      setPortalError('The UNIFAST portal is closed for applicants right now.')
+      return
+    }
+
+    setIsPortalPrivacyOpen(true)
   }
 
   const handleConfirmPortalSubmit = async () => {
@@ -656,6 +693,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       const result = await createApplicant(applicantSubmission)
 
       if (!result.success) {
+        setIsPortalPrivacyOpen(false)
         setPortalError(result.message || 'Unable to submit applicant information.')
         return
       }
@@ -668,12 +706,12 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         fourPsFile: null,
       })
       setPortalReviewData(null)
-      setPortalSuccess(result.message || 'Applicant information submitted successfully.')
-      window.setTimeout(() => {
-        setPortalSuccess('')
-        setIsUnifastPortalOpen(false)
-      }, 900)
+      setPortalSuccess('')
+      setIsPortalPrivacyOpen(false)
+      setIsUnifastPortalOpen(false)
+      setIsPortalSubmissionSuccessOpen(true)
     } catch (error) {
+      setIsPortalPrivacyOpen(false)
       setPortalError(
         error instanceof Error ? error.message : 'Unable to submit applicant information right now.',
       )
@@ -1984,10 +2022,10 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   <button
                     className="button"
                     disabled={isSubmittingPortal}
-                    onClick={handleConfirmPortalSubmit}
+                    onClick={handleOpenPortalPrivacy}
                     type="button"
                   >
-                    {isSubmittingPortal ? 'Submitting...' : 'Submit Information'}
+                    Submit Information
                   </button>
                 </>
               ) : (
@@ -2008,6 +2046,93 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               )}
             </div>
           </form>
+        </div>
+      )}
+
+      {isPortalPrivacyOpen && (
+        <div
+          aria-labelledby="portal-privacy-title"
+          aria-modal="true"
+          className="modal-overlay portal-confirmation-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Return to application review"
+            className="modal-backdrop-button"
+            disabled={isSubmittingPortal}
+            onClick={() => setIsPortalPrivacyOpen(false)}
+            type="button"
+          />
+
+          <section className="modal-card portal-privacy-card">
+            <div className="success-modal-body">
+              <div className="portal-privacy-icon">
+                <span className="material-symbols-outlined">privacy_tip</span>
+              </div>
+
+              <p className="modal-kicker">Data Privacy Notice</p>
+              <h3 id="portal-privacy-title">Your Privacy Matters</h3>
+              <p>
+                I understand that the personal information I provide will be collected, stored,
+                and processed by the Scholarship Office solely for scholarship administration,
+                verification, monitoring, and related educational purposes. I am informed that my
+                data will be kept confidential and protected in accordance with the Data Privacy
+                Act of 2012 (Republic Act No. 10173), and will only be accessed by authorized
+                personnel when necessary.
+              </p>
+            </div>
+
+            <div className="modal-actions modal-actions--single">
+              <button
+                className="button"
+                disabled={isSubmittingPortal}
+                onClick={handleConfirmPortalSubmit}
+                type="button"
+              >
+                {isSubmittingPortal ? 'Submitting...' : 'I UNDERSTAND'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isPortalSubmissionSuccessOpen && (
+        <div
+          aria-labelledby="portal-submission-success-title"
+          aria-modal="true"
+          className="modal-overlay portal-confirmation-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close application success modal"
+            className="modal-backdrop-button"
+            onClick={() => setIsPortalSubmissionSuccessOpen(false)}
+            type="button"
+          />
+
+          <section className="modal-card modal-card--success">
+            <div className="success-modal-body">
+              <div className="success-icon">
+                <span className="material-symbols-outlined">check_circle</span>
+              </div>
+
+              <h3 id="portal-submission-success-title">Application Submitted Successfully</h3>
+              <p>
+                Please wait for the UNIFAST results. You will be notified through the Facebook
+                page, <strong>Iba College of Mindanao Inc. - Scholarship Office</strong>.
+              </p>
+            </div>
+
+            <div className="modal-actions modal-actions--single">
+              <button
+                className="button"
+                onClick={() => setIsPortalSubmissionSuccessOpen(false)}
+                type="button"
+              >
+                Done
+              </button>
+            </div>
+          </section>
         </div>
       )}
 
@@ -2730,7 +2855,11 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </div>
 
               <h3 id="quick-action-success-title">Submitted Successfully</h3>
-              <p>{quickActionSuccess} The scholarship office can now review your request.</p>
+              <p>
+                {quickActionSuccess} The scholarship office can now review your request. Please
+                always check your valid email. The TECH Scholarship Office will notify you when
+                your account is updated.
+              </p>
             </div>
 
             <div className="modal-actions modal-actions--single">

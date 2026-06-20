@@ -803,6 +803,40 @@ td {
   width: min(100%, 390px);
 }
 
+.portal-confirmation-overlay {
+  z-index: 80;
+}
+
+.portal-privacy-card {
+  width: min(100%, 560px);
+}
+
+.portal-privacy-card .success-modal-body {
+  padding: 30px;
+}
+
+.portal-privacy-card .success-modal-body > p:last-child {
+  text-align: left;
+}
+
+.portal-privacy-icon {
+  display: flex;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: #fff7ed;
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px #fed7aa;
+}
+
+.portal-privacy-icon .material-symbols-outlined,
+.success-icon .material-symbols-outlined {
+  font-size: 32px;
+}
+
 .modal-card--admin {
   width: min(100%, 430px);
 }
