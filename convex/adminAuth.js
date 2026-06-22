@@ -28,7 +28,7 @@ export const listStudentAccounts = query({
   handler: async (ctx) => {
     const admins = await ctx.db
       .query('admins')
-      .filter((queryBuilder) => queryBuilder.eq(queryBuilder.field('role'), 'student'))
+      .withIndex('by_role', (queryBuilder) => queryBuilder.eq('role', 'student'))
       .collect()
 
     return admins.map((admin) => ({
@@ -65,7 +65,7 @@ async function findRecoveryAccount(ctx, args) {
   if (email) {
     const admin = await ctx.db
       .query('admins')
-      .filter((query) => query.eq(query.field('email'), email))
+      .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', email))
       .first()
 
     return { admin }
@@ -73,7 +73,7 @@ async function findRecoveryAccount(ctx, args) {
 
   const admin = await ctx.db
     .query('admins')
-    .filter((query) => query.eq(query.field('schoolId'), schoolId))
+    .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
     .first()
 
   return { admin }
@@ -100,11 +100,11 @@ export const login = mutation({
     const admin = email
       ? await ctx.db
           .query('admins')
-          .filter((query) => query.eq(query.field('email'), email))
+          .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', email))
           .first()
       : await ctx.db
           .query('admins')
-          .filter((query) => query.eq(query.field('schoolId'), schoolId))
+          .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
           .first()
 
     if (!admin || admin.password !== password || admin.status !== 'active') {
@@ -165,9 +165,7 @@ export const register = mutation({
 
     const matchingStudentRecord = await ctx.db
       .query('allinfo')
-      .filter((query) =>
-        query.eq(query.field('studentId'), schoolId),
-      )
+      .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', schoolId))
       .first()
 
     if (!matchingStudentRecord) {
@@ -180,7 +178,7 @@ export const register = mutation({
 
     const existingEmail = await ctx.db
       .query('admins')
-      .filter((query) => query.eq(query.field('email'), email))
+      .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', email))
       .first()
 
     if (existingEmail) {
@@ -192,7 +190,7 @@ export const register = mutation({
 
     const existingSchoolId = await ctx.db
       .query('admins')
-      .filter((query) => query.eq(query.field('schoolId'), schoolId))
+      .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
       .first()
 
     if (existingSchoolId) {
@@ -425,7 +423,7 @@ export const updateStudentPhoneNumber = mutation({
 
     const admin = await ctx.db
       .query('admins')
-      .filter((query) => query.eq(query.field('schoolId'), schoolId))
+      .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
       .first()
 
     if (!admin || admin.role !== 'student' || admin.status !== 'active') {
@@ -492,7 +490,7 @@ export const updateStudentCurrentAddress = mutation({
 
     const admin = await ctx.db
       .query('admins')
-      .filter((query) => query.eq(query.field('schoolId'), schoolId))
+      .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
       .first()
 
     if (!admin || admin.role !== 'student' || admin.status !== 'active') {
@@ -548,7 +546,7 @@ export const seedDefaultAdmin = mutation({
 
     const existingAdmin = await ctx.db
       .query('admins')
-      .filter((query) => query.eq(query.field('email'), defaultAdmin.email))
+      .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', defaultAdmin.email))
       .first()
 
     if (existingAdmin) {

@@ -1,4 +1,5 @@
-import { mutation, query } from './_generated/server'
+import { internal } from './_generated/api'
+import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
 
 async function logActivity(ctx, log) {
@@ -39,6 +40,37 @@ function isGoogleDriveFileUrl(value) {
   } catch {
     return false
   }
+}
+
+function getGoogleDriveFileId(fileUrl) {
+  const value = String(fileUrl ?? '')
+  const pathMatch = value.match(/\/file\/d\/([^/?#]+)/i)
+  if (pathMatch) return pathMatch[1]
+
+  try {
+    return new URL(value).searchParams.get('id')
+  } catch {
+    return null
+  }
+}
+
+async function postToGoogleAppsScript(appsScriptUrl, payload) {
+  const initialResponse = await fetch(appsScriptUrl, {
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    method: 'POST',
+    redirect: 'manual',
+  })
+
+  if (initialResponse.status >= 300 && initialResponse.status < 400) {
+    const redirectUrl = initialResponse.headers.get('location')
+    if (!redirectUrl) throw new Error('Google Apps Script redirect is missing.')
+    return await fetch(redirectUrl, { method: 'GET', redirect: 'follow' })
+  }
+
+  return initialResponse
 }
 
 function trimApplicant(args) {
@@ -148,42 +180,282 @@ export const list = query({
   handler: async (ctx) => {
     const applicants = await ctx.db.query('applicants').collect()
 
-    const applicantsWithFiles = await Promise.all(
-      applicants.map(async (applicant) => ({
-        ...applicant,
-        psaFileUrl:
-          applicant.psaFileUrl ??
-          (applicant.psaFileStorageId
-            ? await ctx.storage.getUrl(applicant.psaFileStorageId)
-            : null),
-        schoolIdFileUrl:
-          applicant.schoolIdFileUrl ??
-          (applicant.schoolIdFileStorageId
-            ? await ctx.storage.getUrl(applicant.schoolIdFileStorageId)
-            : null),
-        pwdIdFileUrl:
-          applicant.pwdIdFileUrl ??
-          (applicant.pwdIdFileStorageId
-            ? await ctx.storage.getUrl(applicant.pwdIdFileStorageId)
-            : null),
-        fourPsFileUrl:
-          applicant.fourPsFileUrl ??
-          (applicant.fourPsFileStorageId
-            ? await ctx.storage.getUrl(applicant.fourPsFileStorageId)
-            : null),
-      })),
-    )
-
-    return applicantsWithFiles.sort((firstApplicant, secondApplicant) => {
+    return applicants.sort((firstApplicant, secondApplicant) => {
       return secondApplicant.submittedAt - firstApplicant.submittedAt
     })
   },
 })
 
-export const generateUploadUrl = mutation({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.storage.generateUploadUrl()
+export const listCourseDeletionCandidates = internalQuery({
+  args: {
+    applicationYear: v.string(),
+    course: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('applicants')
+      .withIndex('by_application_year_course', (queryBuilder) =>
+        queryBuilder.eq('applicationYear', args.applicationYear).eq('course', args.course),
+      )
+      .collect()
+  },
+})
+
+export const deleteCourseApplicants = internalMutation({
+  args: {
+    ids: v.array(v.id('applicants')),
+    applicationYear: v.string(),
+    course: v.string(),
+  },
+  handler: async (ctx, args) => {
+    for (const id of args.ids) {
+      await ctx.db.delete(id)
+    }
+
+    await logActivity(ctx, {
+      action: 'course_applicants_deleted',
+      actorRole: 'admin',
+      targetType: 'applicants',
+      targetLabel: `${args.applicationYear} / ${args.course}`,
+      summary: `Deleted ${args.ids.length} applicant record${args.ids.length === 1 ? '' : 's'} and associated Drive files for ${args.course}, application year ${args.applicationYear}.`,
+    })
+
+    return args.ids.length
+  },
+})
+
+export const deleteAllByCourse = action({
+  args: {
+    applicationYear: v.string(),
+    course: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const appsScriptUrl = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_URL
+    const uploadSecret = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_SECRET
+
+    if (!appsScriptUrl || !uploadSecret) {
+      throw new Error('Google Drive deletion is not configured.')
+    }
+
+    const applicants = await ctx.runQuery(internal.applicants.listCourseDeletionCandidates, {
+      applicationYear: args.applicationYear.trim(),
+      course: args.course.trim(),
+    })
+
+    if (applicants.length === 0) return { deleted: 0, filesDeleted: 0 }
+
+    const fileIds = applicants.flatMap((applicant) => {
+      return [
+        applicant.psaFileUrl,
+        applicant.schoolIdFileUrl,
+        applicant.pwdIdFileUrl,
+        applicant.fourPsFileUrl,
+      ]
+        .map(getGoogleDriveFileId)
+        .filter(Boolean)
+    })
+
+    if (fileIds.length > 0) {
+      const googleResponse = await postToGoogleAppsScript(appsScriptUrl, {
+        destination: 'applicants',
+        fileIds,
+        operation: 'delete',
+        secret: uploadSecret,
+      })
+      const googleResult = await googleResponse.json().catch(() => null)
+
+      if (!googleResponse.ok || !googleResult?.success) {
+        throw new Error(googleResult?.message || 'Google Drive rejected applicant file deletion.')
+      }
+    }
+
+    const deleted = await ctx.runMutation(internal.applicants.deleteCourseApplicants, {
+      applicationYear: args.applicationYear.trim(),
+      course: args.course.trim(),
+      ids: applicants.map((applicant) => applicant._id),
+    })
+
+    return { deleted, filesDeleted: fileIds.length }
+  },
+})
+
+function sanitizeFilePart(value, fallback) {
+  const sanitized = String(value ?? '')
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return sanitized || fallback
+}
+
+function bytesToBase64(bytes) {
+  const chunkSize = 0x8000
+  let binary = ''
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length))
+    binary += String.fromCharCode(...chunk)
+  }
+
+  return btoa(binary)
+}
+
+async function uploadMigratedApplicantPdf(appsScriptUrl, uploadSecret, file) {
+  const initialResponse = await fetch(appsScriptUrl, {
+    body: JSON.stringify({
+      contentType: 'application/pdf',
+      destination: 'applicants',
+      fileBase64: bytesToBase64(file.bytes),
+      fileName: file.fileName,
+      secret: uploadSecret,
+    }),
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    method: 'POST',
+    redirect: 'manual',
+  })
+  let googleResponse = initialResponse
+
+  if (initialResponse.status >= 300 && initialResponse.status < 400) {
+    const redirectUrl = initialResponse.headers.get('location')
+    if (!redirectUrl) throw new Error('Google Apps Script redirect is missing.')
+    googleResponse = await fetch(redirectUrl, { method: 'GET', redirect: 'follow' })
+  }
+
+  const googleResult = await googleResponse.json().catch(() => null)
+  if (!googleResponse.ok || !googleResult?.success || !googleResult?.fileUrl) {
+    throw new Error(googleResult?.message || 'Google Drive rejected the applicant PDF.')
+  }
+
+  return googleResult.fileUrl
+}
+
+export const listFileMigrationCandidates = internalQuery({
+  args: { limit: v.number() },
+  handler: async (ctx, args) => {
+    const applicants = await ctx.db.query('applicants').collect()
+    const candidates = []
+
+    for (const applicant of applicants) {
+      const files = [
+        ['psa', applicant.psaFileStorageId],
+        ['schoolId', applicant.schoolIdFileStorageId],
+        ['pwdId', applicant.pwdIdFileStorageId],
+        ['fourPs', applicant.fourPsFileStorageId],
+      ]
+
+      for (const [documentType, storageId] of files) {
+        if (!storageId) continue
+        candidates.push({
+          applicantId: applicant._id,
+          applicationYear: applicant.applicationYear,
+          documentType,
+          firstName: applicant.firstName,
+          lastName: applicant.lastName,
+          middleName: applicant.middleName,
+          storageId,
+          storageUrl: await ctx.storage.getUrl(storageId),
+          studentId: applicant.studentId,
+        })
+        if (candidates.length >= Math.max(1, Math.min(args.limit, 25))) {
+          return candidates
+        }
+      }
+    }
+
+    return candidates
+  },
+})
+
+export const finalizeFileMigration = internalMutation({
+  args: {
+    applicantId: v.id('applicants'),
+    documentType: v.string(),
+    driveUrl: v.string(),
+    storageId: v.id('_storage'),
+  },
+  handler: async (ctx, args) => {
+    const fieldMap = {
+      fourPs: ['fourPsFileStorageId', 'fourPsFileUrl'],
+      psa: ['psaFileStorageId', 'psaFileUrl'],
+      pwdId: ['pwdIdFileStorageId', 'pwdIdFileUrl'],
+      schoolId: ['schoolIdFileStorageId', 'schoolIdFileUrl'],
+    }
+    const fields = fieldMap[args.documentType]
+    if (!fields) throw new Error('Unsupported applicant document type.')
+
+    const applicant = await ctx.db.get(args.applicantId)
+    if (!applicant || applicant[fields[0]] !== args.storageId) {
+      throw new Error('Applicant file changed during migration.')
+    }
+
+    await ctx.db.patch(args.applicantId, {
+      [fields[0]]: undefined,
+      [fields[1]]: args.driveUrl,
+    })
+    await ctx.storage.delete(args.storageId)
+  },
+})
+
+export const migrateFilesToGoogleDrive = action({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const appsScriptUrl = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_URL
+    const uploadSecret = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_SECRET
+    if (!appsScriptUrl || !uploadSecret) {
+      throw new Error('Google Drive upload is not configured.')
+    }
+
+    const candidates = await ctx.runQuery(internal.applicants.listFileMigrationCandidates, {
+      limit: args.limit ?? 10,
+    })
+    const failures = []
+    let migrated = 0
+
+    for (const candidate of candidates) {
+      try {
+        if (!candidate.storageUrl) throw new Error('Convex Storage URL is unavailable.')
+        const response = await fetch(candidate.storageUrl)
+        if (!response.ok) throw new Error(`Unable to download PDF (HTTP ${response.status}).`)
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        if (!bytes.length) throw new Error('The stored PDF is empty.')
+
+        const documentLabel = {
+          fourPs: '4Ps-ID',
+          psa: 'PSA',
+          pwdId: 'PWD-ID',
+          schoolId: 'School-ID',
+        }[candidate.documentType]
+        const fullName = sanitizeFilePart(
+          [candidate.lastName, candidate.firstName, candidate.middleName]
+            .filter(Boolean)
+            .join(' '),
+          'no-name',
+        )
+        const fileName = `${sanitizeFilePart(candidate.studentId, 'applicant')}-${fullName}-Application-${sanitizeFilePart(candidate.applicationYear, 'unknown')}-${documentLabel}-migrated.pdf`
+        const driveUrl = await uploadMigratedApplicantPdf(appsScriptUrl, uploadSecret, {
+          bytes,
+          fileName,
+        })
+
+        await ctx.runMutation(internal.applicants.finalizeFileMigration, {
+          applicantId: candidate.applicantId,
+          documentType: candidate.documentType,
+          driveUrl,
+          storageId: candidate.storageId,
+        })
+        migrated += 1
+      } catch (error) {
+        failures.push({
+          documentType: candidate.documentType,
+          message: error instanceof Error ? error.message : 'Unknown migration error.',
+          studentId: candidate.studentId,
+        })
+      }
+    }
+
+    return { attempted: candidates.length, failures, migrated }
   },
 })
 

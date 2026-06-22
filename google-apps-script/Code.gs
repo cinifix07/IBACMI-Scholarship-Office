@@ -16,6 +16,14 @@ function doPost(event) {
       return jsonResponse({ success: false, message: 'Unauthorized upload request.' })
     }
 
+    if (payload.operation === 'delete') {
+      return deleteDriveFiles(payload)
+    }
+
+    if (payload.operation === 'download') {
+      return downloadDriveFile(payload)
+    }
+
     if (
       !payload.fileBase64 ||
       !payload.fileName ||
@@ -28,12 +36,13 @@ function doPost(event) {
 
     const fileBytes = Utilities.base64Decode(payload.fileBase64)
     const pdfBlob = Utilities.newBlob(fileBytes, 'application/pdf', payload.fileName)
-    const driveFile = DriveApp.getFolderById(DRIVE_FOLDER_IDS[payload.destination]).createFile(
-      pdfBlob,
-    )
+    const rootFolder = DriveApp.getFolderById(DRIVE_FOLDER_IDS[payload.destination])
+    const targetFolder = getOrCreateFolderPath(rootFolder, payload.folderPath)
+    const driveFile = targetFolder.createFile(pdfBlob)
 
     return jsonResponse({
       success: true,
+      folderUrl: targetFolder.getUrl(),
       fileId: driveFile.getId(),
       fileUrl: driveFile.getUrl(),
     })
@@ -43,6 +52,89 @@ function doPost(event) {
       message: error && error.message ? error.message : 'Google Drive upload failed.',
     })
   }
+}
+
+function deleteDriveFiles(payload) {
+  const folderId = DRIVE_FOLDER_IDS[payload.destination]
+  const fileIds = Array.isArray(payload.fileIds) ? payload.fileIds : []
+
+  if (!folderId || fileIds.length === 0) {
+    return jsonResponse({ success: false, message: 'Drive file IDs are required.' })
+  }
+
+  const deletedFileIds = []
+
+  fileIds.forEach((fileId) => {
+    const driveFile = DriveApp.getFileById(fileId)
+
+    if (!fileBelongsToFolder(driveFile, folderId)) {
+      throw new Error('A requested file does not belong to the configured Drive folder.')
+    }
+
+    driveFile.setTrashed(true)
+    deletedFileIds.push(fileId)
+  })
+
+  return jsonResponse({ success: true, deletedFileIds })
+}
+
+function downloadDriveFile(payload) {
+  const folderId = DRIVE_FOLDER_IDS[payload.destination]
+
+  if (!folderId || !payload.fileId) {
+    return jsonResponse({ success: false, message: 'A Drive file ID is required.' })
+  }
+
+  const driveFile = DriveApp.getFileById(payload.fileId)
+
+  if (!fileBelongsToFolder(driveFile, folderId)) {
+    throw new Error('The requested file does not belong to the configured Drive folder.')
+  }
+
+  const fileBlob = driveFile.getBlob()
+
+  return jsonResponse({
+    success: true,
+    contentType: fileBlob.getContentType() || 'application/pdf',
+    fileBase64: Utilities.base64Encode(fileBlob.getBytes()),
+    fileName: driveFile.getName(),
+  })
+}
+
+function fileBelongsToFolder(driveFile, folderId) {
+  return itemBelongsToFolder(driveFile.getParents(), folderId)
+}
+
+function itemBelongsToFolder(parents, folderId) {
+  while (parents.hasNext()) {
+    const parent = parents.next()
+    if (parent.getId() === folderId) return true
+    if (itemBelongsToFolder(parent.getParents(), folderId)) return true
+  }
+
+  return false
+}
+
+function getOrCreateFolderPath(rootFolder, folderPath) {
+  if (!Array.isArray(folderPath) || folderPath.length === 0) return rootFolder
+
+  return folderPath.reduce((parentFolder, rawFolderName) => {
+    const folderName = sanitizeFolderName(rawFolderName)
+    const matchingFolders = parentFolder.getFoldersByName(folderName)
+
+    return matchingFolders.hasNext()
+      ? matchingFolders.next()
+      : parentFolder.createFolder(folderName)
+  }, rootFolder)
+}
+
+function sanitizeFolderName(value) {
+  const folderName = String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+
+  return folderName || 'Uncategorized'
 }
 
 function jsonResponse(data) {

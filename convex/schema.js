@@ -17,7 +17,8 @@ export default defineSchema({
     updatedAt: v.optional(v.number()),
   })
     .index('by_email', ['email'])
-    .index('by_school_id', ['schoolId']),
+    .index('by_school_id', ['schoolId'])
+    .index('by_role', ['role']),
 
   activityLogs: defineTable({
     action: v.string(),
@@ -46,7 +47,12 @@ export default defineSchema({
     frontIdUrl: v.optional(v.string()),
     idFilesUploadedAt: v.optional(v.number()),
     uploadedAt: v.float64(),
-  }),
+  })
+    .index('by_student_id', ['studentId'])
+    .index('by_batch_id', ['batchId'])
+    .index('by_school_year_batch', ['schoolYear', 'batchId'])
+    .index('by_last_name', ['lastName'])
+    .index('by_first_name', ['firstName']),
 
   applicants: defineTable({
     studentId: v.string(),
@@ -143,6 +149,7 @@ export default defineSchema({
     submittedAt: v.number(),
   })
     .index('by_course', ['course'])
+    .index('by_application_year_course', ['applicationYear', 'course'])
     .index('by_submittedAt', ['submittedAt']),
 
   applicantPortalSettings: defineTable({

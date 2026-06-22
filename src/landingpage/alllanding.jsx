@@ -221,6 +221,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const [currentPage, setCurrentPage] = useState(1)
   const [studentIdSearch, setStudentIdSearch] = useState('')
+  const [debouncedStudentIdSearch, setDebouncedStudentIdSearch] = useState('')
 
   const [adminLoginEmail, setAdminLoginEmail] = useState('')
   const [adminLoginSchoolId, setAdminLoginSchoolId] = useState('')
@@ -255,7 +256,10 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const registerAdmin = useMutation(api.adminAuth.register)
   const requestPasswordResetOtp = useMutation(api.adminAuth.requestPasswordResetOtp)
   const changePasswordWithOtp = useMutation(api.adminAuth.changePasswordWithOtp)
-  const allInfoRecords = useQuery(api.allinfo.list)
+  const allInfoRecords = useQuery(
+    api.allinfo.searchPublic,
+    debouncedStudentIdSearch ? { searchValue: debouncedStudentIdSearch } : 'skip',
+  )
   const applicantPortal = useQuery(api.applicantPortal.get)
 
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
@@ -263,27 +267,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const isPortalStatusLoading = applicantPortal === undefined
   const isApplicantPortalOpen = applicantPortal?.isReceivingApplicants === true
 
-  const filteredGranteeRows = useMemo(() => {
-    const searchValue = studentIdSearch.trim().toLowerCase()
-    if (!searchValue) return []
-    return granteeRows.filter((grantee) => {
-      const studentId = String(grantee.studentId ?? '').trim().toLowerCase()
-      const batchId = String(grantee.batchId ?? '').trim().toLowerCase()
-      const lastName = String(grantee.lastName ?? '').trim().toLowerCase()
-      const firstName = String(grantee.firstName ?? '').trim().toLowerCase()
-      const middleName = String(grantee.middleName ?? grantee.middleInitial ?? '').trim().toLowerCase()
-      const fullName = [lastName, firstName, middleName].filter(Boolean).join(' ')
-
-      return (
-        studentId === searchValue ||
-        batchId === searchValue ||
-        lastName.includes(searchValue) ||
-        firstName.includes(searchValue) ||
-        middleName.includes(searchValue) ||
-        fullName.includes(searchValue)
-      )
-    })
-  }, [granteeRows, studentIdSearch])
+  const filteredGranteeRows = granteeRows
 
   const totalRows = filteredGranteeRows.length
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage))
@@ -298,14 +282,13 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     return getPaginationRange(currentPage, totalPages)
   }, [currentPage, totalPages])
 
-  const isSchoolIdFoundInAllInfo = (schoolId) => {
-    const normalizedSchoolId = schoolId.trim().toLowerCase()
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedStudentIdSearch(studentIdSearch.trim())
+    }, 500)
 
-    return granteeRows.some((grantee) => {
-      const studentId = String(grantee.studentId ?? '').trim().toLowerCase()
-      return studentId === normalizedSchoolId
-    })
-  }
+    return () => window.clearTimeout(timeoutId)
+  }, [studentIdSearch])
 
   const continueToStudentFromRegistration = useCallback(() => {
     setSignUpSuccess('')
@@ -864,6 +847,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const handleRefreshTable = () => {
     setStudentIdSearch('')
+    setDebouncedStudentIdSearch('')
     setCurrentPage(1)
   }
 
@@ -1167,17 +1151,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       return
     }
 
-    if (allInfoRecords === undefined) {
-      setSignUpError('Please wait while we verify the School ID.')
-      return
-    }
-
-    if (!isSchoolIdFoundInAllInfo(schoolId)) {
-      setIsSignUpOpen(false)
-      setIsSignUpDeniedOpen(true)
-      return
-    }
-
     if (!phoneNumber) {
       setSignUpError('Phone number is required.')
       return
@@ -1440,7 +1413,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   </thead>
 
                   <tbody>
-                    {allInfoRecords === undefined && (
+                    {allInfoRecords === undefined && debouncedStudentIdSearch && (
                       <tr>
                         <td className="empty-state" colSpan={10}>
                           Searching grantee record...

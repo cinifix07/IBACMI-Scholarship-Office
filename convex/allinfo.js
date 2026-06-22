@@ -15,14 +15,72 @@ export const list = query({
   handler: async (ctx) => {
     const records = await ctx.db.query('allinfo').collect()
 
-    return await Promise.all(
-      records.map(async (record) => ({
-        ...record,
-        frontIdUrl:
-          record.frontIdUrl ??
-          (record.frontIdStorageId ? await ctx.storage.getUrl(record.frontIdStorageId) : null),
-      })),
-    )
+    return records
+  },
+})
+
+async function withFrontIdUrl(_ctx, record) {
+  if (!record) return null
+
+  return record
+}
+
+export const listByStudentId = query({
+  args: {
+    studentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const studentId = args.studentId.trim()
+    if (!studentId) return []
+
+    const records = await ctx.db
+      .query('allinfo')
+      .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', studentId))
+      .collect()
+
+    return await Promise.all(records.map((record) => withFrontIdUrl(ctx, record)))
+  },
+})
+
+export const searchPublic = query({
+  args: {
+    searchValue: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const searchValue = args.searchValue.trim()
+    if (!searchValue) return []
+
+    const upperSearchValue = searchValue.toUpperCase()
+    const [studentMatches, batchMatches, lastNameMatches, firstNameMatches] = await Promise.all([
+      ctx.db
+        .query('allinfo')
+        .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', searchValue))
+        .take(50),
+      ctx.db
+        .query('allinfo')
+        .withIndex('by_batch_id', (queryBuilder) => queryBuilder.eq('batchId', searchValue))
+        .take(50),
+      ctx.db
+        .query('allinfo')
+        .withIndex('by_last_name', (queryBuilder) => queryBuilder.eq('lastName', upperSearchValue))
+        .take(50),
+      ctx.db
+        .query('allinfo')
+        .withIndex('by_first_name', (queryBuilder) => queryBuilder.eq('firstName', upperSearchValue))
+        .take(50),
+    ])
+    const uniqueRecords = new Map()
+
+    for (const record of [
+      ...studentMatches,
+      ...batchMatches,
+      ...lastNameMatches,
+      ...firstNameMatches,
+    ]) {
+      uniqueRecords.set(String(record._id), record)
+    }
+
+    return [...uniqueRecords.values()]
   },
 })
 
@@ -58,13 +116,6 @@ function findTargetStudentRecord(records, requestedSchoolYear) {
   })[0]
 }
 
-export const generateUploadUrl = mutation({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.storage.generateUploadUrl()
-  },
-})
-
 function sanitizeFilePart(value, fallback) {
   const sanitized = String(value ?? '')
     .trim()
@@ -84,6 +135,18 @@ function bytesToBase64(bytes) {
   }
 
   return btoa(binary)
+}
+
+function getGoogleDriveFileId(fileUrl) {
+  const value = String(fileUrl ?? '')
+  const pathMatch = value.match(/\/file\/d\/([^/?#]+)/i)
+  if (pathMatch) return pathMatch[1]
+
+  try {
+    return new URL(value).searchParams.get('id')
+  } catch {
+    return null
+  }
 }
 
 async function uploadMigrationPdf(appsScriptUrl, uploadSecret, candidate, fileBytes) {
@@ -206,6 +269,124 @@ export const finalizeStudentIdMigration = internalMutation({
       targetLabel: `${record.studentId} / ${record.schoolYear}`,
       summary: `Migrated the ${record.schoolYear} School ID PDF from Convex Storage to Google Drive.`,
     })
+  },
+})
+
+export const listLegacyStorageReferences = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const records = await ctx.db.query('allinfo').collect()
+
+    return await Promise.all(
+      records
+        .filter((record) => record.frontIdStorageId)
+        .map(async (record) => ({
+          driveUrl: String(record.frontIdUrl ?? '').startsWith('https://drive.google.com/')
+            ? record.frontIdUrl
+            : null,
+          id: record._id,
+          storageId: record.frontIdStorageId,
+          storageUrl: await ctx.storage.getUrl(record.frontIdStorageId),
+          studentId: record.studentId,
+        })),
+    )
+  },
+})
+
+export const removeLegacyStorageReference = internalMutation({
+  args: {
+    id: v.id('allinfo'),
+    storageId: v.id('_storage'),
+  },
+  handler: async (ctx, args) => {
+    const record = await ctx.db.get(args.id)
+    if (!record || record.frontIdStorageId !== args.storageId) return
+
+    await ctx.db.patch(args.id, { frontIdStorageId: undefined })
+    await ctx.storage.delete(args.storageId)
+  },
+})
+
+export const cleanLegacyStorageReferences = action({
+  args: {},
+  handler: async (ctx) => {
+    const references = await ctx.runQuery(internal.allinfo.listLegacyStorageReferences)
+    const failures = []
+    let removed = 0
+
+    for (const reference of references) {
+      try {
+        let canRemove = Boolean(reference.driveUrl)
+
+        if (!canRemove && reference.storageUrl) {
+          const response = await fetch(reference.storageUrl)
+          const bytes = response.ok ? new Uint8Array(await response.arrayBuffer()) : null
+          canRemove = Boolean(bytes && bytes.length === 0)
+        }
+
+        if (!canRemove) {
+          throw new Error('The record has no Drive URL and its Convex file is not empty.')
+        }
+
+        await ctx.runMutation(internal.allinfo.removeLegacyStorageReference, {
+          id: reference.id,
+          storageId: reference.storageId,
+        })
+        removed += 1
+      } catch (error) {
+        failures.push({
+          message: error instanceof Error ? error.message : 'Unknown cleanup error.',
+          studentId: reference.studentId,
+        })
+      }
+    }
+
+    return { failures, removed }
+  },
+})
+
+export const listOrphanedStorageFiles = internalQuery({
+  args: {
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const files = await ctx.db.system
+      .query('_storage')
+      .take(Math.max(1, Math.min(args.limit, 100)))
+
+    return files.map((file) => ({
+      id: file._id,
+      size: file.size,
+    }))
+  },
+})
+
+export const deleteOrphanedStorageFiles = internalMutation({
+  args: {
+    storageIds: v.array(v.id('_storage')),
+  },
+  handler: async (ctx, args) => {
+    await Promise.all(args.storageIds.map((storageId) => ctx.storage.delete(storageId)))
+    return args.storageIds.length
+  },
+})
+
+export const purgeOrphanedStorage = action({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const files = await ctx.runQuery(internal.allinfo.listOrphanedStorageFiles, {
+      limit: args.limit ?? 100,
+    })
+    const deleted = await ctx.runMutation(internal.allinfo.deleteOrphanedStorageFiles, {
+      storageIds: files.map((file) => file.id),
+    })
+
+    return {
+      bytesDeleted: files.reduce((total, file) => total + file.size, 0),
+      deleted,
+    }
   },
 })
 
@@ -333,10 +514,10 @@ export const saveStudentIdUploads = mutation({
       }
     }
 
-    const allRecords = await ctx.db.query('allinfo').collect()
-    const matchingRecords = allRecords.filter((record) => {
-      return String(record.studentId ?? '').trim().toLowerCase() === studentId
-    })
+    const matchingRecords = await ctx.db
+      .query('allinfo')
+      .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', args.studentId.trim()))
+      .collect()
 
     const targetRecord = findTargetStudentRecord(matchingRecords, args.schoolYear)
 
@@ -366,6 +547,102 @@ export const saveStudentIdUploads = mutation({
       recordId: targetRecord._id,
       schoolYear: targetRecord.schoolYear ?? '',
     }
+  },
+})
+
+export const listSchoolIdFilesByBatch = internalQuery({
+  args: {
+    batchId: v.string(),
+    schoolYear: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const records = await ctx.db
+      .query('allinfo')
+      .withIndex('by_school_year_batch', (queryBuilder) =>
+        queryBuilder.eq('schoolYear', args.schoolYear).eq('batchId', args.batchId),
+      )
+      .collect()
+
+    return records
+      .filter((record) => String(record.frontIdUrl ?? '').startsWith('https://drive.google.com/'))
+      .map((record) => ({
+        fileId: getGoogleDriveFileId(record.frontIdUrl),
+        id: record._id,
+        studentId: record.studentId,
+      }))
+      .filter((record) => record.fileId)
+  },
+})
+
+export const clearSchoolIdFilesByBatch = internalMutation({
+  args: {
+    ids: v.array(v.id('allinfo')),
+  },
+  handler: async (ctx, args) => {
+    for (const id of args.ids) {
+      await ctx.db.patch(id, {
+        frontIdStorageId: undefined,
+        frontIdUrl: undefined,
+        idFilesUploadedAt: undefined,
+      })
+    }
+
+    return args.ids.length
+  },
+})
+
+export const deleteSchoolIdFilesByBatch = action({
+  args: {
+    batchId: v.string(),
+    schoolYear: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const appsScriptUrl = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_URL
+    const uploadSecret = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_SECRET
+
+    if (!appsScriptUrl || !uploadSecret) {
+      throw new Error('Google Drive deletion is not configured.')
+    }
+
+    const files = await ctx.runQuery(internal.allinfo.listSchoolIdFilesByBatch, {
+      batchId: args.batchId.trim(),
+      schoolYear: args.schoolYear.trim(),
+    })
+
+    if (files.length === 0) {
+      return { deleted: 0 }
+    }
+
+    const googleResponse = await fetch(appsScriptUrl, {
+      body: JSON.stringify({
+        destination: 'students',
+        fileIds: files.map((file) => file.fileId),
+        operation: 'delete',
+        secret: uploadSecret,
+      }),
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      method: 'POST',
+    })
+    const googleResult = await googleResponse.json().catch(() => null)
+
+    if (!googleResponse.ok || !googleResult?.success) {
+      throw new Error(googleResult?.message || 'Google Drive rejected the batch deletion.')
+    }
+
+    const deleted = await ctx.runMutation(internal.allinfo.clearSchoolIdFilesByBatch, {
+      ids: files.map((file) => file.id),
+    })
+
+    await ctx.runMutation(internal.activityLogs.createSystemLog, {
+      action: 'student_id_batch_deleted',
+      summary: `Deleted ${deleted} School ID file${deleted === 1 ? '' : 's'} for School Year ${args.schoolYear}, Batch ${args.batchId}.`,
+      targetLabel: `${args.schoolYear} / Batch ${args.batchId}`,
+      targetType: 'allinfo',
+    })
+
+    return { deleted }
   },
 })
 

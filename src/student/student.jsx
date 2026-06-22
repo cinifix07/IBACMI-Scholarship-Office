@@ -197,7 +197,11 @@ function StudentPdfPreview({ url }) {
 }
 
 export default function StudentInfoForm({ studentSession, onLogout, onStudentSessionUpdate }) {
-  const allInfoRecords = useQuery(api.allinfo.list)
+  const studentSchoolId = String(studentSession?.schoolId ?? '').trim()
+  const allInfoRecords = useQuery(
+    api.allinfo.listByStudentId,
+    studentSchoolId ? { studentId: studentSchoolId } : 'skip',
+  )
   const saveStudentIdUploads = useMutation(api.allinfo.saveStudentIdUploads)
   const updateStudentPhoneNumber = useMutation(api.adminAuth.updateStudentPhoneNumber)
   const [frontIdFile, setFrontIdFile] = useState(null)
@@ -215,21 +219,21 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const [addressSuccess, setAddressSuccess] = useState('')
   const [isSavingCurrentAddress, setIsSavingCurrentAddress] = useState(false)
 
-  const studentSchoolId = String(studentSession?.schoolId ?? '').trim().toLowerCase()
+  const normalizedStudentSchoolId = studentSchoolId.toLowerCase()
   const savedPhoneNumber = studentSession?.phoneNumber ?? ''
   const hasPhoneNumberChanged = normalizePhoneNumber(phoneNumber) !== normalizePhoneNumber(savedPhoneNumber)
   const savedCurrentAddress = studentSession?.currentAddress ?? ''
   const hasCurrentAddressChanged = currentAddress.trim() !== savedCurrentAddress.trim()
   const studentRecord = useMemo(() => {
-    if (!studentSchoolId || !allInfoRecords) return null
+    if (!normalizedStudentSchoolId || !allInfoRecords) return null
 
     const matchingRecords = allInfoRecords.filter((record) => {
       const recordStudentId = String(record.studentId ?? '').trim().toLowerCase()
-      return recordStudentId === studentSchoolId
+      return recordStudentId === normalizedStudentSchoolId
     })
 
     return findCurrentStudentRecord(matchingRecords) ?? null
-  }, [allInfoRecords, studentSchoolId])
+  }, [allInfoRecords, normalizedStudentSchoolId])
 
   const form = studentRecord
     ? {
@@ -246,7 +250,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     : initialForm
 
   const isLoading = allInfoRecords === undefined
-  const hasStudentSession = Boolean(studentSchoolId)
+  const hasStudentSession = Boolean(normalizedStudentSchoolId)
   const showMissingRecord = !isLoading && hasStudentSession && !studentRecord
   const statusOptions = getUniqueOptions([form.status, 'Validated', 'Pending', 'Rejected'])
   const semesterOptions = getUniqueOptions([form.semester, '1st Semester', '2nd Semester'])
@@ -435,6 +439,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
       documentType: 'School-ID',
       fileName: file.name,
       fullName: studentFullName,
+      schoolYear: studentRecord.schoolYear || 'unknown-school-year',
       studentId: studentRecord.studentId,
     })
     let uploadResult

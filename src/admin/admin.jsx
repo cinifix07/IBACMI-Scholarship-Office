@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import ibacmiLogo from '../assets/IBACMI.png'
 
@@ -11,6 +11,12 @@ const schoolIdDownloadsPerPage = 5
 const schoolIdBatchDownloadsPerPage = 5
 const courseApplicantsPerPage = 10
 const applicantYearsPerPage = 5
+const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
+const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
+const convexSiteUrl = (
+  import.meta.env.VITE_CONVEX_SITE_URL ||
+  activeConvexUrl.replace(/\.convex\.cloud\/?$/i, '.convex.site')
+).replace(/\/+$/, '')
 
 const unifastPortalCourses = [
   'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
@@ -203,7 +209,10 @@ function getFileExtension(contentType, url) {
 }
 
 async function getZipFileFromGrantee(grantee, index) {
-  const response = await fetch(grantee.frontIdUrl)
+  const downloadUrl = `${convexSiteUrl}/google-drive/file?url=${encodeURIComponent(
+    grantee.frontIdUrl,
+  )}`
+  const response = await fetch(downloadUrl)
 
   if (!response.ok) {
     throw new Error(`Unable to download School ID file for ${grantee.studentId || 'student'}.`)
@@ -420,7 +429,12 @@ function Admin({ onLogout }) {
   const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false)
   const [isSchoolIdDownloadOpen, setIsSchoolIdDownloadOpen] = useState(false)
   const [selectedSchoolIdDownloadYear, setSelectedSchoolIdDownloadYear] = useState('')
+  const [selectedSchoolIdBatchAction, setSelectedSchoolIdBatchAction] = useState(null)
+  const [isSchoolIdDeleteConfirmOpen, setIsSchoolIdDeleteConfirmOpen] = useState(false)
   const [isDownloadingSchoolIdFiles, setIsDownloadingSchoolIdFiles] = useState(false)
+  const [isDeletingSchoolIdFiles, setIsDeletingSchoolIdFiles] = useState(false)
+  const [schoolIdDownloadProgress, setSchoolIdDownloadProgress] = useState(0)
+  const [schoolIdFileSuccess, setSchoolIdFileSuccess] = useState(null)
   const [selectedDeleteBatch, setSelectedDeleteBatch] = useState(null)
   const [selectedUploadFile, setSelectedUploadFile] = useState(null)
   const [uploadMessage, setUploadMessage] = useState('')
@@ -443,6 +457,12 @@ function Admin({ onLogout }) {
   const [currentSchoolIdDownloadPage, setCurrentSchoolIdDownloadPage] = useState(1)
   const [currentSchoolIdBatchDownloadPage, setCurrentSchoolIdBatchDownloadPage] = useState(1)
   const [courseApplicantSearch, setCourseApplicantSearch] = useState('')
+  const [isCourseApplicantDeleteConfirmOpen, setIsCourseApplicantDeleteConfirmOpen] =
+    useState(false)
+  const [isDeletingCourseApplicants, setIsDeletingCourseApplicants] = useState(false)
+  const [isDownloadingCourseApplicants, setIsDownloadingCourseApplicants] = useState(false)
+  const [courseApplicantDownloadProgress, setCourseApplicantDownloadProgress] = useState(0)
+  const [courseApplicantSuccess, setCourseApplicantSuccess] = useState(null)
   const [currentCourseApplicantPage, setCurrentCourseApplicantPage] = useState(1)
   const [currentApplicantYearPage, setCurrentApplicantYearPage] = useState(1)
 
@@ -458,6 +478,8 @@ function Admin({ onLogout }) {
   const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
   const clearAllQuickActions = useMutation(api.quickActions.clearAll)
   const clearAllActivityLogs = useMutation(api.activityLogs.clearAll)
+  const deleteSchoolIdFilesByBatch = useAction(api.allinfo.deleteSchoolIdFilesByBatch)
+  const deleteAllApplicantsByCourse = useAction(api.applicants.deleteAllByCourse)
 
   const isAnyModalOpen =
     isLogsOpen ||
@@ -467,12 +489,21 @@ function Admin({ onLogout }) {
     isUnifastPortalCoursesOpen ||
     isApplicantYearOpen ||
     Boolean(selectedUnifastCourse) ||
+    isCourseApplicantDeleteConfirmOpen ||
+    isDownloadingCourseApplicants ||
+    isDeletingCourseApplicants ||
+    Boolean(courseApplicantSuccess) ||
     isAddRecordOpen ||
     isBatchExportOpen ||
     isBatchDeleteOpen ||
     Boolean(selectedDeleteBatch) ||
     isSchoolIdDownloadOpen ||
     Boolean(selectedSchoolIdDownloadYear) ||
+    Boolean(selectedSchoolIdBatchAction) ||
+    isSchoolIdDeleteConfirmOpen ||
+    isDownloadingSchoolIdFiles ||
+    isDeletingSchoolIdFiles ||
+    Boolean(schoolIdFileSuccess) ||
     Boolean(selectedGranteeRecord)
 
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
@@ -842,9 +873,11 @@ function Admin({ onLogout }) {
   }
 
   const closeCourseApplicantModal = () => {
+    if (isDeletingCourseApplicants || isDownloadingCourseApplicants) return
     setSelectedUnifastCourse('')
     setCourseApplicantSearch('')
     setCurrentCourseApplicantPage(1)
+    setIsCourseApplicantDeleteConfirmOpen(false)
   }
 
   const handleCourseApplicantSearchChange = (event) => {
@@ -858,11 +891,27 @@ function Admin({ onLogout }) {
   }
 
   const closeSchoolIdDownloadModal = () => {
-    if (isDownloadingSchoolIdFiles) return
+    if (isDownloadingSchoolIdFiles || isDeletingSchoolIdFiles) return
 
     setIsSchoolIdDownloadOpen(false)
     setSelectedSchoolIdDownloadYear('')
+    setSelectedSchoolIdBatchAction(null)
+    setIsSchoolIdDeleteConfirmOpen(false)
     setCurrentSchoolIdBatchDownloadPage(1)
+  }
+
+  const openSchoolIdBatchActionModal = (batchId, fileCount) => {
+    setSelectedSchoolIdBatchAction({
+      batchId,
+      fileCount,
+      schoolYear: selectedSchoolIdDownloadYear,
+    })
+  }
+
+  const closeSchoolIdBatchActionModal = () => {
+    if (isDownloadingSchoolIdFiles || isDeletingSchoolIdFiles) return
+    setSelectedSchoolIdBatchAction(null)
+    setIsSchoolIdDeleteConfirmOpen(false)
   }
 
   const resetFilters = () => {
@@ -894,6 +943,7 @@ function Admin({ onLogout }) {
     if (matchingFiles.length === 0) return
 
     setIsDownloadingSchoolIdFiles(true)
+    setSchoolIdDownloadProgress(0)
 
     try {
       const zipFiles = []
@@ -905,6 +955,10 @@ function Admin({ onLogout }) {
         } catch (error) {
           console.warn(error)
         }
+
+        setSchoolIdDownloadProgress(
+          Math.min(90, Math.round(((index + 1) / matchingFiles.length) * 90)),
+        )
       }
 
       if (zipFiles.length === 0) {
@@ -912,6 +966,7 @@ function Admin({ onLogout }) {
       }
 
       const zipBlob = createStoredZipBlob(zipFiles)
+      setSchoolIdDownloadProgress(96)
       const zipUrl = URL.createObjectURL(zipBlob)
       const link = document.createElement('a')
       const safeYear = sanitizeDownloadPart(selectedYear, 'school-year')
@@ -925,13 +980,52 @@ function Admin({ onLogout }) {
       document.body.removeChild(link)
       URL.revokeObjectURL(zipUrl)
 
+      setSchoolIdDownloadProgress(100)
+      await new Promise((resolve) => window.setTimeout(resolve, 350))
       setIsSchoolIdDownloadOpen(false)
       setSelectedSchoolIdDownloadYear('')
+      setSelectedSchoolIdBatchAction(null)
       setCurrentSchoolIdBatchDownloadPage(1)
+      setSchoolIdFileSuccess({
+        batchId: selectedBatchId,
+        count: zipFiles.length,
+        schoolYear: selectedYear,
+        type: 'download',
+      })
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Unable to download School ID files.')
     } finally {
       setIsDownloadingSchoolIdFiles(false)
+      setSchoolIdDownloadProgress(0)
+    }
+  }
+
+  const handleDeleteSchoolIdBatch = async () => {
+    if (!selectedSchoolIdBatchAction) return
+
+    setIsDeletingSchoolIdFiles(true)
+
+    try {
+      const result = await deleteSchoolIdFilesByBatch({
+        batchId: selectedSchoolIdBatchAction.batchId,
+        schoolYear: selectedSchoolIdBatchAction.schoolYear,
+      })
+
+      setIsSchoolIdDeleteConfirmOpen(false)
+      setSelectedSchoolIdBatchAction(null)
+      setSelectedSchoolIdDownloadYear('')
+      setIsSchoolIdDownloadOpen(false)
+      setCurrentSchoolIdBatchDownloadPage(1)
+      setSchoolIdFileSuccess({
+        batchId: selectedSchoolIdBatchAction.batchId,
+        count: result.deleted,
+        schoolYear: selectedSchoolIdBatchAction.schoolYear,
+        type: 'delete',
+      })
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to delete School ID files.')
+    } finally {
+      setIsDeletingSchoolIdFiles(false)
     }
   }
 
@@ -998,7 +1092,7 @@ function Admin({ onLogout }) {
     setIsBatchExportOpen(false)
   }
 
-  const exportUnifastCourseCsv = (course) => {
+  const exportUnifastCourseCsv = async (course) => {
     if (applicants === undefined) {
       window.alert('Please wait while applicant information is loading.')
       return
@@ -1011,6 +1105,16 @@ function Admin({ onLogout }) {
         getApplicantCourse(applicant).toLowerCase() === selectedCourse.toLowerCase()
       )
     })
+
+    if (courseRecords.length === 0) {
+      window.alert('No applicants are available for this course.')
+      return
+    }
+
+    setIsDownloadingCourseApplicants(true)
+    setCourseApplicantDownloadProgress(8)
+
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
 
     const csvRows = [
       [
@@ -1069,9 +1173,51 @@ function Admin({ onLogout }) {
       ]),
     ]
 
+    setCourseApplicantDownloadProgress(72)
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
     const safeCourse = sanitizeDownloadPart(selectedCourse, 'course')
     const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
     downloadCsvFile(`unifast-applicants-${safeYear}-${safeCourse}.csv`, csvRows)
+    setCourseApplicantDownloadProgress(100)
+    await new Promise((resolve) => window.setTimeout(resolve, 350))
+    setIsDownloadingCourseApplicants(false)
+    setCourseApplicantDownloadProgress(0)
+    setCourseApplicantSuccess({
+      count: courseRecords.length,
+      course: selectedCourse,
+      type: 'download',
+      year: activeApplicantYear,
+    })
+  }
+
+  const handleDeleteCourseApplicants = async () => {
+    if (!selectedUnifastCourse) return
+
+    setIsDeletingCourseApplicants(true)
+
+    try {
+      const result = await deleteAllApplicantsByCourse({
+        applicationYear: activeApplicantYear,
+        course: selectedUnifastCourse,
+      })
+
+      setIsCourseApplicantDeleteConfirmOpen(false)
+      setCourseApplicantSuccess({
+        count: result.deleted,
+        course: selectedUnifastCourse,
+        filesDeleted: result.filesDeleted,
+        type: 'delete',
+        year: activeApplicantYear,
+      })
+      setSelectedUnifastCourse('')
+      setCourseApplicantSearch('')
+      setCurrentCourseApplicantPage(1)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to delete course applicants.')
+    } finally {
+      setIsDeletingCourseApplicants(false)
+    }
   }
 
   const exportQuickActionResponsesCsv = () => {
@@ -2645,15 +2791,37 @@ function Admin({ onLogout }) {
                 />
               </div>
 
-              <button
-                className="admin-button admin-button--primary"
-                disabled={applicants === undefined || selectedCourseApplicants.length === 0}
-                onClick={() => exportUnifastCourseCsv(selectedUnifastCourse)}
-                type="button"
-              >
-                <span className="material-symbols-outlined">download</span>
-                Download All Applicants Info
-              </button>
+              <div className="admin-course-applicants-toolbar__actions">
+                <button
+                  className="admin-button admin-button--danger"
+                  disabled={
+                    applicants === undefined ||
+                    selectedCourseApplicants.length === 0 ||
+                    isDeletingCourseApplicants ||
+                    isDownloadingCourseApplicants
+                  }
+                  onClick={() => setIsCourseApplicantDeleteConfirmOpen(true)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">delete_forever</span>
+                  Delete All Applicants
+                </button>
+
+                <button
+                  className="admin-button admin-button--primary"
+                  disabled={
+                    applicants === undefined ||
+                    selectedCourseApplicants.length === 0 ||
+                    isDeletingCourseApplicants ||
+                    isDownloadingCourseApplicants
+                  }
+                  onClick={() => exportUnifastCourseCsv(selectedUnifastCourse)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">download</span>
+                  Download All Applicants Info
+                </button>
+              </div>
             </div>
 
             <div className="admin-course-applicants-summary">
@@ -2882,6 +3050,147 @@ function Admin({ onLogout }) {
         </div>
       )}
 
+      {isCourseApplicantDeleteConfirmOpen && selectedUnifastCourse && (
+        <div
+          aria-labelledby="admin-course-delete-confirm-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant deletion warning"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDeletingCourseApplicants) setIsCourseApplicantDeleteConfirmOpen(false)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card">
+            <div className="admin-confirm-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">warning</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Permanent Action</p>
+              <h2 id="admin-course-delete-confirm-title">Delete all course applications?</h2>
+              <p>
+                Are you sure you want to delete all{' '}
+                <strong>{selectedCourseApplicants.length}</strong> applications for{' '}
+                <strong>{selectedUnifastCourse}</strong>, application year{' '}
+                <strong>{activeApplicantYear}</strong>?
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__notice">
+              <span className="material-symbols-outlined">report</span>
+              Applicant records will be permanently removed from Convex and their uploaded PDFs
+              moved to Google Drive trash.
+            </div>
+
+            <div className="admin-confirm-card__actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingCourseApplicants}
+                onClick={() => setIsCourseApplicantDeleteConfirmOpen(false)}
+                type="button"
+              >
+                No, Keep Applications
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isDeletingCourseApplicants}
+                onClick={handleDeleteCourseApplicants}
+                type="button"
+              >
+                {isDeletingCourseApplicants ? 'Deleting...' : 'Yes, Delete All'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isDownloadingCourseApplicants && (
+        <div
+          aria-labelledby="admin-course-download-progress-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <section className="admin-modal-card admin-modal-card--compact admin-progress-card">
+            <div className="admin-progress-icon" aria-hidden="true">
+              <span className="material-symbols-outlined">downloading</span>
+            </div>
+            <p className="admin-modal-kicker">Course Applicants Information</p>
+            <h2 id="admin-course-download-progress-title">Preparing Applicant Download</h2>
+            <p>Creating the CSV file for {selectedUnifastCourse}.</p>
+
+            <div
+              aria-label={`Download progress ${courseApplicantDownloadProgress}%`}
+              aria-valuemax="100"
+              aria-valuemin="0"
+              aria-valuenow={courseApplicantDownloadProgress}
+              className="admin-progress-track"
+              role="progressbar"
+            >
+              <span style={{ width: `${courseApplicantDownloadProgress}%` }} />
+            </div>
+            <strong className="admin-progress-value">{courseApplicantDownloadProgress}%</strong>
+          </section>
+        </div>
+      )}
+
+      {courseApplicantSuccess && (
+        <div
+          aria-labelledby="admin-course-success-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant action success message"
+            className="admin-modal-backdrop"
+            onClick={() => setCourseApplicantSuccess(null)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card admin-success-card">
+            <div className="admin-success-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">check_circle</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Completed Successfully</p>
+              <h2 id="admin-course-success-title">
+                {courseApplicantSuccess.type === 'download'
+                  ? 'Applicant download is ready'
+                  : 'Applications deleted'}
+              </h2>
+              <p>
+                {courseApplicantSuccess.count} applicant{' '}
+                {courseApplicantSuccess.count === 1 ? 'record' : 'records'} for{' '}
+                <strong>{courseApplicantSuccess.course}</strong>, application year{' '}
+                <strong>{courseApplicantSuccess.year}</strong>{' '}
+                {courseApplicantSuccess.type === 'download'
+                  ? 'were added to the CSV file.'
+                  : 'were deleted successfully.'}
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__actions admin-success-card__actions">
+              <button
+                className="admin-button admin-button--primary"
+                onClick={() => setCourseApplicantSuccess(null)}
+                type="button"
+              >
+                Done
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {isSchoolIdDownloadOpen && (
         <div
           aria-labelledby="admin-school-id-download-title"
@@ -3044,17 +3353,13 @@ function Admin({ onLogout }) {
               {currentSchoolIdBatchDownloads.map(({ batchId, fileCount }) => (
                 <button
                   className="admin-school-year-button"
-                  disabled={isDownloadingSchoolIdFiles}
+                  disabled={isDownloadingSchoolIdFiles || isDeletingSchoolIdFiles}
                   key={batchId}
-                  onClick={() => downloadSchoolIdFiles(selectedSchoolIdDownloadYear, batchId)}
+                  onClick={() => openSchoolIdBatchActionModal(batchId, fileCount)}
                   type="button"
                 >
                   <span>{batchId}</span>
-                  <strong>
-                    {isDownloadingSchoolIdFiles
-                      ? 'Preparing...'
-                      : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
-                  </strong>
+                  <strong>{fileCount} {fileCount === 1 ? 'file' : 'files'}</strong>
                 </button>
               ))}
 
@@ -3127,6 +3432,226 @@ function Admin({ onLogout }) {
                 type="button"
               >
                 Back
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedSchoolIdBatchAction && !isSchoolIdDeleteConfirmOpen && !isDownloadingSchoolIdFiles && (
+        <div
+          aria-labelledby="admin-school-id-batch-action-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID batch actions"
+            className="admin-modal-backdrop"
+            onClick={closeSchoolIdBatchActionModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Batch {selectedSchoolIdBatchAction.batchId}</p>
+                <h2 id="admin-school-id-batch-action-title">Manage School ID Files</h2>
+                <p>
+                  {selectedSchoolIdBatchAction.fileCount}{' '}
+                  {selectedSchoolIdBatchAction.fileCount === 1 ? 'file' : 'files'} for School Year{' '}
+                  {selectedSchoolIdBatchAction.schoolYear}.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close School ID batch actions"
+                className="admin-modal-close"
+                onClick={closeSchoolIdBatchActionModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-id-actions">
+              <button
+                className="admin-school-id-action admin-school-id-action--download"
+                onClick={() =>
+                  downloadSchoolIdFiles(
+                    selectedSchoolIdBatchAction.schoolYear,
+                    selectedSchoolIdBatchAction.batchId,
+                  )
+                }
+                type="button"
+              >
+                <span className="material-symbols-outlined">folder_zip</span>
+                <span>
+                  <strong>Download All IDs</strong>
+                  <small>Create one ZIP file for this batch.</small>
+                </span>
+              </button>
+
+              <button
+                className="admin-school-id-action admin-school-id-action--delete"
+                onClick={() => setIsSchoolIdDeleteConfirmOpen(true)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete_forever</span>
+                <span>
+                  <strong>Delete All IDs</strong>
+                  <small>Remove the Drive files and clear their Convex links.</small>
+                </span>
+              </button>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeSchoolIdBatchActionModal}
+                type="button"
+              >
+                Back
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isSchoolIdDeleteConfirmOpen && selectedSchoolIdBatchAction && (
+        <div
+          aria-labelledby="admin-school-id-delete-confirm-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID delete warning"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDeletingSchoolIdFiles) setIsSchoolIdDeleteConfirmOpen(false)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card">
+            <div className="admin-confirm-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">warning</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Permanent Action</p>
+              <h2 id="admin-school-id-delete-confirm-title">Delete all IDs in this batch?</h2>
+              <p>
+                Are you sure you want to delete all{' '}
+                <strong>{selectedSchoolIdBatchAction.fileCount}</strong> School ID files from Batch{' '}
+                <strong>{selectedSchoolIdBatchAction.batchId}</strong>?
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__notice">
+              <span className="material-symbols-outlined">report</span>
+              The files will be moved to Google Drive trash and their links removed from Convex.
+            </div>
+
+            <div className="admin-confirm-card__actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingSchoolIdFiles}
+                onClick={() => setIsSchoolIdDeleteConfirmOpen(false)}
+                type="button"
+              >
+                No, Keep Files
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isDeletingSchoolIdFiles}
+                onClick={handleDeleteSchoolIdBatch}
+                type="button"
+              >
+                {isDeletingSchoolIdFiles ? 'Deleting...' : 'Yes, Delete All'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isDownloadingSchoolIdFiles && selectedSchoolIdBatchAction && (
+        <div
+          aria-labelledby="admin-school-id-progress-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <section className="admin-modal-card admin-modal-card--compact admin-progress-card">
+            <div className="admin-progress-icon" aria-hidden="true">
+              <span className="material-symbols-outlined">downloading</span>
+            </div>
+            <p className="admin-modal-kicker">School ID Files</p>
+            <h2 id="admin-school-id-progress-title">Preparing Batch Download</h2>
+            <p>
+              Downloading Batch {selectedSchoolIdBatchAction.batchId} files and creating the ZIP.
+            </p>
+
+            <div
+              aria-label={`Download progress ${schoolIdDownloadProgress}%`}
+              aria-valuemax="100"
+              aria-valuemin="0"
+              aria-valuenow={schoolIdDownloadProgress}
+              className="admin-progress-track"
+              role="progressbar"
+            >
+              <span style={{ width: `${schoolIdDownloadProgress}%` }} />
+            </div>
+            <strong className="admin-progress-value">{schoolIdDownloadProgress}%</strong>
+          </section>
+        </div>
+      )}
+
+      {schoolIdFileSuccess && (
+        <div
+          aria-labelledby="admin-school-id-success-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID success message"
+            className="admin-modal-backdrop"
+            onClick={() => setSchoolIdFileSuccess(null)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card admin-success-card">
+            <div className="admin-success-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">check_circle</span>
+            </div>
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Completed Successfully</p>
+              <h2 id="admin-school-id-success-title">
+                {schoolIdFileSuccess.type === 'download'
+                  ? 'Batch download is ready'
+                  : 'Batch ID files deleted'}
+              </h2>
+              <p>
+                {schoolIdFileSuccess.count} School ID{' '}
+                {schoolIdFileSuccess.count === 1 ? 'file' : 'files'} for Batch{' '}
+                <strong>{schoolIdFileSuccess.batchId}</strong>, School Year{' '}
+                <strong>{schoolIdFileSuccess.schoolYear}</strong>{' '}
+                {schoolIdFileSuccess.type === 'download'
+                  ? 'were added to the ZIP file.'
+                  : 'were deleted successfully.'}
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__actions admin-success-card__actions">
+              <button
+                className="admin-button admin-button--primary"
+                onClick={() => setSchoolIdFileSuccess(null)}
+                type="button"
+              >
+                Done
               </button>
             </div>
           </section>
@@ -4605,6 +5130,176 @@ const adminStyles = `
   line-height: 1.45;
 }
 
+.admin-school-id-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 24px;
+}
+
+.admin-school-id-action {
+  display: flex;
+  min-height: 126px;
+  align-items: flex-start;
+  gap: 14px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 16px;
+  background: #ffffff;
+  color: var(--admin-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 20px;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.admin-school-id-action:hover {
+  transform: translateY(-2px);
+}
+
+.admin-school-id-action > .material-symbols-outlined {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  font-size: 25px;
+}
+
+.admin-school-id-action span:last-child {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-school-id-action strong,
+.admin-school-id-action small {
+  display: block;
+}
+
+.admin-school-id-action strong {
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.admin-school-id-action small {
+  color: var(--admin-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.admin-school-id-action--download:hover {
+  border-color: var(--admin-primary);
+  background: #fff7ed;
+}
+
+.admin-school-id-action--download > .material-symbols-outlined {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+}
+
+.admin-school-id-action--delete:hover {
+  border-color: #fca5a5;
+  background: #fff1f2;
+}
+
+.admin-school-id-action--delete > .material-symbols-outlined {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.admin-progress-card {
+  padding: 32px;
+  text-align: center;
+}
+
+.admin-progress-card h2,
+.admin-progress-card p {
+  margin: 0;
+}
+
+.admin-progress-card h2 {
+  margin-top: 6px;
+  color: var(--admin-text);
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.admin-progress-card > p:not(.admin-modal-kicker) {
+  margin-top: 10px;
+  color: var(--admin-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-progress-icon,
+.admin-success-card__icon {
+  display: inline-flex;
+  width: 68px;
+  height: 68px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+  border-radius: 22px;
+}
+
+.admin-progress-icon {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+  animation: admin-progress-pulse 1.2s ease-in-out infinite;
+}
+
+.admin-progress-icon .material-symbols-outlined,
+.admin-success-card__icon .material-symbols-outlined {
+  font-size: 36px;
+}
+
+.admin-progress-track {
+  height: 14px;
+  margin-top: 26px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f3e8df;
+}
+
+.admin-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--admin-primary), var(--admin-primary-dark));
+  transition: width 240ms ease;
+}
+
+.admin-progress-value {
+  display: block;
+  margin-top: 12px;
+  color: var(--admin-primary-dark);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.admin-success-card__icon {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.admin-success-card__actions {
+  grid-template-columns: 1fr;
+}
+
+@keyframes admin-progress-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+}
+
 .admin-course-applicants-modal {
   width: min(100%, 1180px);
 }
@@ -4626,6 +5321,14 @@ const adminStyles = `
 
 .admin-course-applicants-toolbar .admin-button {
   flex: 0 0 auto;
+}
+
+.admin-course-applicants-toolbar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .admin-course-applicants-toolbar .admin-button .material-symbols-outlined {
@@ -5576,6 +6279,11 @@ const adminStyles = `
     padding: 14px;
   }
 
+  .admin-school-id-actions {
+    grid-template-columns: 1fr;
+    padding: 18px;
+  }
+
   .admin-applicant-portal-controls {
     align-items: stretch;
     flex-direction: column;
@@ -5594,8 +6302,14 @@ const adminStyles = `
   }
 
   .admin-course-applicant-search,
-  .admin-course-applicants-toolbar .admin-button {
+  .admin-course-applicants-toolbar .admin-button,
+  .admin-course-applicants-toolbar__actions {
     width: 100%;
+  }
+
+  .admin-course-applicants-toolbar__actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .admin-course-applicants-summary {

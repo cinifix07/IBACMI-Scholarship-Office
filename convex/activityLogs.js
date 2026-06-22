@@ -1,4 +1,5 @@
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
+import { v } from 'convex/values'
 
 export const list = query({
   args: {},
@@ -17,5 +18,24 @@ export const clearAll = mutation({
     return {
       deletedCount: logs.length,
     }
+  },
+})
+
+export const createSystemLog = internalMutation({
+  args: {
+    action: v.string(),
+    summary: v.string(),
+    targetLabel: v.optional(v.string()),
+    targetType: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert('activityLogs', {
+      action: args.action,
+      actorRole: 'system',
+      summary: args.summary,
+      targetLabel: args.targetLabel,
+      targetType: args.targetType,
+      createdAt: Date.now(),
+    })
   },
 })

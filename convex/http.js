@@ -42,6 +42,17 @@ function bytesToBase64(bytes) {
   return btoa(binary)
 }
 
+function base64ToBytes(value) {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  return bytes
+}
+
 async function postToGoogleAppsScript(appsScriptUrl, payload) {
   const initialResponse = await fetch(appsScriptUrl, {
     body: JSON.stringify(payload),
@@ -75,6 +86,51 @@ http.route({
       headers: corsHeaders(),
       status: 204,
     })
+  }),
+})
+
+http.route({
+  method: 'GET',
+  path: '/google-drive/file',
+  handler: httpAction(async (_ctx, request) => {
+    const appsScriptUrl = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_URL
+    const uploadSecret = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_SECRET
+    const fileUrl = new URL(request.url).searchParams.get('url')
+    const fileId = fileUrl?.match(/\/file\/d\/([^/?#]+)/i)?.[1]
+
+    if (!appsScriptUrl || !uploadSecret || !fileId) {
+      return jsonResponse({ message: 'A valid Google Drive file URL is required.' }, 400)
+    }
+
+    try {
+      const googleResponse = await postToGoogleAppsScript(appsScriptUrl, {
+        destination: 'students',
+        fileId,
+        operation: 'download',
+        secret: uploadSecret,
+      })
+      const googleResult = await googleResponse.json().catch(() => null)
+
+      if (!googleResponse.ok || !googleResult?.success || !googleResult?.fileBase64) {
+        throw new Error(googleResult?.message || 'Unable to download the Google Drive file.')
+      }
+
+      return new Response(base64ToBytes(googleResult.fileBase64), {
+        headers: {
+          ...corsHeaders(googleResult.contentType || 'application/pdf'),
+          'Cache-Control': 'private, max-age=60',
+        },
+        status: 200,
+      })
+    } catch (error) {
+      return jsonResponse(
+        {
+          message:
+            error instanceof Error ? error.message : 'Unable to download the Google Drive file.',
+        },
+        502,
+      )
+    }
   }),
 })
 
@@ -142,6 +198,10 @@ const googleDriveUpload = httpAction(async (ctx, request) => {
     requestUrl.searchParams.get('batchNo')?.replace(/^batch[\s_-]*/i, ''),
     'no-batch',
   )
+  const schoolYear = sanitizeFilePart(
+    requestUrl.searchParams.get('schoolYear'),
+    'unknown-school-year',
+  )
   const contentType = request.headers.get('content-type') || ''
 
   if (contentType !== 'application/pdf' && !/\.pdf$/i.test(originalFileName)) {
@@ -172,6 +232,9 @@ const googleDriveUpload = httpAction(async (ctx, request) => {
         destination,
         fileBase64: bytesToBase64(fileBytes),
         fileName: savedFileName,
+        folderPath: isStudentUpload
+          ? [schoolYear, `Batch ${batchNo}`, `${studentId} - ${fullName}`]
+          : [],
         secret: uploadSecret,
     })
     const googleResult = await googleResponse.json().catch(() => null)
