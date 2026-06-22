@@ -95,6 +95,12 @@ function isValidPhoneNumber(phoneNumber) {
 }
 
 const applicantPdfMaxSize = 5 * 1024 * 1024
+const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
+const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
+const convexSiteUrl = (
+  import.meta.env.VITE_CONVEX_SITE_URL ||
+  activeConvexUrl.replace(/\.convex\.cloud\/?$/i, '.convex.site')
+).replace(/\/+$/, '')
 
 function isValidApplicantPdf(file) {
   if (!file) return false
@@ -244,7 +250,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const rowsPerPage = 6
 
   const createApplicant = useMutation(api.applicants.create)
-  const generateApplicantUploadUrl = useMutation(api.applicants.generateUploadUrl)
   const createQuickAction = useMutation(api.quickActions.create)
   const loginAdmin = useMutation(api.adminAuth.login)
   const registerAdmin = useMutation(api.adminAuth.register)
@@ -455,22 +460,53 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setPortalReviewData(null)
   }
 
-  const uploadApplicantPdfToStorage = async (file) => {
-    const uploadUrl = await generateApplicantUploadUrl()
-    const uploadResult = await fetch(uploadUrl, {
-      body: file,
-      headers: {
-        'Content-Type': file.type || 'application/pdf',
-      },
-      method: 'POST',
-    })
+  const uploadApplicantPdfToGoogleDrive = async (file, documentType, applicant) => {
+    const applicantFullName = [
+      applicant.lastName,
+      applicant.firstName,
+      applicant.middleName,
+      applicant.extensionName,
+    ]
+      .filter(Boolean)
+      .join(' ')
 
-    if (!uploadResult.ok) {
-      throw new Error(`Unable to upload ${file.name}.`)
+    const uploadParams = new URLSearchParams({
+      applicationYear: applicantPortal?.applicationYear || String(new Date().getFullYear()),
+      documentType,
+      fileName: file.name,
+      fullName: applicantFullName,
+      studentId: applicant.studentId,
+    })
+    let uploadResult
+
+    try {
+      uploadResult = await fetch(
+        `${convexSiteUrl}/google-drive/upload?${uploadParams.toString()}`,
+        {
+          body: file,
+          headers: {
+            'Content-Type': file.type || 'application/pdf',
+          },
+          method: 'POST',
+        },
+      )
+    } catch {
+      throw new Error(
+        'Unable to connect to the PDF upload service. Deploy the Convex HTTP functions and check VITE_CONVEX_URL or VITE_CONVEX_SITE_URL.',
+      )
     }
 
-    const { storageId } = await uploadResult.json()
-    return storageId
+    if (!uploadResult.ok) {
+      const errorResult = await uploadResult.json().catch(() => null)
+      throw new Error(errorResult?.message || `Unable to upload ${file.name} to Google Drive.`)
+    }
+
+    const { fileUrl } = await uploadResult.json()
+    if (!fileUrl) {
+      throw new Error(`Google Drive did not return a file link for ${file.name}.`)
+    }
+
+    return fileUrl
   }
 
   const handlePortalDocumentChange = (event) => {
@@ -641,15 +677,31 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsSubmittingPortal(true)
 
     try {
-      const [psaFileStorageId, schoolIdFileStorageId, pwdIdFileStorageId, fourPsFileStorageId] =
+      const [psaFileUrl, schoolIdFileUrl, pwdIdFileUrl, fourPsFileUrl] =
         await Promise.all([
-          uploadApplicantPdfToStorage(portalReviewData.psaFile),
-          uploadApplicantPdfToStorage(portalReviewData.schoolIdFile),
+          uploadApplicantPdfToGoogleDrive(
+            portalReviewData.psaFile,
+            'PSA',
+            portalReviewData,
+          ),
+          uploadApplicantPdfToGoogleDrive(
+            portalReviewData.schoolIdFile,
+            'School-ID',
+            portalReviewData,
+          ),
           portalReviewData.pwdIdFile
-            ? uploadApplicantPdfToStorage(portalReviewData.pwdIdFile)
+            ? uploadApplicantPdfToGoogleDrive(
+                portalReviewData.pwdIdFile,
+                'PWD-ID',
+                portalReviewData,
+              )
             : Promise.resolve(undefined),
           portalReviewData.fourPsFile
-            ? uploadApplicantPdfToStorage(portalReviewData.fourPsFile)
+            ? uploadApplicantPdfToGoogleDrive(
+                portalReviewData.fourPsFile,
+                '4Ps-ID',
+                portalReviewData,
+              )
             : Promise.resolve(undefined),
         ])
 
@@ -674,19 +726,19 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         pwdId: portalReviewData.pwdId,
         mobileNumber: portalReviewData.mobileNumber,
         emailAddress: portalReviewData.emailAddress,
-        psaFileStorageId,
+        psaFileUrl,
         psaFileName: portalReviewData.psaFile.name,
-        schoolIdFileStorageId,
+        schoolIdFileUrl,
         schoolIdFileName: portalReviewData.schoolIdFile.name,
       }
 
-      if (pwdIdFileStorageId && portalReviewData.pwdIdFile) {
-        applicantSubmission.pwdIdFileStorageId = pwdIdFileStorageId
+      if (pwdIdFileUrl && portalReviewData.pwdIdFile) {
+        applicantSubmission.pwdIdFileUrl = pwdIdFileUrl
         applicantSubmission.pwdIdFileName = portalReviewData.pwdIdFile.name
       }
 
-      if (fourPsFileStorageId && portalReviewData.fourPsFile) {
-        applicantSubmission.fourPsFileStorageId = fourPsFileStorageId
+      if (fourPsFileUrl && portalReviewData.fourPsFile) {
+        applicantSubmission.fourPsFileUrl = fourPsFileUrl
         applicantSubmission.fourPsFileName = portalReviewData.fourPsFile.name
       }
 

@@ -32,6 +32,15 @@ function isValidPhoneNumber(phoneNumber) {
   return /^09\d{9}$/.test(normalizedPhone) || /^\+639\d{9}$/.test(normalizedPhone)
 }
 
+function isGoogleDriveFileUrl(value) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.hostname === 'drive.google.com'
+  } catch {
+    return false
+  }
+}
+
 function trimApplicant(args) {
   return {
     studentId: args.studentId.trim(),
@@ -142,18 +151,26 @@ export const list = query({
     const applicantsWithFiles = await Promise.all(
       applicants.map(async (applicant) => ({
         ...applicant,
-        psaFileUrl: applicant.psaFileStorageId
-          ? await ctx.storage.getUrl(applicant.psaFileStorageId)
-          : null,
-        schoolIdFileUrl: applicant.schoolIdFileStorageId
-          ? await ctx.storage.getUrl(applicant.schoolIdFileStorageId)
-          : null,
-        pwdIdFileUrl: applicant.pwdIdFileStorageId
-          ? await ctx.storage.getUrl(applicant.pwdIdFileStorageId)
-          : null,
-        fourPsFileUrl: applicant.fourPsFileStorageId
-          ? await ctx.storage.getUrl(applicant.fourPsFileStorageId)
-          : null,
+        psaFileUrl:
+          applicant.psaFileUrl ??
+          (applicant.psaFileStorageId
+            ? await ctx.storage.getUrl(applicant.psaFileStorageId)
+            : null),
+        schoolIdFileUrl:
+          applicant.schoolIdFileUrl ??
+          (applicant.schoolIdFileStorageId
+            ? await ctx.storage.getUrl(applicant.schoolIdFileStorageId)
+            : null),
+        pwdIdFileUrl:
+          applicant.pwdIdFileUrl ??
+          (applicant.pwdIdFileStorageId
+            ? await ctx.storage.getUrl(applicant.pwdIdFileStorageId)
+            : null),
+        fourPsFileUrl:
+          applicant.fourPsFileUrl ??
+          (applicant.fourPsFileStorageId
+            ? await ctx.storage.getUrl(applicant.fourPsFileStorageId)
+            : null),
       })),
     )
 
@@ -192,13 +209,17 @@ export const create = mutation({
     pwdId: v.string(),
     mobileNumber: v.string(),
     emailAddress: v.string(),
-    psaFileStorageId: v.id('_storage'),
+    psaFileStorageId: v.optional(v.id('_storage')),
+    psaFileUrl: v.optional(v.string()),
     psaFileName: v.string(),
-    schoolIdFileStorageId: v.id('_storage'),
+    schoolIdFileStorageId: v.optional(v.id('_storage')),
+    schoolIdFileUrl: v.optional(v.string()),
     schoolIdFileName: v.string(),
     pwdIdFileStorageId: v.optional(v.id('_storage')),
+    pwdIdFileUrl: v.optional(v.string()),
     pwdIdFileName: v.optional(v.string()),
     fourPsFileStorageId: v.optional(v.id('_storage')),
+    fourPsFileUrl: v.optional(v.string()),
     fourPsFileName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -248,6 +269,30 @@ export const create = mutation({
       }
     }
 
+    if (
+      (!args.psaFileUrl && !args.psaFileStorageId) ||
+      (!args.schoolIdFileUrl && !args.schoolIdFileStorageId)
+    ) {
+      return {
+        success: false,
+        message: 'PSA PDF and School ID PDF uploads are required.',
+      }
+    }
+
+    const requiredDriveUrls = [args.psaFileUrl, args.schoolIdFileUrl]
+      .filter(Boolean)
+    const optionalDriveUrls = [args.pwdIdFileUrl, args.fourPsFileUrl].filter(Boolean)
+
+    if (
+      requiredDriveUrls.some((fileUrl) => !isGoogleDriveFileUrl(fileUrl)) ||
+      optionalDriveUrls.some((fileUrl) => !isGoogleDriveFileUrl(fileUrl))
+    ) {
+      return {
+        success: false,
+        message: 'Applicant documents must be uploaded to the configured Google Drive folder.',
+      }
+    }
+
     const applicantRecord = {
       studentId: applicant.studentId,
       lastName: applicant.lastName,
@@ -259,9 +304,7 @@ export const create = mutation({
       address: applicant.address,
       mobileNumber: applicant.mobileNumber,
       emailAddress: applicant.emailAddress,
-      psaFileStorageId: args.psaFileStorageId,
       psaFileName: applicant.psaFileName,
-      schoolIdFileStorageId: args.schoolIdFileStorageId,
       schoolIdFileName: applicant.schoolIdFileName,
       applicationYear,
       formDataJson: createApplicantFormDataJson(applicant, applicationYear),
@@ -279,9 +322,15 @@ export const create = mutation({
     addOptionalField(applicantRecord, 'motherMiddleName', applicant.motherMiddleName)
     addOptionalField(applicantRecord, 'zipCode', applicant.zipCode)
     addOptionalField(applicantRecord, 'pwdId', applicant.pwdId)
+    addOptionalField(applicantRecord, 'psaFileStorageId', args.psaFileStorageId)
+    addOptionalField(applicantRecord, 'psaFileUrl', args.psaFileUrl)
+    addOptionalField(applicantRecord, 'schoolIdFileStorageId', args.schoolIdFileStorageId)
+    addOptionalField(applicantRecord, 'schoolIdFileUrl', args.schoolIdFileUrl)
     addOptionalField(applicantRecord, 'pwdIdFileStorageId', args.pwdIdFileStorageId)
+    addOptionalField(applicantRecord, 'pwdIdFileUrl', args.pwdIdFileUrl)
     addOptionalField(applicantRecord, 'pwdIdFileName', applicant.pwdIdFileName)
     addOptionalField(applicantRecord, 'fourPsFileStorageId', args.fourPsFileStorageId)
+    addOptionalField(applicantRecord, 'fourPsFileUrl', args.fourPsFileUrl)
     addOptionalField(applicantRecord, 'fourPsFileName', applicant.fourPsFileName)
 
     const applicantId = await ctx.db.insert('applicants', applicantRecord)

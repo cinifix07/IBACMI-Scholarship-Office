@@ -1,0 +1,16 @@
+{
+  "scriptId": "1377UQvAQ4kkuqQNt50hHpfychVzi9Cn-EC4DiKx0TmvmyoMkUAOyfZ3r",
+  "rootDir": "google-apps-script-remote",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": false
+}

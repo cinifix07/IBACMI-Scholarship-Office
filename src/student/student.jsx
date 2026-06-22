@@ -4,6 +4,13 @@ import { api } from '../../convex/_generated/api'
 import sampleSchoolIdFormat from '../assets/samp.jpg'
 import './student.css'
 
+const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
+const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
+const convexSiteUrl = (
+  import.meta.env.VITE_CONVEX_SITE_URL ||
+  activeConvexUrl.replace(/\.convex\.cloud\/?$/i, '.convex.site')
+).replace(/\/+$/, '')
+
 const initialForm = {
   tesAwardNo: '',
   studentId: '',
@@ -191,7 +198,6 @@ function StudentPdfPreview({ url }) {
 
 export default function StudentInfoForm({ studentSession, onLogout, onStudentSessionUpdate }) {
   const allInfoRecords = useQuery(api.allinfo.list)
-  const generateUploadUrl = useMutation(api.allinfo.generateUploadUrl)
   const saveStudentIdUploads = useMutation(api.allinfo.saveStudentIdUploads)
   const updateStudentPhoneNumber = useMutation(api.adminAuth.updateStudentPhoneNumber)
   const [frontIdFile, setFrontIdFile] = useState(null)
@@ -245,7 +251,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const statusOptions = getUniqueOptions([form.status, 'Validated', 'Pending', 'Rejected'])
   const semesterOptions = getUniqueOptions([form.semester, '1st Semester', '2nd Semester'])
   const schoolYearOptions = getUniqueOptions([form.schoolYear, '2023-2024', '2024-2025'])
-  const hasSavedFrontId = Boolean(studentRecord?.frontIdStorageId)
+  const hasSavedFrontId = Boolean(studentRecord?.frontIdUrl || studentRecord?.frontIdStorageId)
   const uploadedIdUrl = studentRecord?.frontIdUrl ?? ''
 
   useEffect(() => {
@@ -415,22 +421,54 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     setter(selectedFile)
   }
 
-  const uploadFileToStorage = async (file) => {
-    const uploadUrl = await generateUploadUrl()
-    const uploadResult = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream',
-      },
-      body: file,
-    })
+  const uploadFileToGoogleDrive = async (file) => {
+    const studentFullName = [
+      studentRecord.lastName,
+      studentRecord.firstName,
+      studentRecord.middleInitial,
+    ]
+      .filter(Boolean)
+      .join(' ')
 
-    if (!uploadResult.ok) {
-      throw new Error(`Unable to upload ${file.name}.`)
+    const uploadParams = new URLSearchParams({
+      batchNo: studentRecord.batchId || 'no-batch',
+      documentType: 'School-ID',
+      fileName: file.name,
+      fullName: studentFullName,
+      studentId: studentRecord.studentId,
+    })
+    let uploadResult
+
+    try {
+      uploadResult = await fetch(
+        `${convexSiteUrl}/google-drive/student-upload?${uploadParams.toString()}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': file.type || 'application/pdf',
+          },
+          body: file,
+        },
+      )
+    } catch {
+      throw new Error(
+        'Unable to connect to the PDF upload service. Deploy the Convex HTTP functions and check VITE_CONVEX_URL or VITE_CONVEX_SITE_URL.',
+      )
     }
 
-    const { storageId } = await uploadResult.json()
-    return storageId
+    if (!uploadResult.ok) {
+      const errorResult = await uploadResult.json().catch(() => null)
+      throw new Error(
+        errorResult?.message || `Unable to upload ${file.name} to Google Drive.`,
+      )
+    }
+
+    const { fileUrl } = await uploadResult.json()
+    if (!fileUrl) {
+      throw new Error(`Google Drive did not return a file link for ${file.name}.`)
+    }
+
+    return fileUrl
   }
 
   const handleSaveUploads = async () => {
@@ -450,12 +488,12 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     setIsSavingUploads(true)
 
     try {
-      const frontIdStorageId = await uploadFileToStorage(frontIdFile)
+      const frontIdUrl = await uploadFileToGoogleDrive(frontIdFile)
 
       const result = await saveStudentIdUploads({
         studentId: studentRecord.studentId,
         schoolYear: studentRecord.schoolYear,
-        frontIdStorageId,
+        frontIdUrl,
       })
 
       setFrontIdFile(null)
