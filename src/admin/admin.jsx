@@ -150,6 +150,22 @@ function sanitizeDownloadPart(value, fallback) {
   return sanitizedValue || fallback
 }
 
+function compareSchoolIdGranteesByName(firstGrantee, secondGrantee) {
+  const nameFields = ['lastName', 'firstName', 'middleInitial', 'studentId']
+
+  for (const fieldName of nameFields) {
+    const comparison = String(firstGrantee?.[fieldName] ?? '').localeCompare(
+      String(secondGrantee?.[fieldName] ?? ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    )
+
+    if (comparison !== 0) return comparison
+  }
+
+  return 0
+}
+
 function formatQuickActionStudentName(request) {
   return [request?.lastName, request?.firstName, request?.middleInitial]
     .map((value) => String(value ?? '').trim())
@@ -229,7 +245,7 @@ async function getZipFileFromGrantee(grantee, index) {
 
   return {
     bytes,
-    name: `student-id-${studentId}-${lastName}-${firstName}-${middleName}-batch-${batchId}-${index + 1}${extension}`,
+    name: `${lastName}-${firstName}-${middleName}-student-id-${studentId}-batch-${batchId}-${index + 1}${extension}`,
   }
 }
 
@@ -763,6 +779,10 @@ function Admin({ onLogout }) {
   const totalQuickActionPages = Math.max(1, Math.ceil(quickActionRows.length / quickActionsPerPage))
   const activeQuickActionPage = Math.min(currentQuickActionPage, totalQuickActionPages)
   const firstQuickActionIndex = (activeQuickActionPage - 1) * quickActionsPerPage
+  const quickActionPaginationItems = getPaginationItems(
+    activeQuickActionPage,
+    totalQuickActionPages,
+  )
 
   const currentQuickActions = quickActionRows.slice(
     firstQuickActionIndex,
@@ -933,12 +953,14 @@ function Admin({ onLogout }) {
   const downloadSchoolIdFiles = async (schoolYear, batchId) => {
     const selectedYear = String(schoolYear ?? '').trim()
     const selectedBatchId = String(batchId ?? '').trim()
-    const matchingFiles = granteesWithSchoolIdFiles.filter((grantee) => {
-      return (
-        String(grantee.schoolYear ?? '').trim() === selectedYear &&
-        String(grantee.batchId ?? '').trim() === selectedBatchId
-      )
-    })
+    const matchingFiles = granteesWithSchoolIdFiles
+      .filter((grantee) => {
+        return (
+          String(grantee.schoolYear ?? '').trim() === selectedYear &&
+          String(grantee.batchId ?? '').trim() === selectedBatchId
+        )
+      })
+      .sort(compareSchoolIdGranteesByName)
 
     if (matchingFiles.length === 0) return
 
@@ -1701,12 +1723,9 @@ function Admin({ onLogout }) {
         <div className="admin-container">
           <section className="admin-heading">
             <div className="admin-heading__copy">
-              <span className="admin-eyebrow">Grantee Management</span>
+              <span className="admin-eyebrow">Tertiary Education Subsidy and Tulong Dunong Program</span>
               <h1>Grantee Management</h1>
-              <p>
-                Manage TES grantee records, review student requests, upload CSV records, and monitor
-                scholarship information in one responsive workspace.
-              </p>
+
             </div>
 
             <div className="admin-heading__actions">
@@ -3914,7 +3933,7 @@ function Admin({ onLogout }) {
             type="button"
           />
 
-          <section className="admin-modal-card admin-modal-card--wide">
+          <section className="admin-modal-card admin-modal-card--wide admin-modal-card--quick-actions">
             <div className="admin-modal-header">
               <div>
                 <p className="admin-modal-kicker">Quick Actions</p>
@@ -4070,22 +4089,28 @@ function Admin({ onLogout }) {
                   <span className="material-symbols-outlined">chevron_left</span>
                 </button>
 
-                {Array.from({ length: totalQuickActionPages }, (_, index) => {
-                  const pageNumber = index + 1
+                {quickActionPaginationItems.map((pageItem) => {
+                  if (typeof pageItem === 'string') {
+                    return (
+                      <span className="admin-pagination__ellipsis" key={pageItem}>
+                        ...
+                      </span>
+                    )
+                  }
 
                   return (
                     <button
                       className={
-                        activeQuickActionPage === pageNumber
+                        activeQuickActionPage === pageItem
                           ? 'admin-page-button--active'
                           : undefined
                       }
                       disabled={quickActionRows.length === 0}
-                      key={pageNumber}
-                      onClick={() => goToQuickActionPage(pageNumber)}
+                      key={pageItem}
+                      onClick={() => goToQuickActionPage(pageItem)}
                       type="button"
                     >
-                      {pageNumber}
+                      {pageItem}
                     </button>
                   )
                 })}
@@ -4901,6 +4926,19 @@ const adminStyles = `
 
 .admin-modal-card--wide {
   width: min(100%, 1120px);
+}
+
+.admin-modal-card--quick-actions {
+  display: flex;
+  height: min(820px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-modal-card--quick-actions .admin-modal-header,
+.admin-modal-card--quick-actions .admin-quick-actions-summary,
+.admin-modal-card--quick-actions .admin-quick-actions-toolbar,
+.admin-modal-card--quick-actions .admin-quick-actions-pagination {
+  flex: 0 0 auto;
 }
 
 .admin-modal-card--compact {
@@ -5774,6 +5812,7 @@ const adminStyles = `
 .admin-quick-actions-summary div {
   display: grid;
   gap: 4px;
+  min-width: 0;
   background: #ffffff;
   padding: 16px 20px;
 }
@@ -5800,6 +5839,10 @@ const adminStyles = `
   border-bottom: 1px solid var(--admin-outline);
   background: #fffaf5;
   padding: 16px 20px;
+}
+
+.admin-quick-actions-toolbar > div:first-child {
+  min-width: 0;
 }
 
 .admin-quick-actions-toolbar span,
@@ -5830,6 +5873,7 @@ const adminStyles = `
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -5838,9 +5882,11 @@ const adminStyles = `
 }
 
 .admin-quick-actions-table-wrap {
-  max-height: calc(100vh - 290px);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   background: #ffffff;
+  scrollbar-gutter: stable;
 }
 
 .admin-logs-table-wrap {
@@ -5997,13 +6043,14 @@ const adminStyles = `
 .admin-request-email {
   color: var(--admin-text);
   font-weight: 800;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .admin-request-question {
   max-width: 360px;
   color: var(--admin-text);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .admin-scroll-progress {
@@ -6352,6 +6399,37 @@ const adminStyles = `
     grid-template-columns: 1fr;
   }
 
+  .admin-modal-card--quick-actions {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+  }
+
+  .admin-modal-card--quick-actions .admin-modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary div {
+    align-content: center;
+    padding: 12px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary span {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary strong {
+    font-size: 15px;
+    overflow-wrap: anywhere;
+  }
+
   .admin-quick-actions-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -6363,8 +6441,8 @@ const adminStyles = `
   }
 
   .admin-quick-actions-toolbar__actions {
-    align-items: stretch;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-logs-toolbar {
@@ -6383,6 +6461,14 @@ const adminStyles = `
     max-height: none;
     overflow: visible;
     padding: 12px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-pagination {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    background: #fffaf5;
+    box-shadow: 0 -8px 20px rgba(28, 25, 23, 0.08);
   }
 
   .admin-quick-actions-table,
@@ -6507,6 +6593,35 @@ const adminStyles = `
   .admin-course-applicants-table td {
     grid-template-columns: 1fr;
     gap: 5px;
+  }
+
+  .admin-modal-card--quick-actions .admin-modal-header {
+    padding: 16px;
+  }
+
+  .admin-modal-card--quick-actions .admin-modal-header p {
+    font-size: 13px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-toolbar {
+    padding: 13px 14px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-toolbar__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-table-wrap {
+    padding: 8px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-table tbody tr {
+    border-radius: 14px;
+    padding: 12px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-pagination {
+    padding: 12px;
   }
 
   .admin-modal-card--applicant-years .admin-modal-header {

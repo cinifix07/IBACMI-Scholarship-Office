@@ -181,7 +181,12 @@ function StudentPdfPreview({ url }) {
 
   return (
     <>
-      <div className="student-id-preview__pages" ref={containerRef}>
+      <div
+        className={`student-id-preview__pages${
+          previewError ? ' student-id-preview__pages--error' : ''
+        }`}
+        ref={containerRef}
+      >
         <span className="student-id-preview__loading">Loading PDF preview...</span>
       </div>
       {previewError && (

@@ -509,7 +509,6 @@
 
 .student-id-preview {
   overflow: hidden;
-  min-height: 230px;
   border: 1px solid #e6bca9;
   border-radius: 11px;
   background: #ffffff;
@@ -558,7 +557,6 @@
 .student-id-preview__pages {
   display: grid;
   width: 100%;
-  min-height: 230px;
   align-items: start;
   justify-items: center;
   gap: 12px;
@@ -568,6 +566,11 @@
 
 .student-id-preview__pages[aria-busy='true'] {
   align-items: center;
+  min-height: 120px;
+}
+
+.student-id-preview__pages--error {
+  display: none;
 }
 
 .student-id-preview__page {
@@ -968,12 +971,11 @@
   }
 
   .student-id-preview__pages {
-    min-height: 177px;
     padding: 8px;
   }
 
-  .student-id-preview {
-    min-height: 177px;
+  .student-id-preview__pages[aria-busy='true'] {
+    min-height: 96px;
   }
 
   .student-id-preview__header {

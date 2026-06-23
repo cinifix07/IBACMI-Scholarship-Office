@@ -223,8 +223,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [studentIdSearch, setStudentIdSearch] = useState('')
   const [debouncedStudentIdSearch, setDebouncedStudentIdSearch] = useState('')
 
-  const [adminLoginEmail, setAdminLoginEmail] = useState('')
-  const [adminLoginSchoolId, setAdminLoginSchoolId] = useState('')
+  const [adminLoginIdentifier, setAdminLoginIdentifier] = useState('')
   const [adminLoginPassword, setAdminLoginPassword] = useState('')
 
   const [signUpEmail, setSignUpEmail] = useState('')
@@ -757,8 +756,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const openAdminLogin = () => {
     setAdminLoginError('')
-    setAdminLoginEmail('')
-    setAdminLoginSchoolId('')
+    setAdminLoginIdentifier('')
     setAdminLoginPassword('')
     setIsAdminLoginOpen(true)
   }
@@ -767,18 +765,20 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsAdminLoginOpen(false)
     setIsSubmittingAdminLogin(false)
     setAdminLoginError('')
-    setAdminLoginEmail('')
-    setAdminLoginSchoolId('')
+    setAdminLoginIdentifier('')
     setAdminLoginPassword('')
   }
 
   const openSignUp = () => {
+    const identifier = adminLoginIdentifier.trim()
+    const identifierIsEmail = identifier.includes('@')
+
     setIsAdminLoginOpen(false)
     setIsSignUpOpen(true)
     setSignUpError('')
     setSignUpSuccess('')
-    setSignUpEmail(adminLoginEmail)
-    setSignUpSchoolId(adminLoginSchoolId)
+    setSignUpEmail(identifierIsEmail ? identifier.toLowerCase() : '')
+    setSignUpSchoolId(identifierIsEmail ? '' : identifier)
     setSignUpPassword('')
     setSignUpConfirmPassword('')
   }
@@ -799,8 +799,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setSignUpError('')
     setSignUpSuccess('')
     setRegisteredStudentAccount(null)
-    setAdminLoginEmail(signUpEmail)
-    setAdminLoginSchoolId(signUpSchoolId)
+    setAdminLoginIdentifier(signUpEmail || signUpSchoolId)
     setAdminLoginPassword('')
     setIsAdminLoginOpen(true)
   }
@@ -811,13 +810,16 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   }
 
   const openForgotPassword = () => {
+    const identifier = adminLoginIdentifier.trim()
+    const identifierIsEmail = identifier.includes('@')
+
     setIsAdminLoginOpen(false)
     setIsForgotPasswordOpen(true)
     setForgotPasswordError('')
     setForgotPasswordSuccess('')
     setIsOtpRequested(false)
-    setForgotEmail(adminLoginEmail)
-    setForgotSchoolId(adminLoginSchoolId)
+    setForgotEmail(identifierIsEmail ? identifier.toLowerCase() : '')
+    setForgotSchoolId(identifierIsEmail ? '' : identifier)
     setForgotPhoneNumber('')
     setForgotOtp('')
     setForgotNewPassword('')
@@ -1033,8 +1035,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setForgotConfirmPassword('')
       setIsOtpRequested(false)
 
-      setAdminLoginEmail(email)
-      setAdminLoginSchoolId(schoolId)
+      setAdminLoginIdentifier(email || schoolId)
       setAdminLoginPassword('')
     } catch (error) {
       setForgotPasswordError(
@@ -1048,25 +1049,25 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const handleAdminLoginSubmit = async (event) => {
     event.preventDefault()
 
-    const email = adminLoginEmail.trim().toLowerCase()
-    const schoolId = adminLoginSchoolId.trim()
+    const identifier = adminLoginIdentifier.trim()
     const password = adminLoginPassword
-    const hasEmail = email.length > 0
-    const hasSchoolId = schoolId.length > 0
+    const identifierIsEmail = identifier.includes('@')
+    const email = identifierIsEmail ? identifier.toLowerCase() : ''
+    const schoolId = identifierIsEmail ? '' : identifier
 
     setAdminLoginError('')
 
-    if (!hasEmail && !hasSchoolId) {
-      setAdminLoginError('Enter either your valid email address or your School ID.')
+    if (!identifier) {
+      setAdminLoginError('Enter your official registered email address or School ID.')
       return
     }
 
-    if (hasEmail && !isValidEmailAddress(email)) {
-      setAdminLoginError('Please enter a valid email address.')
+    if (identifierIsEmail && !isValidEmailAddress(email)) {
+      setAdminLoginError('Please enter a valid registered email address.')
       return
     }
 
-    if (hasSchoolId && !isValidSchoolId(schoolId)) {
+    if (!identifierIsEmail && !isValidSchoolId(schoolId)) {
       setAdminLoginError(
         'School ID must be 4 to 30 characters and may only contain letters, numbers, and hyphens.',
       )
@@ -1085,8 +1086,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
     const loginPayload = {
       password,
-      ...(hasEmail ? { email } : {}),
-      ...(hasSchoolId ? { schoolId } : {}),
+      ...(identifierIsEmail ? { email } : { schoolId }),
     }
 
     setIsSubmittingAdminLogin(true)
@@ -1205,8 +1205,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setIsSignUpOpen(false)
       setRegisteredStudentAccount(result.admin ?? { email, schoolId, role: 'student' })
       setSignUpSuccess('Your account has been registered successfully.')
-      setAdminLoginEmail(email)
-      setAdminLoginSchoolId(schoolId)
+      setAdminLoginIdentifier(email || schoolId)
       setAdminLoginPassword('')
       setSignUpPhoneNumber('')
       setSignUpPassword('')
@@ -2369,40 +2368,23 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </button>
 
               <p className="modal-kicker">UNIFAST Portal</p>
-              <h3 id="admin-login-title">Sign in </h3>
-             
+              <h3 id="admin-login-title">Sign in</h3>
             </div>
 
             <div className="modal-body admin-login-body auth-form-grid">
-              
-              <label className="form-field">
-                <span>Valid Email address</span>
+              <label className="form-field auth-full-field">
+                <span>Official Registered Email or School ID</span>
                 <input
-                  autoComplete="email"
-                  inputMode="email"
-                  name="adminEmail"
-                  placeholder="Enter email address"
-                  type="email"
-                  disabled={adminLoginSchoolId.trim().length > 0}
-                  value={adminLoginEmail}
-                  onChange={(event) => setAdminLoginEmail(event.target.value)}
-                />
-              </label>
-
-              <label className="form-field">
-                <span>School ID</span>
-                <input
-                  autoComplete="off"
-                  name="adminSchoolId"
-                  placeholder="Enter School ID"
+                  autoCapitalize="none"
+                  autoComplete="username"
+                  maxLength={254}
+                  name="adminIdentifier"
+                  placeholder="Enter your official registered email or School ID"
+                  required
+                  spellCheck={false}
                   type="text"
-                  minLength={4}
-                  maxLength={30}
-                  pattern="[A-Za-z0-9-]{4,30}"
-                  title="School ID must be 4 to 30 characters and may only contain letters, numbers, and hyphens."
-                  disabled={adminLoginEmail.trim().length > 0}
-                  value={adminLoginSchoolId}
-                  onChange={(event) => setAdminLoginSchoolId(event.target.value)}
+                  value={adminLoginIdentifier}
+                  onChange={(event) => setAdminLoginIdentifier(event.target.value)}
                 />
               </label>
 
@@ -2423,8 +2405,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               <div className="auth-note-box auth-full-field">
                 <span className="material-symbols-outlined">info</span>
                 <p>
-                  You may sign in using either your registered email address or your School ID.
-                  Password is still required.
+                  Enter either your official registered email address or your School ID. Your
+                  password is still required.
                 </p>
               </div>
 
