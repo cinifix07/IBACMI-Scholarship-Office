@@ -163,7 +163,7 @@ function StudentPdfPreview({ url }) {
         if (!cancelled && error?.name !== 'RenderingCancelledException') {
           console.error('Unable to render uploaded School ID PDF:', error)
           container.replaceChildren()
-          setPreviewError('The PDF preview could not load.')
+          setPreviewError('Preview unavailable, but your file was uploaded successfully.')
         }
       } finally {
         if (!cancelled) container.removeAttribute('aria-busy')
@@ -191,10 +191,21 @@ function StudentPdfPreview({ url }) {
       </div>
       {previewError && (
         <div className="student-id-preview__error">
-          <span>{previewError}</span>
-          <button onClick={() => setRetryCount((count) => count + 1)} type="button">
-            Retry preview
-          </button>
+          <span className="student-id-preview__status-icon" aria-hidden="true">
+            <span className="material-symbols-outlined">check_circle</span>
+          </span>
+          <div className="student-id-preview__error-copy">
+            <strong>School ID file is uploaded</strong>
+            <span>{previewError}</span>
+          </div>
+          <div className="student-id-preview__error-actions">
+            <a href={url} rel="noreferrer" target="_blank">
+              Open file
+            </a>
+            <button onClick={() => setRetryCount((count) => count + 1)} type="button">
+              Retry preview
+            </button>
+          </div>
         </div>
       )}
     </>
@@ -796,7 +807,15 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
             {uploadedIdUrl && (
               <div className="student-id-preview">
                 <div className="student-id-preview__header">
-                  <span>Uploaded School ID</span>
+                  <div className="student-id-preview__title">
+                    <span className="student-id-preview__title-icon" aria-hidden="true">
+                      <span className="material-symbols-outlined">task_alt</span>
+                    </span>
+                    <div>
+                      <span>Uploaded School ID</span>
+                      <small>File received and ready for review</small>
+                    </div>
+                  </div>
                   <a href={uploadedIdUrl} rel="noreferrer" target="_blank">
                     View full file
                   </a>
