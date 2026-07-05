@@ -5,6 +5,7 @@ import ibacmiLogo from '../assets/IBACMI.png'
 
 const granteesPerPage = 5
 const quickActionsPerPage = 5
+const usersPerPage = 5
 const logsPerPage = 5
 const batchExportsPerPage = 5
 const schoolIdDownloadsPerPage = 5
@@ -435,6 +436,14 @@ function Admin({ onLogout }) {
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState(false)
+  const [selectedUser, setSelectedUser] = useState(null)
+  const [userToDelete, setUserToDelete] = useState(null)
+  const [userForm, setUserForm] = useState({ email: '', phoneNumber: '' })
+  const [userMessage, setUserMessage] = useState('')
+  const [isSavingUser, setIsSavingUser] = useState(false)
+  const [isDeletingUser, setIsDeletingUser] = useState(false)
+  const [currentUserPage, setCurrentUserPage] = useState(1)
   const [isQuickActionsClearConfirmOpen, setIsQuickActionsClearConfirmOpen] = useState(false)
   const [isUnifastPortalConfirmOpen, setIsUnifastPortalConfirmOpen] = useState(false)
   const [isUnifastPortalCoursesOpen, setIsUnifastPortalCoursesOpen] = useState(false)
@@ -496,10 +505,15 @@ function Admin({ onLogout }) {
   const clearAllActivityLogs = useMutation(api.activityLogs.clearAll)
   const deleteSchoolIdFilesByBatch = useAction(api.allinfo.deleteSchoolIdFilesByBatch)
   const deleteAllApplicantsByCourse = useAction(api.applicants.deleteAllByCourse)
+  const updateStudentAccount = useMutation(api.adminAuth.updateStudentAccount)
+  const deleteStudentAccount = useMutation(api.adminAuth.deleteStudentAccount)
 
   const isAnyModalOpen =
     isLogsOpen ||
     isQuickActionsOpen ||
+    isUserManagementOpen ||
+    Boolean(selectedUser) ||
+    Boolean(userToDelete) ||
     isQuickActionsClearConfirmOpen ||
     isUnifastPortalConfirmOpen ||
     isUnifastPortalCoursesOpen ||
@@ -791,6 +805,14 @@ function Admin({ onLogout }) {
 
   const quickActionShowingStart = quickActionRows.length === 0 ? 0 : firstQuickActionIndex + 1
   const quickActionShowingEnd = firstQuickActionIndex + currentQuickActions.length
+
+  const totalUserPages = Math.max(1, Math.ceil(studentAccountRows.length / usersPerPage))
+  const activeUserPage = Math.min(currentUserPage, totalUserPages)
+  const firstUserIndex = (activeUserPage - 1) * usersPerPage
+  const currentUsers = studentAccountRows.slice(firstUserIndex, firstUserIndex + usersPerPage)
+  const userPaginationItems = getPaginationItems(activeUserPage, totalUserPages)
+  const userShowingStart = studentAccountRows.length === 0 ? 0 : firstUserIndex + 1
+  const userShowingEnd = firstUserIndex + currentUsers.length
 
   const totalLogPages = Math.max(1, Math.ceil(activityLogRows.length / logsPerPage))
   const activeLogPage = Math.min(currentLogPage, totalLogPages)
@@ -1611,6 +1633,74 @@ function Admin({ onLogout }) {
     }
   }
 
+  const openUserManagement = () => {
+    setCurrentUserPage(1)
+    setUserMessage('')
+    setIsUserManagementOpen(true)
+  }
+
+  const openEditUser = (user) => {
+    setSelectedUser(user)
+    setUserForm({ email: user.email ?? '', phoneNumber: user.phoneNumber ?? '' })
+    setUserMessage('')
+  }
+
+  const handleUserFormChange = (event) => {
+    const { name, value } = event.target
+    setUserForm((currentForm) => ({ ...currentForm, [name]: value }))
+  }
+
+  const handleUpdateUser = async (event) => {
+    event.preventDefault()
+    if (!selectedUser || isSavingUser) return
+
+    setIsSavingUser(true)
+    setUserMessage('')
+
+    try {
+      const result = await updateStudentAccount({
+        id: selectedUser.id,
+        email: userForm.email,
+        phoneNumber: userForm.phoneNumber,
+      })
+
+      if (!result.success) {
+        setUserMessage(result.message)
+        return
+      }
+
+      setSelectedUser(null)
+      setUserMessage(result.message)
+    } catch (error) {
+      setUserMessage(error instanceof Error ? error.message : 'Unable to update the user account.')
+    } finally {
+      setIsSavingUser(false)
+    }
+  }
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete || isDeletingUser) return
+
+    setIsDeletingUser(true)
+    setUserMessage('')
+
+    try {
+      const result = await deleteStudentAccount({ id: userToDelete.id })
+
+      if (!result.success) {
+        setUserMessage(result.message)
+        return
+      }
+
+      setUserToDelete(null)
+      setUserMessage(result.message)
+    } catch (error) {
+      setUserMessage(error instanceof Error ? error.message : 'Unable to delete the user account.')
+    } finally {
+      setIsDeletingUser(false)
+    }
+  }
+
   useEffect(() => {
     const handleScroll = () => {
       const scrollTop = document.documentElement.scrollTop || document.body.scrollTop
@@ -1638,6 +1728,9 @@ function Admin({ onLogout }) {
 
         setIsLogsOpen(false)
         setIsQuickActionsOpen(false)
+        setIsUserManagementOpen(false)
+        setSelectedUser(null)
+        setUserToDelete(null)
         setIsQuickActionsClearConfirmOpen(false)
         setIsUnifastPortalConfirmOpen(false)
         setIsUnifastPortalCoursesOpen(false)
@@ -1705,6 +1798,11 @@ function Admin({ onLogout }) {
           >
             <span className="material-symbols-outlined">folder_open</span>
             UNIFAST PORTAL
+          </button>
+
+          <button className="admin-button admin-button--ghost" onClick={openUserManagement} type="button">
+            <span className="material-symbols-outlined">manage_accounts</span>
+            User Management
           </button>
 
           <button className="admin-button admin-button--ghost" onClick={openQuickActions} type="button">
@@ -3917,6 +4015,142 @@ function Admin({ onLogout }) {
         </div>
       )}
 
+      {isUserManagementOpen && (
+        <div
+          aria-labelledby="admin-user-management-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close user management modal"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!selectedUser && !userToDelete) setIsUserManagementOpen(false)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--wide admin-modal-card--users">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">User Management</p>
+                <h2 id="admin-user-management-title">Student Accounts</h2>
+                <p>View and manage registered student email addresses and phone numbers.</p>
+              </div>
+
+              <button
+                aria-label="Close user management"
+                className="admin-modal-close"
+                onClick={() => setIsUserManagementOpen(false)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {userMessage && <p className="admin-user-message" role="status">{userMessage}</p>}
+
+            <div className="admin-quick-actions-table-wrap admin-users-table-wrap">
+              <table className="admin-quick-actions-table admin-users-table">
+                <thead>
+                  <tr>
+                    <th>No.</th>
+                    <th>Email Address</th>
+                    <th>Phone Number</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {studentAccounts === undefined && (
+                    <tr><td className="admin-empty-state" colSpan={4}>Loading users...</td></tr>
+                  )}
+                  {studentAccounts?.length === 0 && (
+                    <tr><td className="admin-empty-state" colSpan={4}>No student accounts found.</td></tr>
+                  )}
+                  {currentUsers.map((user, index) => (
+                    <tr key={user.id}>
+                      <td data-label="No.">{firstUserIndex + index + 1}</td>
+                      <td data-label="Email Address">{user.email}</td>
+                      <td data-label="Phone Number">{user.phoneNumber || 'Not provided'}</td>
+                      <td data-label="Actions">
+                        <div className="admin-user-actions">
+                          <button aria-label={`Edit ${user.email}`} onClick={() => openEditUser(user)} type="button">
+                            <span className="material-symbols-outlined">edit</span>
+                          </button>
+                          <button
+                            aria-label={`Delete ${user.email}`}
+                            className="admin-user-action--delete"
+                            onClick={() => { setUserToDelete(user); setUserMessage('') }}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined">delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-user-pagination">
+              <p>Showing <strong>{userShowingStart}</strong> to <strong>{userShowingEnd}</strong> of <strong>{studentAccountRows.length}</strong> users</p>
+              <div className="admin-pagination__buttons">
+                <button aria-label="Previous users page" disabled={activeUserPage === 1 || studentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage - 1)} type="button">
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+                {userPaginationItems.map((pageItem) => typeof pageItem === 'string' ? (
+                  <span className="admin-pagination__ellipsis" key={pageItem}>...</span>
+                ) : (
+                  <button className={activeUserPage === pageItem ? 'admin-page-button--active' : undefined} disabled={studentAccountRows.length === 0} key={pageItem} onClick={() => setCurrentUserPage(pageItem)} type="button">{pageItem}</button>
+                ))}
+                <button aria-label="Next users page" disabled={activeUserPage === totalUserPages || studentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage + 1)} type="button">
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedUser && (
+        <div aria-labelledby="admin-edit-user-title" aria-modal="true" className="admin-modal-overlay admin-modal-overlay--nested" role="dialog">
+          <button aria-label="Close edit user modal" className="admin-modal-backdrop" onClick={() => setSelectedUser(null)} type="button" />
+          <section className="admin-modal-card admin-modal-card--user-form">
+            <div className="admin-modal-header">
+              <div><p className="admin-modal-kicker">Edit User</p><h2 id="admin-edit-user-title">Update Account</h2></div>
+              <button aria-label="Close edit user" className="admin-modal-close" onClick={() => setSelectedUser(null)} type="button"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <form className="admin-user-form" onSubmit={handleUpdateUser}>
+              <label>Email Address<input autoComplete="email" name="email" onChange={handleUserFormChange} required type="email" value={userForm.email} /></label>
+              <label>Phone Number<input autoComplete="tel" name="phoneNumber" onChange={handleUserFormChange} placeholder="09123456789" required type="tel" value={userForm.phoneNumber} /></label>
+              {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
+              <div className="admin-user-form__actions">
+                <button className="admin-button admin-button--secondary" onClick={() => setSelectedUser(null)} type="button">Cancel</button>
+                <button className="admin-button admin-button--primary" disabled={isSavingUser} type="submit">{isSavingUser ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {userToDelete && (
+        <div aria-labelledby="admin-delete-user-title" aria-modal="true" className="admin-modal-overlay admin-modal-overlay--nested" role="alertdialog">
+          <button aria-label="Cancel deleting user" className="admin-modal-backdrop" onClick={() => setUserToDelete(null)} type="button" />
+          <section className="admin-modal-card admin-modal-card--confirm">
+            <div className="admin-delete-user-icon"><span className="material-symbols-outlined">delete</span></div>
+            <h2 id="admin-delete-user-title">Delete user account?</h2>
+            <p>This permanently deletes <strong>{userToDelete.email}</strong> from Convex. This action cannot be undone.</p>
+            {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
+            <div className="admin-user-form__actions">
+              <button className="admin-button admin-button--secondary" onClick={() => setUserToDelete(null)} type="button">Cancel</button>
+              <button className="admin-button admin-button--danger" disabled={isDeletingUser} onClick={handleDeleteUser} type="button">{isDeletingUser ? 'Deleting...' : 'Delete User'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {isQuickActionsOpen && (
         <div
           aria-labelledby="admin-quick-actions-title"
@@ -6062,6 +6296,135 @@ const adminStyles = `
   transform: scaleX(var(--admin-scroll));
   transform-origin: left;
   transition: transform 75ms ease;
+}
+
+.admin-modal-overlay--nested {
+  z-index: 120;
+}
+
+.admin-modal-card--users {
+  max-width: 920px;
+}
+
+.admin-users-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.admin-users-table th:last-child,
+.admin-users-table td:last-child {
+  width: 130px;
+  text-align: center;
+}
+
+.admin-user-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.admin-user-actions button {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #c2410c;
+  cursor: pointer;
+}
+
+.admin-user-actions .admin-user-action--delete {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.admin-user-message {
+  margin: 12px 22px 0;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+  padding: 10px 12px;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-user-message--error {
+  margin: 0;
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.admin-modal-card--user-form,
+.admin-modal-card--confirm {
+  max-width: 500px;
+}
+
+.admin-user-form {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.admin-user-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--admin-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.admin-user-form input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 11px;
+  padding: 10px 12px;
+  color: var(--admin-text);
+  font: inherit;
+}
+
+.admin-user-form input:focus {
+  border-color: var(--admin-primary);
+  outline: 3px solid rgba(249, 115, 22, 0.14);
+}
+
+.admin-user-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-modal-card--confirm {
+  padding: 28px;
+  text-align: center;
+}
+
+.admin-modal-card--confirm h2 {
+  margin: 14px 0 8px;
+  color: var(--admin-text);
+}
+
+.admin-modal-card--confirm > p {
+  margin: 0 0 22px;
+  color: var(--admin-muted);
+  line-height: 1.6;
+}
+
+.admin-delete-user-icon {
+  display: inline-flex;
+  width: 54px;
+  height: 54px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 @media (max-width: 980px) {

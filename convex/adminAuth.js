@@ -46,6 +46,78 @@ export const listStudentAccounts = query({
   },
 })
 
+export const updateStudentAccount = mutation({
+  args: {
+    id: v.id('admins'),
+    email: v.string(),
+    phoneNumber: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const account = await ctx.db.get(args.id)
+    const email = args.email.trim().toLowerCase()
+    const phoneNumber = normalizePhoneNumber(args.phoneNumber)
+
+    if (!account || account.role !== 'student') {
+      return { success: false, message: 'Student account not found.' }
+    }
+
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      return { success: false, message: 'Please enter a valid email address.' }
+    }
+
+    if (!isValidPhoneNumber(phoneNumber)) {
+      return {
+        success: false,
+        message: 'Please enter a valid phone number. Example: 09123456789 or +639123456789.',
+      }
+    }
+
+    const matchingEmail = await ctx.db
+      .query('admins')
+      .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', email))
+      .first()
+
+    if (matchingEmail && matchingEmail._id !== args.id) {
+      return { success: false, message: 'Another account already uses this email address.' }
+    }
+
+    await ctx.db.patch(args.id, { email, phoneNumber, updatedAt: Date.now() })
+    await logActivity(ctx, {
+      action: 'student_account_updated',
+      actorRole: 'admin',
+      targetType: 'admins',
+      targetId: String(args.id),
+      targetLabel: account.schoolId ?? email,
+      summary: `Admin updated the account for ${account.schoolId ?? email}.`,
+    })
+
+    return { success: true, message: 'User account updated successfully.' }
+  },
+})
+
+export const deleteStudentAccount = mutation({
+  args: { id: v.id('admins') },
+  handler: async (ctx, args) => {
+    const account = await ctx.db.get(args.id)
+
+    if (!account || account.role !== 'student') {
+      return { success: false, message: 'Student account not found.' }
+    }
+
+    await ctx.db.delete(args.id)
+    await logActivity(ctx, {
+      action: 'student_account_deleted',
+      actorRole: 'admin',
+      targetType: 'admins',
+      targetId: String(args.id),
+      targetLabel: account.schoolId ?? account.email,
+      summary: `Admin deleted the account for ${account.schoolId ?? account.email}.`,
+    })
+
+    return { success: true, message: 'User account deleted successfully.' }
+  },
+})
+
 async function findRecoveryAccount(ctx, args) {
   const email = args.email?.trim().toLowerCase() ?? ''
   const schoolId = args.schoolId?.trim() ?? ''
