@@ -189,7 +189,14 @@ const contactPortalFields = [
 
 function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const portalFormRef = useRef(null)
+  const installPromptRef = useRef(null)
   const [progress, setProgress] = useState(0)
+  const [isAppInstalled, setIsAppInstalled] = useState(() => {
+    return (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true
+    )
+  })
 
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
   const [isUnifastPortalOpen, setIsUnifastPortalOpen] = useState(false)
@@ -266,6 +273,43 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const hasStudentIdSearch = studentIdSearch.trim().length > 0
   const isPortalStatusLoading = applicantPortal === undefined
   const isApplicantPortalOpen = applicantPortal?.isReceivingApplicants === true
+
+  useEffect(() => {
+    const handleInstallPrompt = (event) => {
+      event.preventDefault()
+      installPromptRef.current = event
+    }
+    const handleAppInstalled = () => {
+      installPromptRef.current = null
+      setIsAppInstalled(true)
+    }
+
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt)
+    window.addEventListener('appinstalled', handleAppInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
+      window.removeEventListener('appinstalled', handleAppInstalled)
+    }
+  }, [])
+
+  const handleDownloadApp = async () => {
+    if (isAppInstalled) {
+      window.alert('The IBACMI Scholarship web app is already installed on this device.')
+      return
+    }
+
+    const installPrompt = installPromptRef.current
+    if (installPrompt) {
+      await installPrompt.prompt()
+      await installPrompt.userChoice
+      installPromptRef.current = null
+      return
+    }
+
+    window.alert(
+      'To install the web app, open your browser menu and choose “Install app” or “Add to Home Screen”.',
+    )
+  }
 
   const filteredGranteeRows = granteeRows
 
@@ -1589,7 +1633,13 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       </main>
 
       <footer className="landing-footer">
-        <p>Copyright 2026 | All Rights Reserved IBACMI - Scholarship Office | Developed By CINIFIX</p>
+        <p>
+          Copyright 2026 | All Rights Reserved IBACMI - Scholarship Office |{' '}
+          <button className="landing-footer__download" onClick={handleDownloadApp} type="button">
+            {isAppInstalled ? 'App installed' : 'Download app'}
+          </button>{' '}
+          | Developed By CINIFIX Technology
+        </p>
       </footer>
 
       {isUnifastPortalOpen && (

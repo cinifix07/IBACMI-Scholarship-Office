@@ -48,6 +48,14 @@ function createMissingConvexConfig() {
 
 const root = createRoot(document.getElementById('root'))
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((error) => {
+      console.error('Unable to register the web app service worker:', error)
+    })
+  })
+}
+
 if (!convexUrl) {
   root.render(createMissingConvexConfig())
 } else {

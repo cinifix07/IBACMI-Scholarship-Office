@@ -160,6 +160,29 @@ html, body, #root {
   line-height: 1.5;
 }
 
+.landing-footer__download {
+  border: 0;
+  background: transparent;
+  color: var(--primary-dark);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.landing-footer__download:hover,
+.landing-footer__download:focus-visible {
+  color: var(--primary);
+}
+
+.landing-footer__download:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
 .page-heading {
   display: flex;
   flex-direction: column;
