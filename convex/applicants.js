@@ -97,6 +97,7 @@ function trimApplicant(args) {
     emailAddress: args.emailAddress.trim().toLowerCase(),
     psaFileName: args.psaFileName.trim(),
     schoolIdFileName: args.schoolIdFileName.trim(),
+    corFileName: args.corFileName.trim(),
     pwdIdFileName: args.pwdIdFileName?.trim() ?? '',
     fourPsFileName: args.fourPsFileName?.trim() ?? '',
   }
@@ -148,6 +149,12 @@ function createApplicantFormDataJson(applicant, applicationYear) {
   if (applicant.schoolIdFileName) {
     documents.schoolId = {
       fileName: applicant.schoolIdFileName,
+    }
+  }
+
+  if (applicant.corFileName) {
+    documents.cor = {
+      fileName: applicant.corFileName,
     }
   }
 
@@ -248,6 +255,7 @@ export const deleteAllByCourse = action({
       return [
         applicant.psaFileUrl,
         applicant.schoolIdFileUrl,
+        applicant.corFileUrl,
         applicant.pwdIdFileUrl,
         applicant.fourPsFileUrl,
       ]
@@ -341,6 +349,7 @@ export const listFileMigrationCandidates = internalQuery({
       const files = [
         ['psa', applicant.psaFileStorageId],
         ['schoolId', applicant.schoolIdFileStorageId],
+        ['cor', applicant.corFileStorageId],
         ['pwdId', applicant.pwdIdFileStorageId],
         ['fourPs', applicant.fourPsFileStorageId],
       ]
@@ -381,6 +390,7 @@ export const finalizeFileMigration = internalMutation({
       psa: ['psaFileStorageId', 'psaFileUrl'],
       pwdId: ['pwdIdFileStorageId', 'pwdIdFileUrl'],
       schoolId: ['schoolIdFileStorageId', 'schoolIdFileUrl'],
+      cor: ['corFileStorageId', 'corFileUrl'],
     }
     const fields = fieldMap[args.documentType]
     if (!fields) throw new Error('Unsupported applicant document type.')
@@ -426,6 +436,7 @@ export const migrateFilesToGoogleDrive = action({
           psa: 'PSA',
           pwdId: 'PWD-ID',
           schoolId: 'School-ID',
+          cor: 'COR-or-Study-Load',
         }[candidate.documentType]
         const fullName = sanitizeFilePart(
           [candidate.lastName, candidate.firstName, candidate.middleName]
@@ -487,6 +498,9 @@ export const create = mutation({
     schoolIdFileStorageId: v.optional(v.id('_storage')),
     schoolIdFileUrl: v.optional(v.string()),
     schoolIdFileName: v.string(),
+    corFileStorageId: v.optional(v.id('_storage')),
+    corFileUrl: v.optional(v.string()),
+    corFileName: v.string(),
     pwdIdFileStorageId: v.optional(v.id('_storage')),
     pwdIdFileUrl: v.optional(v.string()),
     pwdIdFileName: v.optional(v.string()),
@@ -518,12 +532,13 @@ export const create = mutation({
       !applicant.mobileNumber ||
       !applicant.emailAddress ||
       !applicant.psaFileName ||
-      !applicant.schoolIdFileName
+      !applicant.schoolIdFileName ||
+      !applicant.corFileName
     ) {
       return {
         success: false,
         message:
-          'Student, course, address, mobile number, email, PSA PDF, and School ID PDF are required.',
+          'Student, course, address, mobile number, email, PSA PDF, School ID PDF, and COR / Study Load PDF are required.',
       }
     }
 
@@ -543,15 +558,16 @@ export const create = mutation({
 
     if (
       (!args.psaFileUrl && !args.psaFileStorageId) ||
-      (!args.schoolIdFileUrl && !args.schoolIdFileStorageId)
+      (!args.schoolIdFileUrl && !args.schoolIdFileStorageId) ||
+      (!args.corFileUrl && !args.corFileStorageId)
     ) {
       return {
         success: false,
-        message: 'PSA PDF and School ID PDF uploads are required.',
+        message: 'PSA PDF, School ID PDF, and COR / Study Load PDF uploads are required.',
       }
     }
 
-    const requiredDriveUrls = [args.psaFileUrl, args.schoolIdFileUrl]
+    const requiredDriveUrls = [args.psaFileUrl, args.schoolIdFileUrl, args.corFileUrl]
       .filter(Boolean)
     const optionalDriveUrls = [args.pwdIdFileUrl, args.fourPsFileUrl].filter(Boolean)
 
@@ -578,6 +594,7 @@ export const create = mutation({
       emailAddress: applicant.emailAddress,
       psaFileName: applicant.psaFileName,
       schoolIdFileName: applicant.schoolIdFileName,
+      corFileName: applicant.corFileName,
       applicationYear,
       formDataJson: createApplicantFormDataJson(applicant, applicationYear),
       status: 'Submitted',
@@ -598,6 +615,8 @@ export const create = mutation({
     addOptionalField(applicantRecord, 'psaFileUrl', args.psaFileUrl)
     addOptionalField(applicantRecord, 'schoolIdFileStorageId', args.schoolIdFileStorageId)
     addOptionalField(applicantRecord, 'schoolIdFileUrl', args.schoolIdFileUrl)
+    addOptionalField(applicantRecord, 'corFileStorageId', args.corFileStorageId)
+    addOptionalField(applicantRecord, 'corFileUrl', args.corFileUrl)
     addOptionalField(applicantRecord, 'pwdIdFileStorageId', args.pwdIdFileStorageId)
     addOptionalField(applicantRecord, 'pwdIdFileUrl', args.pwdIdFileUrl)
     addOptionalField(applicantRecord, 'pwdIdFileName', applicant.pwdIdFileName)

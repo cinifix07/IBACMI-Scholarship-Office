@@ -37,6 +37,7 @@ export const listStudentAccounts = query({
       schoolId: admin.schoolId ?? '',
       phoneNumber: admin.phoneNumber ?? '',
       currentAddress: admin.currentAddress ?? '',
+      facebookProfileUrl: admin.facebookProfileUrl ?? '',
       name: admin.name,
       role: admin.role,
       status: admin.status,
@@ -194,6 +195,7 @@ export const login = mutation({
         schoolId: admin.schoolId ?? '',
         phoneNumber: admin.phoneNumber ?? '',
         currentAddress: admin.currentAddress ?? '',
+        facebookProfileUrl: admin.facebookProfileUrl ?? '',
         name: admin.name,
         role: admin.role,
       },
@@ -304,6 +306,7 @@ export const register = mutation({
         schoolId,
         phoneNumber,
         currentAddress: '',
+        facebookProfileUrl: '',
         name: email.split('@')[0] || schoolId,
         role: 'student',
       },
@@ -529,6 +532,7 @@ export const updateStudentPhoneNumber = mutation({
         schoolId: admin.schoolId ?? '',
         phoneNumber,
         currentAddress: admin.currentAddress ?? '',
+        facebookProfileUrl: admin.facebookProfileUrl ?? '',
         name: admin.name,
         role: admin.role,
       },
@@ -596,10 +600,78 @@ export const updateStudentCurrentAddress = mutation({
         schoolId: admin.schoolId ?? '',
         phoneNumber: admin.phoneNumber ?? '',
         currentAddress,
+        facebookProfileUrl: admin.facebookProfileUrl ?? '',
         name: admin.name,
         role: admin.role,
       },
       message: 'Current address updated successfully.',
+    }
+  },
+})
+
+export const updateStudentFacebookProfile = mutation({
+  args: {
+    schoolId: v.string(),
+    facebookProfileUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const schoolId = args.schoolId.trim()
+    const facebookProfileUrl = args.facebookProfileUrl.trim()
+
+    if (!schoolId || !facebookProfileUrl) {
+      return { success: false, message: 'School ID and Facebook profile link are required.' }
+    }
+
+    let profileUrl
+    try {
+      profileUrl = new URL(facebookProfileUrl)
+    } catch {
+      return { success: false, message: 'Enter a valid Facebook profile link.' }
+    }
+
+    const hostname = profileUrl.hostname.toLowerCase()
+    if (
+      profileUrl.protocol !== 'https:' ||
+      !(hostname === 'facebook.com' || hostname.endsWith('.facebook.com') || hostname === 'fb.com' || hostname.endsWith('.fb.com'))
+    ) {
+      return { success: false, message: 'Use a valid https://facebook.com profile link.' }
+    }
+
+    const admin = await ctx.db
+      .query('admins')
+      .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
+      .first()
+
+    if (!admin || admin.role !== 'student' || admin.status !== 'active') {
+      return { success: false, message: 'No active student account found for this School ID.' }
+    }
+
+    await ctx.db.patch(admin._id, { facebookProfileUrl, updatedAt: Date.now() })
+
+    await logActivity(ctx, {
+      action: 'student_facebook_profile_updated',
+      actorRole: 'student',
+      actorId: admin.schoolId ?? schoolId,
+      actorName: admin.name,
+      targetType: 'admins',
+      targetId: String(admin._id),
+      targetLabel: admin.schoolId ?? schoolId,
+      summary: `Student updated Facebook profile link for ${admin.schoolId ?? schoolId}.`,
+    })
+
+    return {
+      success: true,
+      admin: {
+        id: admin._id,
+        email: admin.email,
+        schoolId: admin.schoolId ?? '',
+        phoneNumber: admin.phoneNumber ?? '',
+        currentAddress: admin.currentAddress ?? '',
+        facebookProfileUrl,
+        name: admin.name,
+        role: admin.role,
+      },
+      message: 'Facebook profile link updated successfully.',
     }
   },
 })

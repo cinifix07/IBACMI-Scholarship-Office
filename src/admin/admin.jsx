@@ -444,6 +444,7 @@ function Admin({ onLogout }) {
   const [isSavingUser, setIsSavingUser] = useState(false)
   const [isDeletingUser, setIsDeletingUser] = useState(false)
   const [currentUserPage, setCurrentUserPage] = useState(1)
+  const [userSearchQuery, setUserSearchQuery] = useState('')
   const [isQuickActionsClearConfirmOpen, setIsQuickActionsClearConfirmOpen] = useState(false)
   const [isUnifastPortalConfirmOpen, setIsUnifastPortalConfirmOpen] = useState(false)
   const [isUnifastPortalCoursesOpen, setIsUnifastPortalCoursesOpen] = useState(false)
@@ -667,6 +668,7 @@ function Admin({ onLogout }) {
         applicant.status,
         applicant.psaFileName,
         applicant.schoolIdFileName,
+        applicant.corFileName,
         applicant.pwdIdFileName,
         applicant.fourPsFileName,
         formatSubmittedAt(applicant.submittedAt),
@@ -806,12 +808,29 @@ function Admin({ onLogout }) {
   const quickActionShowingStart = quickActionRows.length === 0 ? 0 : firstQuickActionIndex + 1
   const quickActionShowingEnd = firstQuickActionIndex + currentQuickActions.length
 
-  const totalUserPages = Math.max(1, Math.ceil(studentAccountRows.length / usersPerPage))
+  const filteredStudentAccountRows = useMemo(() => {
+    const query = userSearchQuery.trim().toLowerCase()
+    if (!query) return studentAccountRows
+
+    return studentAccountRows.filter((account) => {
+      return [
+        account.schoolId,
+        account.email,
+        account.phoneNumber,
+        account.facebookProfileUrl,
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+        .includes(query)
+    })
+  }, [studentAccountRows, userSearchQuery])
+
+  const totalUserPages = Math.max(1, Math.ceil(filteredStudentAccountRows.length / usersPerPage))
   const activeUserPage = Math.min(currentUserPage, totalUserPages)
   const firstUserIndex = (activeUserPage - 1) * usersPerPage
-  const currentUsers = studentAccountRows.slice(firstUserIndex, firstUserIndex + usersPerPage)
+  const currentUsers = filteredStudentAccountRows.slice(firstUserIndex, firstUserIndex + usersPerPage)
   const userPaginationItems = getPaginationItems(activeUserPage, totalUserPages)
-  const userShowingStart = studentAccountRows.length === 0 ? 0 : firstUserIndex + 1
+  const userShowingStart = filteredStudentAccountRows.length === 0 ? 0 : firstUserIndex + 1
   const userShowingEnd = firstUserIndex + currentUsers.length
 
   const totalLogPages = Math.max(1, Math.ceil(activityLogRows.length / logsPerPage))
@@ -1183,6 +1202,7 @@ function Admin({ onLogout }) {
         'PWD ID',
         'PWD ID PDF',
         '4Ps ID PDF',
+        'COR / Study Load PDF',
         'Mobile No.',
         'Email Address',
         'Status',
@@ -1210,6 +1230,7 @@ function Admin({ onLogout }) {
         applicant.pwdId ?? '',
         applicant.pwdIdFileName ?? '',
         applicant.fourPsFileName ?? '',
+        applicant.corFileName ?? '',
         applicant.mobileNumber ?? '',
         applicant.emailAddress ?? '',
         applicant.status ?? '',
@@ -2973,6 +2994,7 @@ function Admin({ onLogout }) {
                     <th>Address</th>
                     <th>PSA</th>
                     <th>School ID</th>
+                    <th>COR / Study Load</th>
                     <th>PWD ID PDF</th>
                     <th>4Ps ID PDF</th>
                     <th>Status</th>
@@ -2983,7 +3005,7 @@ function Admin({ onLogout }) {
                 <tbody>
                   {applicants === undefined && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={15}>
+                      <td className="admin-empty-state" colSpan={16}>
                         Loading applicants...
                       </td>
                     </tr>
@@ -2991,7 +3013,7 @@ function Admin({ onLogout }) {
 
                   {applicants !== undefined && filteredCourseApplicants.length === 0 && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={15}>
+                      <td className="admin-empty-state" colSpan={16}>
                         No applicants found for this course.
                       </td>
                     </tr>
@@ -3050,6 +3072,21 @@ function Admin({ onLogout }) {
                             >
                               <span className="material-symbols-outlined">badge</span>
                               View School ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="COR / Study Load">
+                          {applicant.corFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.corFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">description</span>
+                              View COR
                             </a>
                           ) : (
                             <span className="admin-applicant-file-missing">No file</span>
@@ -4036,7 +4073,7 @@ function Admin({ onLogout }) {
               <div>
                 <p className="admin-modal-kicker">User Management</p>
                 <h2 id="admin-user-management-title">Student Accounts</h2>
-                <p>View and manage registered student email addresses and phone numbers.</p>
+                <p>Search and manage registered student account details.</p>
               </div>
 
               <button
@@ -4051,28 +4088,59 @@ function Admin({ onLogout }) {
 
             {userMessage && <p className="admin-user-message" role="status">{userMessage}</p>}
 
+            <div className="admin-search-field admin-user-search">
+              <span className="material-symbols-outlined">search</span>
+              <input
+                aria-label="Search student accounts"
+                onChange={(event) => {
+                  setUserSearchQuery(event.target.value)
+                  setCurrentUserPage(1)
+                }}
+                placeholder="Search Student ID, email, phone, or Facebook link"
+                type="search"
+                value={userSearchQuery}
+              />
+            </div>
+
             <div className="admin-quick-actions-table-wrap admin-users-table-wrap">
               <table className="admin-quick-actions-table admin-users-table">
                 <thead>
                   <tr>
                     <th>No.</th>
+                    <th>Student ID</th>
                     <th>Email Address</th>
                     <th>Phone Number</th>
+                    <th>Facebook Profile</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {studentAccounts === undefined && (
-                    <tr><td className="admin-empty-state" colSpan={4}>Loading users...</td></tr>
+                    <tr><td className="admin-empty-state" colSpan={6}>Loading users...</td></tr>
                   )}
-                  {studentAccounts?.length === 0 && (
-                    <tr><td className="admin-empty-state" colSpan={4}>No student accounts found.</td></tr>
+                  {studentAccounts !== undefined && filteredStudentAccountRows.length === 0 && (
+                    <tr><td className="admin-empty-state" colSpan={6}>No student accounts found.</td></tr>
                   )}
                   {currentUsers.map((user, index) => (
                     <tr key={user.id}>
                       <td data-label="No.">{firstUserIndex + index + 1}</td>
+                      <td data-label="Student ID">{user.schoolId || 'Not provided'}</td>
                       <td data-label="Email Address">{user.email}</td>
                       <td data-label="Phone Number">{user.phoneNumber || 'Not provided'}</td>
+                      <td data-label="Facebook Profile">
+                        {user.facebookProfileUrl ? (
+                          <a
+                            className="admin-user-facebook-link"
+                            href={user.facebookProfileUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            View Profile
+                          </a>
+                        ) : (
+                          'Not provided'
+                        )}
+                      </td>
                       <td data-label="Actions">
                         <div className="admin-user-actions">
                           <button aria-label={`Edit ${user.email}`} onClick={() => openEditUser(user)} type="button">
@@ -4095,17 +4163,17 @@ function Admin({ onLogout }) {
             </div>
 
             <div className="admin-pagination admin-user-pagination">
-              <p>Showing <strong>{userShowingStart}</strong> to <strong>{userShowingEnd}</strong> of <strong>{studentAccountRows.length}</strong> users</p>
+              <p>Showing <strong>{userShowingStart}</strong> to <strong>{userShowingEnd}</strong> of <strong>{filteredStudentAccountRows.length}</strong> users</p>
               <div className="admin-pagination__buttons">
-                <button aria-label="Previous users page" disabled={activeUserPage === 1 || studentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage - 1)} type="button">
+                <button aria-label="Previous users page" disabled={activeUserPage === 1 || filteredStudentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage - 1)} type="button">
                   <span className="material-symbols-outlined">chevron_left</span>
                 </button>
                 {userPaginationItems.map((pageItem) => typeof pageItem === 'string' ? (
                   <span className="admin-pagination__ellipsis" key={pageItem}>...</span>
                 ) : (
-                  <button className={activeUserPage === pageItem ? 'admin-page-button--active' : undefined} disabled={studentAccountRows.length === 0} key={pageItem} onClick={() => setCurrentUserPage(pageItem)} type="button">{pageItem}</button>
+                  <button className={activeUserPage === pageItem ? 'admin-page-button--active' : undefined} disabled={filteredStudentAccountRows.length === 0} key={pageItem} onClick={() => setCurrentUserPage(pageItem)} type="button">{pageItem}</button>
                 ))}
-                <button aria-label="Next users page" disabled={activeUserPage === totalUserPages || studentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage + 1)} type="button">
+                <button aria-label="Next users page" disabled={activeUserPage === totalUserPages || filteredStudentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage + 1)} type="button">
                   <span className="material-symbols-outlined">chevron_right</span>
                 </button>
               </div>
@@ -6303,7 +6371,11 @@ const adminStyles = `
 }
 
 .admin-modal-card--users {
-  max-width: 920px;
+  max-width: 1120px;
+}
+
+.admin-user-search {
+  margin: 16px 24px;
 }
 
 .admin-users-table-wrap {
@@ -6315,6 +6387,17 @@ const adminStyles = `
 .admin-users-table td:last-child {
   width: 130px;
   text-align: center;
+}
+
+.admin-user-facebook-link {
+  color: var(--admin-primary-dark);
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-user-facebook-link:hover {
+  text-decoration: underline;
 }
 
 .admin-user-actions {

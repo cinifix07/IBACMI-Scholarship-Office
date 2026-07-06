@@ -7,6 +7,7 @@ export default defineSchema({
     schoolId: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
     currentAddress: v.optional(v.string()),
+    facebookProfileUrl: v.optional(v.string()),
     password: v.string(),
     name: v.string(),
     role: v.string(),
@@ -81,6 +82,9 @@ export default defineSchema({
     schoolIdFileStorageId: v.optional(v.id('_storage')),
     schoolIdFileUrl: v.optional(v.string()),
     schoolIdFileName: v.optional(v.string()),
+    corFileStorageId: v.optional(v.id('_storage')),
+    corFileUrl: v.optional(v.string()),
+    corFileName: v.optional(v.string()),
     pwdIdFileStorageId: v.optional(v.id('_storage')),
     pwdIdFileUrl: v.optional(v.string()),
     pwdIdFileName: v.optional(v.string()),
@@ -128,6 +132,11 @@ export default defineSchema({
             }),
           ),
           schoolId: v.optional(
+            v.object({
+              fileName: v.string(),
+            }),
+          ),
+          cor: v.optional(
             v.object({
               fileName: v.string(),
             }),

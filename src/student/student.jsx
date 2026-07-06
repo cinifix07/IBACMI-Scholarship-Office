@@ -234,12 +234,19 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const [addressError, setAddressError] = useState('')
   const [addressSuccess, setAddressSuccess] = useState('')
   const [isSavingCurrentAddress, setIsSavingCurrentAddress] = useState(false)
+  const updateStudentFacebookProfile = useMutation(api.adminAuth.updateStudentFacebookProfile)
+  const [facebookProfileUrl, setFacebookProfileUrl] = useState(studentSession?.facebookProfileUrl ?? '')
+  const [facebookError, setFacebookError] = useState('')
+  const [facebookSuccess, setFacebookSuccess] = useState('')
+  const [isSavingFacebookProfile, setIsSavingFacebookProfile] = useState(false)
 
   const normalizedStudentSchoolId = studentSchoolId.toLowerCase()
   const savedPhoneNumber = studentSession?.phoneNumber ?? ''
   const hasPhoneNumberChanged = normalizePhoneNumber(phoneNumber) !== normalizePhoneNumber(savedPhoneNumber)
   const savedCurrentAddress = studentSession?.currentAddress ?? ''
   const hasCurrentAddressChanged = currentAddress.trim() !== savedCurrentAddress.trim()
+  const savedFacebookProfileUrl = studentSession?.facebookProfileUrl ?? ''
+  const hasFacebookProfileChanged = facebookProfileUrl.trim() !== savedFacebookProfileUrl.trim()
   const studentRecord = useMemo(() => {
     if (!normalizedStudentSchoolId || !allInfoRecords) return null
 
@@ -308,6 +315,66 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     setCurrentAddress(event.target.value)
     setAddressError('')
     setAddressSuccess('')
+  }
+
+  const handleFacebookProfileChange = (event) => {
+    setFacebookProfileUrl(event.target.value)
+    setFacebookError('')
+    setFacebookSuccess('')
+  }
+
+  const handleSaveFacebookProfile = async () => {
+    const nextFacebookProfileUrl = facebookProfileUrl.trim()
+    setFacebookError('')
+    setFacebookSuccess('')
+
+    if (!studentSchoolId) {
+      setFacebookError('Please sign in before updating your Facebook profile link.')
+      return
+    }
+
+    let parsedUrl
+    try {
+      parsedUrl = new URL(nextFacebookProfileUrl)
+    } catch {
+      setFacebookError('Enter a valid Facebook profile link.')
+      return
+    }
+
+    const hostname = parsedUrl.hostname.toLowerCase()
+    if (
+      parsedUrl.protocol !== 'https:' ||
+      !(hostname === 'facebook.com' || hostname.endsWith('.facebook.com') || hostname === 'fb.com' || hostname.endsWith('.fb.com'))
+    ) {
+      setFacebookError('Use a valid https://facebook.com profile link.')
+      return
+    }
+
+    if (!hasFacebookProfileChanged) {
+      setFacebookSuccess('Facebook profile link is already up to date.')
+      return
+    }
+
+    setIsSavingFacebookProfile(true)
+    try {
+      const result = await updateStudentFacebookProfile({
+        schoolId: studentSession.schoolId,
+        facebookProfileUrl: nextFacebookProfileUrl,
+      })
+
+      if (!result.success) {
+        setFacebookError(result.message || 'Unable to update Facebook profile link.')
+        return
+      }
+
+      setFacebookProfileUrl(result.admin?.facebookProfileUrl ?? nextFacebookProfileUrl)
+      setFacebookSuccess(result.message || 'Facebook profile link updated successfully.')
+      if (typeof onStudentSessionUpdate === 'function') onStudentSessionUpdate(result.admin)
+    } catch (error) {
+      setFacebookError(error instanceof Error ? error.message : 'Unable to update Facebook profile link.')
+    } finally {
+      setIsSavingFacebookProfile(false)
+    }
   }
 
   const handleSavePhoneNumber = async () => {
@@ -639,6 +706,34 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
             )}
             {addressSuccess && (
               <p className="student-upload-message student-upload-message--success">{addressSuccess}</p>
+            )}
+          </div>
+
+          <div className="student-field student-field--with-action student-field--full">
+            <label htmlFor="facebook-profile-url">Facebook Profile Link</label>
+            <div className="student-inline-control">
+              <input
+                id="facebook-profile-url"
+                inputMode="url"
+                onChange={handleFacebookProfileChange}
+                placeholder="https://www.facebook.com/your.profile"
+                type="url"
+                value={facebookProfileUrl}
+              />
+              <button
+                className="student-inline-button"
+                disabled={!hasStudentSession || !hasFacebookProfileChanged || isSavingFacebookProfile}
+                onClick={handleSaveFacebookProfile}
+                type="button"
+              >
+                {isSavingFacebookProfile ? 'Saving...' : 'Save Link'}
+              </button>
+            </div>
+            {facebookError && (
+              <p className="student-upload-message student-upload-message--error">{facebookError}</p>
+            )}
+            {facebookSuccess && (
+              <p className="student-upload-message student-upload-message--success">{facebookSuccess}</p>
             )}
           </div>
 

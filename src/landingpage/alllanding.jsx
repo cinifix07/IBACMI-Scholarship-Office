@@ -209,6 +209,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [portalDocumentFiles, setPortalDocumentFiles] = useState({
     psaFile: null,
     schoolIdFile: null,
+    corFile: null,
     pwdIdFile: null,
     fourPsFile: null,
   })
@@ -356,6 +357,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         setPortalDocumentFiles({
           psaFile: null,
           schoolIdFile: null,
+          corFile: null,
           pwdIdFile: null,
           fourPsFile: null,
         })
@@ -436,6 +438,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setPortalDocumentFiles({
       psaFile: null,
       schoolIdFile: null,
+      corFile: null,
       pwdIdFile: null,
       fourPsFile: null,
     })
@@ -542,6 +545,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     const emailAddress = String(formData.get('emailAddress') || '').trim().toLowerCase()
     const psaFile = formData.get('psaFile')
     const schoolIdFile = formData.get('schoolIdFile')
+    const corFile = formData.get('corFile')
     const pwdIdFile = formData.get('pwdIdFile')
     const fourPsFile = formData.get('fourPsFile')
 
@@ -577,7 +581,16 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       return
     }
 
-    if (psaFile.size > applicantPdfMaxSize || schoolIdFile.size > applicantPdfMaxSize) {
+    if (!(corFile instanceof File) || !corFile.name || !isValidApplicantPdf(corFile)) {
+      setPortalError('Please upload your COR or Study Load as a PDF file.')
+      return
+    }
+
+    if (
+      psaFile.size > applicantPdfMaxSize ||
+      schoolIdFile.size > applicantPdfMaxSize ||
+      corFile.size > applicantPdfMaxSize
+    ) {
       setPortalError('Each uploaded PDF must be 5MB or smaller.')
       return
     }
@@ -619,6 +632,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       emailAddress,
       psaFile,
       schoolIdFile,
+      corFile,
       pwdIdFile: optionalFiles.includes(pwdIdFile) ? pwdIdFile : null,
       fourPsFile: optionalFiles.includes(fourPsFile) ? fourPsFile : null,
     })
@@ -659,7 +673,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsSubmittingPortal(true)
 
     try {
-      const [psaFileUrl, schoolIdFileUrl, pwdIdFileUrl, fourPsFileUrl] =
+      const [psaFileUrl, schoolIdFileUrl, corFileUrl, pwdIdFileUrl, fourPsFileUrl] =
         await Promise.all([
           uploadApplicantPdfToGoogleDrive(
             portalReviewData.psaFile,
@@ -669,6 +683,11 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           uploadApplicantPdfToGoogleDrive(
             portalReviewData.schoolIdFile,
             'School-ID',
+            portalReviewData,
+          ),
+          uploadApplicantPdfToGoogleDrive(
+            portalReviewData.corFile,
+            'COR-or-Study-Load',
             portalReviewData,
           ),
           portalReviewData.pwdIdFile
@@ -712,6 +731,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         psaFileName: portalReviewData.psaFile.name,
         schoolIdFileUrl,
         schoolIdFileName: portalReviewData.schoolIdFile.name,
+        corFileUrl,
+        corFileName: portalReviewData.corFile.name,
       }
 
       if (pwdIdFileUrl && portalReviewData.pwdIdFile) {
@@ -736,6 +757,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setPortalDocumentFiles({
         psaFile: null,
         schoolIdFile: null,
+        corFile: null,
         pwdIdFile: null,
         fourPsFile: null,
       })
@@ -1816,6 +1838,38 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   </label>
 
                   <label
+                    className={`portal-document-upload${
+                      portalDocumentFiles.corFile ? ' portal-document-upload--selected' : ''
+                    }`}
+                  >
+                    <input
+                      accept="application/pdf,.pdf"
+                      name="corFile"
+                      onChange={handlePortalDocumentChange}
+                      required
+                      type="file"
+                    />
+                    <span className="portal-document-upload__icon">
+                      <span className="material-symbols-outlined">description</span>
+                    </span>
+                    <span className="portal-document-upload__copy">
+                      <span className="portal-document-upload__title">
+                        <strong>COR / Study Load</strong>
+                        <span className="portal-document-badge portal-document-badge--required">
+                          Required
+                        </span>
+                      </span>
+                      <span>
+                        {portalDocumentFiles.corFile
+                          ? `${portalDocumentFiles.corFile.name} (${formatFileSize(
+                              portalDocumentFiles.corFile.size,
+                            )})`
+                          : 'Select COR or Study Load PDF file'}
+                      </span>
+                    </span>
+                  </label>
+
+                  <label
                     className={`portal-document-upload portal-document-upload--optional${
                       portalDocumentFiles.pwdIdFile ? ' portal-document-upload--selected' : ''
                     }`}
@@ -1995,6 +2049,13 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                           <dd>
                             {portalReviewData.schoolIdFile.name} (
                             {formatFileSize(portalReviewData.schoolIdFile.size)})
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>COR / Study Load</dt>
+                          <dd>
+                            {portalReviewData.corFile.name} (
+                            {formatFileSize(portalReviewData.corFile.size)})
                           </dd>
                         </div>
                         <div>
