@@ -1,0 +1,24 @@
+{
+  "name": "IBACMI Scholarship Office",
+  "short_name": "IBACMI",
+  "description": "IBACMI Scholarship Office student and applicant portal.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#fbfaf8",
+  "theme_color": "#c2410c",
+  "icons": [
+    {
+      "src": "IBACMI.png",
+      "sizes": "1080x1080",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
