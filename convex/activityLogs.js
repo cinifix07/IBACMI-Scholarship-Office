@@ -1,5 +1,6 @@
 import { internalMutation, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { archiveRecord } from './archiveHelpers'
 
 export const list = query({
   args: {},
@@ -13,7 +14,14 @@ export const clearAll = mutation({
   handler: async (ctx) => {
     const logs = await ctx.db.query('activityLogs').collect()
 
-    await Promise.all(logs.map((log) => ctx.db.delete(log._id)))
+    for (const log of logs) {
+      await archiveRecord(ctx, {
+        record: log,
+        sourceLabel: log.targetLabel ?? log.action,
+        sourceTable: 'activityLogs',
+      })
+      await ctx.db.delete(log._id)
+    }
 
     return {
       deletedCount: logs.length,

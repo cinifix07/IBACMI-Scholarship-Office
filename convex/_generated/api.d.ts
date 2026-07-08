@@ -13,6 +13,8 @@ import type * as adminAuth from "../adminAuth.js";
 import type * as allinfo from "../allinfo.js";
 import type * as applicantPortal from "../applicantPortal.js";
 import type * as applicants from "../applicants.js";
+import type * as archive from "../archive.js";
+import type * as archiveHelpers from "../archiveHelpers.js";
 import type * as http from "../http.js";
 import type * as quickActions from "../quickActions.js";
 
@@ -28,6 +30,8 @@ declare const fullApi: ApiFromModules<{
   allinfo: typeof allinfo;
   applicantPortal: typeof applicantPortal;
   applicants: typeof applicants;
+  archive: typeof archive;
+  archiveHelpers: typeof archiveHelpers;
   http: typeof http;
   quickActions: typeof quickActions;
 }>;

@@ -7,6 +7,7 @@ const granteesPerPage = 5
 const quickActionsPerPage = 5
 const usersPerPage = 5
 const logsPerPage = 5
+const archiveItemsPerPage = 7
 const batchExportsPerPage = 5
 const schoolIdDownloadsPerPage = 5
 const schoolIdBatchDownloadsPerPage = 5
@@ -435,6 +436,12 @@ function parseGranteeUpload(text) {
 function Admin({ onLogout }) {
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false)
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState('')
+  const [archiveTableFilter, setArchiveTableFilter] = useState('')
+  const [currentArchivePage, setCurrentArchivePage] = useState(1)
+  const [processingArchiveId, setProcessingArchiveId] = useState(null)
+  const [archiveMessage, setArchiveMessage] = useState('')
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false)
   const [selectedUser, setSelectedUser] = useState(null)
@@ -497,6 +504,7 @@ function Admin({ onLogout }) {
 
   const quickActions = useQuery(api.quickActions.list)
   const activityLogs = useQuery(api.activityLogs.list)
+  const archivedItems = useQuery(api.archive.list, isArchiveOpen ? {} : 'skip')
   const allInfoRecords = useQuery(api.allinfo.list)
   const applicants = useQuery(api.applicants.list)
   const applicantPortal = useQuery(api.applicantPortal.get)
@@ -507,6 +515,8 @@ function Admin({ onLogout }) {
   const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
   const clearAllQuickActions = useMutation(api.quickActions.clearAll)
   const clearAllActivityLogs = useMutation(api.activityLogs.clearAll)
+  const restoreArchivedItem = useMutation(api.archive.restore)
+  const removeArchivedItem = useAction(api.archive.remove)
   const deleteSchoolIdFilesByBatch = useAction(api.allinfo.deleteSchoolIdFilesByBatch)
   const deleteAllApplicantsByCourse = useAction(api.applicants.deleteAllByCourse)
   const updateStudentAccount = useMutation(api.adminAuth.updateStudentAccount)
@@ -514,6 +524,7 @@ function Admin({ onLogout }) {
 
   const isAnyModalOpen =
     isLogsOpen ||
+    isArchiveOpen ||
     isQuickActionsOpen ||
     isUserManagementOpen ||
     Boolean(selectedUser) ||
@@ -543,6 +554,7 @@ function Admin({ onLogout }) {
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
   const quickActionRows = quickActions ?? []
   const activityLogRows = activityLogs ?? []
+  const archiveRows = useMemo(() => archivedItems ?? [], [archivedItems])
   const applicantRows = useMemo(() => applicants ?? [], [applicants])
   const studentAccountRows = useMemo(() => studentAccounts ?? [], [studentAccounts])
   const portalApplicationYear = applicantPortal?.applicationYear
@@ -911,6 +923,42 @@ function Admin({ onLogout }) {
   const logShowingStart = activityLogRows.length === 0 ? 0 : firstLogIndex + 1
   const logShowingEnd = firstLogIndex + currentActivityLogs.length
 
+  const archiveTableOptions = useMemo(
+    () => Array.from(new Set(archiveRows.map((item) => item.sourceTable))).sort(),
+    [archiveRows],
+  )
+  const filteredArchiveRows = useMemo(() => {
+    const query = archiveSearchQuery.trim().toLowerCase()
+
+    return archiveRows.filter((item) => {
+      const matchesTable = archiveTableFilter ? item.sourceTable === archiveTableFilter : true
+      const searchableText = [
+        item.sourceTable,
+        item.sourceLabel,
+        item.sourceId,
+        item.deletionKind,
+        formatLogDate(item.deletedAt),
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+
+      return matchesTable && (!query || searchableText.includes(query))
+    })
+  }, [archiveRows, archiveSearchQuery, archiveTableFilter])
+  const totalArchivePages = Math.max(
+    1,
+    Math.ceil(filteredArchiveRows.length / archiveItemsPerPage),
+  )
+  const activeArchivePage = Math.min(currentArchivePage, totalArchivePages)
+  const firstArchiveIndex = (activeArchivePage - 1) * archiveItemsPerPage
+  const currentArchivedItems = filteredArchiveRows.slice(
+    firstArchiveIndex,
+    firstArchiveIndex + archiveItemsPerPage,
+  )
+  const archiveShowingStart =
+    filteredArchiveRows.length === 0 ? 0 : firstArchiveIndex + 1
+  const archiveShowingEnd = firstArchiveIndex + currentArchivedItems.length
+
   const totalBatchExportPages = Math.max(1, Math.ceil(batchExportRows.length / batchExportsPerPage))
   const activeBatchExportPage = Math.min(currentBatchExportPage, totalBatchExportPages)
   const firstBatchExportIndex = (activeBatchExportPage - 1) * batchExportsPerPage
@@ -974,6 +1022,10 @@ function Admin({ onLogout }) {
 
   const goToLogPage = (pageNumber) => {
     setCurrentLogPage(Math.min(Math.max(pageNumber, 1), totalLogPages))
+  }
+
+  const goToArchivePage = (pageNumber) => {
+    setCurrentArchivePage(Math.min(Math.max(pageNumber, 1), totalArchivePages))
   }
 
   const goToBatchExportPage = (pageNumber) => {
@@ -1439,7 +1491,7 @@ function Admin({ onLogout }) {
     if (isClearingActivityLogs || activityLogRows.length === 0) return
 
     const confirmed = window.confirm(
-      `Clear all ${activityLogRows.length} visible activity logs? This permanently removes all stored logs and cannot be undone.`,
+      `Move all ${activityLogRows.length} visible activity logs to the archive?`,
     )
 
     if (!confirmed) return
@@ -1453,6 +1505,50 @@ function Admin({ onLogout }) {
       window.alert(error instanceof Error ? error.message : 'Unable to clear activity logs.')
     } finally {
       setIsClearingActivityLogs(false)
+    }
+  }
+
+  const handleRestoreArchivedItem = async (item) => {
+    if (processingArchiveId) return
+
+    const confirmed = window.confirm(
+      `Restore ${item.sourceLabel || item.sourceTable} to ${item.sourceTable}?`,
+    )
+    if (!confirmed) return
+
+    setProcessingArchiveId(item._id)
+    setArchiveMessage('')
+
+    try {
+      await restoreArchivedItem({ id: item._id })
+      setArchiveMessage(`${item.sourceLabel || 'Item'} restored successfully.`)
+    } catch (error) {
+      setArchiveMessage(error instanceof Error ? error.message : 'Unable to restore this item.')
+    } finally {
+      setProcessingArchiveId(null)
+    }
+  }
+
+  const handleRemoveArchivedItem = async (item) => {
+    if (processingArchiveId) return
+
+    const confirmed = window.confirm(
+      `Permanently delete ${item.sourceLabel || item.sourceTable} from the archive? This cannot be undone.`,
+    )
+    if (!confirmed) return
+
+    setProcessingArchiveId(item._id)
+    setArchiveMessage('')
+
+    try {
+      await removeArchivedItem({ id: item._id })
+      setArchiveMessage(`${item.sourceLabel || 'Item'} permanently deleted.`)
+    } catch (error) {
+      setArchiveMessage(
+        error instanceof Error ? error.message : 'Unable to permanently delete this item.',
+      )
+    } finally {
+      setProcessingArchiveId(null)
     }
   }
 
@@ -1844,6 +1940,7 @@ function Admin({ onLogout }) {
         }
 
         setIsLogsOpen(false)
+        setIsArchiveOpen(false)
         setIsQuickActionsOpen(false)
         setIsUserManagementOpen(false)
         setSelectedUser(null)
@@ -1909,6 +2006,19 @@ function Admin({ onLogout }) {
           >
             <span className="material-symbols-outlined">history</span>
             Logs
+          </button>
+
+          <button
+            className="admin-button admin-button--ghost"
+            onClick={() => {
+              setArchiveMessage('')
+              setCurrentArchivePage(1)
+              setIsArchiveOpen(true)
+            }}
+            type="button"
+          >
+            <span className="material-symbols-outlined">archive</span>
+            Archive
           </button>
 
           <button
@@ -2290,7 +2400,7 @@ function Admin({ onLogout }) {
             <div className="admin-logs-toolbar">
               <div>
                 <span>Log Management</span>
-                <strong>Permanently remove all system activity records.</strong>
+                <strong>Move all system activity records to the archive.</strong>
               </div>
 
               <button
@@ -2397,6 +2507,191 @@ function Admin({ onLogout }) {
                   disabled={activeLogPage === totalLogPages || activityLogRows.length === 0}
                   aria-label="Next logs page"
                   onClick={() => goToLogPage(activeLogPage + 1)}
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isArchiveOpen && (
+        <div
+          aria-labelledby="admin-archive-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close archive modal"
+            className="admin-modal-backdrop"
+            onClick={() => setIsArchiveOpen(false)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--wide admin-modal-card--archive">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Archive</p>
+                <h2 id="admin-archive-title">Deleted Records</h2>
+                <p>Search deleted data, restore it to its original table, or delete it permanently.</p>
+              </div>
+
+              <button
+                aria-label="Close archive"
+                className="admin-modal-close"
+                disabled={Boolean(processingArchiveId)}
+                onClick={() => setIsArchiveOpen(false)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-archive-toolbar">
+              <label className="admin-archive-search">
+                <span className="material-symbols-outlined">search</span>
+                <input
+                  onChange={(event) => {
+                    setArchiveSearchQuery(event.target.value)
+                    setCurrentArchivePage(1)
+                  }}
+                  placeholder="Search table, deleted item, ID, or date..."
+                  type="search"
+                  value={archiveSearchQuery}
+                />
+              </label>
+
+              <select
+                aria-label="Filter archive by table"
+                onChange={(event) => {
+                  setArchiveTableFilter(event.target.value)
+                  setCurrentArchivePage(1)
+                }}
+                value={archiveTableFilter}
+              >
+                <option value="">All tables</option>
+                {archiveTableOptions.map((tableName) => (
+                  <option key={tableName} value={tableName}>
+                    {tableName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {archiveMessage && <p className="admin-archive-message">{archiveMessage}</p>}
+
+            <div className="admin-logs-table-wrap admin-archive-table-wrap">
+              <table className="admin-logs-table admin-archive-table">
+                <thead>
+                  <tr>
+                    <th>Table</th>
+                    <th>Deleted Item</th>
+                    <th>Deletion Type</th>
+                    <th>Date &amp; Time Deleted</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {archivedItems === undefined && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={5}>Loading archive...</td>
+                    </tr>
+                  )}
+
+                  {archivedItems && filteredArchiveRows.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={5}>
+                        {archiveRows.length === 0
+                          ? 'No deleted records in the archive.'
+                          : 'No archived records match your filters.'}
+                      </td>
+                    </tr>
+                  )}
+
+                  {currentArchivedItems.map((item) => (
+                    <tr key={item._id}>
+                      <td data-label="Table">
+                        <span className="admin-archive-table-name">{item.sourceTable}</span>
+                      </td>
+                      <td data-label="Deleted Item">
+                        <strong>{item.sourceLabel || item.sourceId}</strong>
+                        <span>{item.sourceId}</span>
+                      </td>
+                      <td data-label="Deletion Type">
+                        {item.deletionKind === 'fields' ? 'File data' : 'Full record'}
+                      </td>
+                      <td data-label="Date & Time Deleted">{formatLogDate(item.deletedAt)}</td>
+                      <td data-label="Actions">
+                        <div className="admin-archive-actions">
+                          <button
+                            className="admin-archive-action admin-archive-action--restore"
+                            disabled={Boolean(processingArchiveId)}
+                            onClick={() => handleRestoreArchivedItem(item)}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined">restore</span>
+                            {processingArchiveId === item._id ? 'Working...' : 'Restore'}
+                          </button>
+                          <button
+                            className="admin-archive-action admin-archive-action--delete"
+                            disabled={Boolean(processingArchiveId)}
+                            onClick={() => handleRemoveArchivedItem(item)}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined">delete_forever</span>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-logs-pagination">
+              <p>
+                Showing <strong>{archiveShowingStart}</strong> to{' '}
+                <strong>{archiveShowingEnd}</strong> of{' '}
+                <strong>{filteredArchiveRows.length}</strong> archived items
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous archive page"
+                  disabled={activeArchivePage === 1 || filteredArchiveRows.length === 0}
+                  onClick={() => goToArchivePage(activeArchivePage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+                {Array.from({ length: totalArchivePages }, (_, index) => index + 1).map(
+                  (pageNumber) => (
+                    <button
+                      className={
+                        activeArchivePage === pageNumber
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={filteredArchiveRows.length === 0}
+                      key={pageNumber}
+                      onClick={() => goToArchivePage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  ),
+                )}
+                <button
+                  aria-label="Next archive page"
+                  disabled={
+                    activeArchivePage === totalArchivePages || filteredArchiveRows.length === 0
+                  }
+                  onClick={() => goToArchivePage(activeArchivePage + 1)}
+                  type="button"
                 >
                   <span className="material-symbols-outlined">chevron_right</span>
                 </button>
@@ -2863,8 +3158,9 @@ function Admin({ onLogout }) {
             <div className="admin-confirm-body">
               <strong>{selectedDeleteBatch.batchId}</strong>
               <p>
-                This will permanently delete {selectedDeleteBatch.recordCount}{' '}
-                {selectedDeleteBatch.recordCount === 1 ? 'record' : 'records'} from this batch.
+                This will move {selectedDeleteBatch.recordCount}{' '}
+                {selectedDeleteBatch.recordCount === 1 ? 'record' : 'records'} from this batch to
+                the archive, where they can be restored.
               </p>
             </div>
 
@@ -3522,7 +3818,7 @@ function Admin({ onLogout }) {
             </div>
 
             <div className="admin-confirm-card__copy">
-              <p className="admin-modal-kicker">Permanent Action</p>
+              <p className="admin-modal-kicker">Move to Archive</p>
               <h2 id="admin-course-delete-confirm-title">Delete all course applications?</h2>
               <p>
                 Are you sure you want to delete all{' '}
@@ -3534,8 +3830,8 @@ function Admin({ onLogout }) {
 
             <div className="admin-confirm-card__notice">
               <span className="material-symbols-outlined">report</span>
-              Applicant records will be permanently removed from Convex and their uploaded PDFs
-              moved to Google Drive trash.
+              Applicant records will move to the archive. Their uploaded PDFs stay available so
+              the records can be restored.
             </div>
 
             <div className="admin-confirm-card__actions">
@@ -3990,7 +4286,7 @@ function Admin({ onLogout }) {
             </div>
 
             <div className="admin-confirm-card__copy">
-              <p className="admin-modal-kicker">Permanent Action</p>
+              <p className="admin-modal-kicker">Move to Archive</p>
               <h2 id="admin-school-id-delete-confirm-title">Delete all IDs in this batch?</h2>
               <p>
                 Are you sure you want to delete all{' '}
@@ -4001,7 +4297,8 @@ function Admin({ onLogout }) {
 
             <div className="admin-confirm-card__notice">
               <span className="material-symbols-outlined">report</span>
-              The files will be moved to Google Drive trash and their links removed from Convex.
+              The file links will move to the archive and can be restored. The Drive PDFs remain
+              available until their archive entries are permanently deleted.
             </div>
 
             <div className="admin-confirm-card__actions">
@@ -4505,7 +4802,7 @@ function Admin({ onLogout }) {
           <section className="admin-modal-card admin-modal-card--confirm">
             <div className="admin-delete-user-icon"><span className="material-symbols-outlined">delete</span></div>
             <h2 id="admin-delete-user-title">Delete user account?</h2>
-            <p>This permanently deletes <strong>{userToDelete.email}</strong> from Convex. This action cannot be undone.</p>
+            <p>This moves <strong>{userToDelete.email}</strong> to the archive, where the account can be restored.</p>
             {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
             <div className="admin-user-form__actions">
               <button className="admin-button admin-button--secondary" onClick={() => setUserToDelete(null)} type="button">Cancel</button>
@@ -4751,14 +5048,14 @@ function Admin({ onLogout }) {
             </div>
 
             <div className="admin-confirm-card__copy">
-              <p className="admin-modal-kicker">Permanent Action</p>
+              <p className="admin-modal-kicker">Move to Archive</p>
               <h2 id="clear-quick-actions-title">Clear all messages?</h2>
               <p id="clear-quick-actions-description">
-                You are about to permanently delete{' '}
+                You are about to move{' '}
                 <strong>
                   {quickActionRows.length} message{quickActionRows.length === 1 ? '' : 's'}
                 </strong>
-                . This action cannot be undone.
+                {' '}to the archive. These messages can be restored later.
               </p>
             </div>
 
@@ -6508,6 +6805,123 @@ const adminStyles = `
   display: block;
 }
 
+.admin-modal-card--archive {
+  display: flex;
+  height: min(820px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-archive-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 14px 24px;
+}
+
+.admin-archive-search {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--admin-muted);
+  padding: 0 14px;
+}
+
+.admin-archive-search input,
+.admin-archive-toolbar select {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--admin-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.admin-archive-toolbar select {
+  min-height: 44px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0 12px;
+}
+
+.admin-archive-message {
+  margin: 0;
+  border-bottom: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 10px 24px;
+}
+
+.admin-archive-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.admin-archive-table-name {
+  width: fit-content;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: var(--admin-primary-dark) !important;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.admin-archive-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-archive-action {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+}
+
+.admin-archive-action .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.admin-archive-action--restore {
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.admin-archive-action--delete {
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.admin-archive-action:hover:not(:disabled) {
+  background: #fff7ed;
+}
+
+.admin-archive-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .admin-logs-toolbar span {
   color: var(--admin-muted);
   font-size: 12px;
@@ -7195,6 +7609,21 @@ const adminStyles = `
 
   .admin-logs-toolbar .admin-button {
     width: 100%;
+  }
+
+  .admin-modal-card--archive {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .admin-archive-toolbar {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
+  }
+
+  .admin-archive-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .admin-quick-actions-table-wrap,

@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { archiveRecord } from './archiveHelpers'
 import { mutation, query } from './_generated/server'
 
 async function logActivity(ctx, log) {
@@ -105,6 +106,11 @@ export const deleteStudentAccount = mutation({
       return { success: false, message: 'Student account not found.' }
     }
 
+    await archiveRecord(ctx, {
+      record: account,
+      sourceLabel: account.schoolId ?? account.email,
+      sourceTable: 'admins',
+    })
     await ctx.db.delete(args.id)
     await logActivity(ctx, {
       action: 'student_account_deleted',

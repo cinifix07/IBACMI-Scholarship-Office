@@ -1,6 +1,7 @@
 import { internal } from './_generated/api'
 import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { archiveFields, archiveRecord } from './archiveHelpers'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -639,6 +640,21 @@ export const clearSchoolIdFilesByBatch = internalMutation({
   },
   handler: async (ctx, args) => {
     for (const id of args.ids) {
+      const record = await ctx.db.get(id)
+      if (!record) continue
+
+      const fileFields = {
+        ...(record.frontIdStorageId ? { frontIdStorageId: record.frontIdStorageId } : {}),
+        ...(record.frontIdUrl ? { frontIdUrl: record.frontIdUrl } : {}),
+        ...(record.idFilesUploadedAt ? { idFilesUploadedAt: record.idFilesUploadedAt } : {}),
+      }
+
+      await archiveFields(ctx, {
+        data: fileFields,
+        sourceId: record._id,
+        sourceLabel: `${record.studentId} School ID (${record.schoolYear ?? 'No school year'})`,
+        sourceTable: 'allinfo',
+      })
       await ctx.db.patch(id, {
         frontIdStorageId: undefined,
         frontIdUrl: undefined,
@@ -656,13 +672,6 @@ export const deleteSchoolIdFilesByBatch = action({
     schoolYear: v.string(),
   },
   handler: async (ctx, args) => {
-    const appsScriptUrl = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_URL
-    const uploadSecret = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_SECRET
-
-    if (!appsScriptUrl || !uploadSecret) {
-      throw new Error('Google Drive deletion is not configured.')
-    }
-
     const files = await ctx.runQuery(internal.allinfo.listSchoolIdFilesByBatch, {
       batchId: args.batchId.trim(),
       schoolYear: args.schoolYear.trim(),
@@ -670,24 +679,6 @@ export const deleteSchoolIdFilesByBatch = action({
 
     if (files.length === 0) {
       return { deleted: 0 }
-    }
-
-    const googleResponse = await fetch(appsScriptUrl, {
-      body: JSON.stringify({
-        destination: 'students',
-        fileIds: files.map((file) => file.fileId),
-        operation: 'delete',
-        secret: uploadSecret,
-      }),
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      method: 'POST',
-    })
-    const googleResult = await googleResponse.json().catch(() => null)
-
-    if (!googleResponse.ok || !googleResult?.success) {
-      throw new Error(googleResult?.message || 'Google Drive rejected the batch deletion.')
     }
 
     const deleted = await ctx.runMutation(internal.allinfo.clearSchoolIdFilesByBatch, {
@@ -816,8 +807,14 @@ export const deleteMany = mutation({
   handler: async (ctx, args) => {
     const recordsToDelete = await Promise.all(args.ids.map((id) => ctx.db.get(id)))
 
-    for (const id of args.ids) {
-      await ctx.db.delete(id)
+    for (const record of recordsToDelete) {
+      if (!record) continue
+      await archiveRecord(ctx, {
+        record,
+        sourceLabel: `${record.studentId} / ${record.batchId}`,
+        sourceTable: 'allinfo',
+      })
+      await ctx.db.delete(record._id)
     }
 
     await logActivity(ctx, {
@@ -835,7 +832,7 @@ export const deleteMany = mutation({
     })
 
     return {
-      deleted: args.ids.length,
+      deleted: recordsToDelete.filter(Boolean).length,
     }
   },
 })

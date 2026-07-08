@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
+import { archiveRecord } from './archiveHelpers'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -79,7 +80,14 @@ export const clearAll = mutation({
   handler: async (ctx) => {
     const messages = await ctx.db.query('quickActions').collect()
 
-    await Promise.all(messages.map((message) => ctx.db.delete(message._id)))
+    for (const message of messages) {
+      await archiveRecord(ctx, {
+        record: message,
+        sourceLabel: `${message.studentId ?? message.email} / ${message.source}`,
+        sourceTable: 'quickActions',
+      })
+      await ctx.db.delete(message._id)
+    }
 
     if (messages.length > 0) {
       await logActivity(ctx, {

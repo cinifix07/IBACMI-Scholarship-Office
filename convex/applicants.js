@@ -1,6 +1,7 @@
 import { internal } from './_generated/api'
 import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { archiveRecord } from './archiveHelpers'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -52,25 +53,6 @@ function getGoogleDriveFileId(fileUrl) {
   } catch {
     return null
   }
-}
-
-async function postToGoogleAppsScript(appsScriptUrl, payload) {
-  const initialResponse = await fetch(appsScriptUrl, {
-    body: JSON.stringify(payload),
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
-    },
-    method: 'POST',
-    redirect: 'manual',
-  })
-
-  if (initialResponse.status >= 300 && initialResponse.status < 400) {
-    const redirectUrl = initialResponse.headers.get('location')
-    if (!redirectUrl) throw new Error('Google Apps Script redirect is missing.')
-    return await fetch(redirectUrl, { method: 'GET', redirect: 'follow' })
-  }
-
-  return initialResponse
 }
 
 function trimApplicant(args) {
@@ -216,7 +198,15 @@ export const deleteCourseApplicants = internalMutation({
   },
   handler: async (ctx, args) => {
     for (const id of args.ids) {
-      await ctx.db.delete(id)
+      const applicant = await ctx.db.get(id)
+      if (!applicant) continue
+
+      await archiveRecord(ctx, {
+        record: applicant,
+        sourceLabel: `${applicant.studentId} / ${applicant.firstName} ${applicant.lastName}`,
+        sourceTable: 'applicants',
+      })
+      await ctx.db.delete(applicant._id)
     }
 
     await logActivity(ctx, {
@@ -237,13 +227,6 @@ export const deleteAllByCourse = action({
     course: v.string(),
   },
   handler: async (ctx, args) => {
-    const appsScriptUrl = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_URL
-    const uploadSecret = globalThis.process?.env.GOOGLE_DRIVE_UPLOAD_SECRET
-
-    if (!appsScriptUrl || !uploadSecret) {
-      throw new Error('Google Drive deletion is not configured.')
-    }
-
     const applicants = await ctx.runQuery(internal.applicants.listCourseDeletionCandidates, {
       applicationYear: args.applicationYear.trim(),
       course: args.course.trim(),
@@ -262,20 +245,6 @@ export const deleteAllByCourse = action({
         .map(getGoogleDriveFileId)
         .filter(Boolean)
     })
-
-    if (fileIds.length > 0) {
-      const googleResponse = await postToGoogleAppsScript(appsScriptUrl, {
-        destination: 'applicants',
-        fileIds,
-        operation: 'delete',
-        secret: uploadSecret,
-      })
-      const googleResult = await googleResponse.json().catch(() => null)
-
-      if (!googleResponse.ok || !googleResult?.success) {
-        throw new Error(googleResult?.message || 'Google Drive rejected applicant file deletion.')
-      }
-    }
 
     const deleted = await ctx.runMutation(internal.applicants.deleteCourseApplicants, {
       applicationYear: args.applicationYear.trim(),

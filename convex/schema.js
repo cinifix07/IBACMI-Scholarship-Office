@@ -33,6 +33,17 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_createdAt', ['createdAt']),
 
+  archive: defineTable({
+    sourceTable: v.string(),
+    sourceId: v.string(),
+    sourceLabel: v.optional(v.string()),
+    deletionKind: v.union(v.literal('record'), v.literal('fields')),
+    data: v.any(),
+    deletedAt: v.number(),
+  })
+    .index('by_deletedAt', ['deletedAt'])
+    .index('by_sourceTable', ['sourceTable']),
+
   allinfo: defineTable({
     no: v.string(),
     tesAwardNumber: v.string(),
