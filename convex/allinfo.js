@@ -19,10 +19,48 @@ export const list = query({
   },
 })
 
-async function withFrontIdUrl(_ctx, record) {
-  if (!record) return null
+function getSchoolIdUploadTimestamp(record) {
+  return record.idFilesUploadedAt ?? record.uploadedAt ?? record._creationTime ?? 0
+}
 
-  return record
+function shareSchoolIdUploadsAcrossDuplicates(records) {
+  const uploadByStudentAndYear = new Map()
+
+  for (const record of records) {
+    if (!record.frontIdUrl && !record.frontIdStorageId) continue
+
+    const key = `${String(record.studentId).trim().toLowerCase()}::${String(
+      record.schoolYear ?? '',
+    ).trim()}`
+    const savedUpload = uploadByStudentAndYear.get(key)
+
+    if (
+      !savedUpload ||
+      getSchoolIdUploadTimestamp(record) > getSchoolIdUploadTimestamp(savedUpload)
+    ) {
+      uploadByStudentAndYear.set(key, record)
+    }
+  }
+
+  return records.map((record) => {
+    const key = `${String(record.studentId).trim().toLowerCase()}::${String(
+      record.schoolYear ?? '',
+    ).trim()}`
+    const savedUpload = uploadByStudentAndYear.get(key)
+
+    if (!savedUpload) return record
+
+    return {
+      ...record,
+      ...(savedUpload.frontIdStorageId
+        ? { frontIdStorageId: savedUpload.frontIdStorageId }
+        : {}),
+      ...(savedUpload.frontIdUrl ? { frontIdUrl: savedUpload.frontIdUrl } : {}),
+      ...(savedUpload.idFilesUploadedAt
+        ? { idFilesUploadedAt: savedUpload.idFilesUploadedAt }
+        : {}),
+    }
+  })
 }
 
 export const listByStudentId = query({
@@ -38,7 +76,7 @@ export const listByStudentId = query({
       .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', studentId))
       .collect()
 
-    return await Promise.all(records.map((record) => withFrontIdUrl(ctx, record)))
+    return shareSchoolIdUploadsAcrossDuplicates(records)
   },
 })
 
@@ -96,14 +134,35 @@ function getCurrentSchoolYear() {
   return `${startYear}-${startYear + 1}`
 }
 
+function findPreferredRecord(records) {
+  return [...records].sort((firstRecord, secondRecord) => {
+    const fileDifference =
+      Number(Boolean(secondRecord.frontIdUrl || secondRecord.frontIdStorageId)) -
+      Number(Boolean(firstRecord.frontIdUrl || firstRecord.frontIdStorageId))
+
+    if (fileDifference !== 0) return fileDifference
+
+    const uploadDifference =
+      getSchoolIdUploadTimestamp(secondRecord) - getSchoolIdUploadTimestamp(firstRecord)
+
+    if (uploadDifference !== 0) return uploadDifference
+
+    return (secondRecord._creationTime ?? 0) - (firstRecord._creationTime ?? 0)
+  })[0]
+}
+
 function findTargetStudentRecord(records, requestedSchoolYear) {
   if (requestedSchoolYear) {
-    const requestedRecord = records.find((record) => record.schoolYear === requestedSchoolYear)
+    const requestedRecord = findPreferredRecord(
+      records.filter((record) => record.schoolYear === requestedSchoolYear),
+    )
     if (requestedRecord) return requestedRecord
   }
 
   const currentSchoolYear = getCurrentSchoolYear()
-  const currentRecord = records.find((record) => record.schoolYear === currentSchoolYear)
+  const currentRecord = findPreferredRecord(
+    records.filter((record) => record.schoolYear === currentSchoolYear),
+  )
   if (currentRecord) return currentRecord
 
   return [...records].sort((firstRecord, secondRecord) => {
@@ -112,7 +171,7 @@ function findTargetStudentRecord(records, requestedSchoolYear) {
 
     if (schoolYearDifference !== 0) return schoolYearDifference
 
-    return (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
+    return getSchoolIdUploadTimestamp(secondRecord) - getSchoolIdUploadTimestamp(firstRecord)
   })[0]
 }
 

@@ -52,7 +52,11 @@ function isValidPhoneNumber(phoneNumber) {
 
 function findCurrentStudentRecord(records) {
   const currentSchoolYear = getCurrentSchoolYear()
-  const currentRecord = records.find((record) => record.schoolYear === currentSchoolYear)
+  const currentRecord = records
+    .filter((record) => record.schoolYear === currentSchoolYear)
+    .sort((firstRecord, secondRecord) => {
+      return (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
+    })[0]
 
   if (currentRecord) return currentRecord
 
@@ -62,7 +66,11 @@ function findCurrentStudentRecord(records) {
 
     if (schoolYearDifference !== 0) return schoolYearDifference
 
-    return (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
+    const uploadDifference = (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
+
+    if (uploadDifference !== 0) return uploadDifference
+
+    return (secondRecord._creationTime ?? 0) - (firstRecord._creationTime ?? 0)
   })[0]
 }
 
@@ -683,7 +691,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
           </div>
 
           <div className="student-field student-field--with-action student-field--full">
-            <label htmlFor="current-address">Current Address</label>
+            <label htmlFor="current-address">Your Home Permanent Address ( Ex. Purok number, Brgy, City/Municipality, Province )</label>
             <textarea
               id="current-address"
               placeholder="Enter your current address"

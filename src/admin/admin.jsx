@@ -452,6 +452,9 @@ function Admin({ onLogout }) {
   const [selectedUnifastCourse, setSelectedUnifastCourse] = useState('')
   const [isAddRecordOpen, setIsAddRecordOpen] = useState(false)
   const [isBatchExportOpen, setIsBatchExportOpen] = useState(false)
+  const [selectedBatchExport, setSelectedBatchExport] = useState('')
+  const [selectedBatchExportYear, setSelectedBatchExportYear] = useState('')
+  const [selectedBatchExportSemester, setSelectedBatchExportSemester] = useState('')
   const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false)
   const [isSchoolIdDownloadOpen, setIsSchoolIdDownloadOpen] = useState(false)
   const [selectedSchoolIdDownloadYear, setSelectedSchoolIdDownloadYear] = useState('')
@@ -613,6 +616,74 @@ function Admin({ onLogout }) {
       }
     })
   }, [availableBatches, granteeRows, studentAccountRows])
+
+  const selectedBatchExportRecords = useMemo(() => {
+    if (!selectedBatchExport) return []
+
+    return granteeRows.filter((record) => {
+      return String(record.batchId ?? '').trim() === selectedBatchExport
+    })
+  }, [granteeRows, selectedBatchExport])
+
+  const batchExportSchoolYearRows = useMemo(() => {
+    const yearMap = new Map()
+
+    selectedBatchExportRecords.forEach((record) => {
+      const schoolYear = String(record.schoolYear ?? '').trim()
+      if (!schoolYear) return
+
+      const yearRecords = yearMap.get(schoolYear) ?? []
+      yearRecords.push(record)
+      yearMap.set(schoolYear, yearRecords)
+    })
+
+    return Array.from(yearMap, ([schoolYear, records]) => {
+      const studentIds = new Set(
+        records.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
+      )
+      const accountCount = studentAccountRows.filter((account) => {
+        return studentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
+      }).length
+
+      return { accountCount, recordCount: records.length, schoolYear }
+    }).sort((firstRow, secondRow) => secondRow.schoolYear.localeCompare(firstRow.schoolYear))
+  }, [selectedBatchExportRecords, studentAccountRows])
+
+  const selectedBatchExportYearRecords = useMemo(() => {
+    if (!selectedBatchExportYear) return []
+
+    return selectedBatchExportRecords.filter((record) => {
+      return String(record.schoolYear ?? '').trim() === selectedBatchExportYear
+    })
+  }, [selectedBatchExportRecords, selectedBatchExportYear])
+
+  const batchExportSemesterRows = useMemo(() => {
+    const semesterMap = new Map()
+
+    selectedBatchExportYearRecords.forEach((record) => {
+      const semester = String(record.semester ?? '').trim()
+      if (!semester) return
+
+      const semesterRecords = semesterMap.get(semester) ?? []
+      semesterRecords.push(record)
+      semesterMap.set(semester, semesterRecords)
+    })
+
+    return Array.from(semesterMap, ([semester, records]) => {
+      const studentIds = new Set(
+        records.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
+      )
+      const accountCount = studentAccountRows.filter((account) => {
+        return studentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
+      }).length
+
+      return { accountCount, recordCount: records.length, semester }
+    }).sort((firstRow, secondRow) => firstRow.semester.localeCompare(secondRow.semester))
+  }, [selectedBatchExportYearRecords, studentAccountRows])
+
+  const selectedBatchExportSummary = batchExportSemesterRows.find(
+    (row) => row.semester === selectedBatchExportSemester,
+  )
 
   const unifastCourseRows = useMemo(() => {
     return unifastPortalCourses.map((course) => {
@@ -1092,19 +1163,25 @@ function Admin({ onLogout }) {
     }
   }
 
-  const exportBatchInfoCsv = (batchId) => {
+  const exportBatchInfoCsv = (batchId, schoolYear, semester) => {
     if (studentAccounts === undefined) {
       window.alert('Please wait while student account data is loading.')
       return
     }
 
     const selectedBatch = String(batchId ?? '').trim()
+    const selectedSchoolYear = String(schoolYear ?? '').trim()
+    const selectedSemester = String(semester ?? '').trim()
     const batchRecords = granteeRows.filter((record) => {
-      return String(record.batchId ?? '').trim() === selectedBatch
+      return (
+        String(record.batchId ?? '').trim() === selectedBatch &&
+        String(record.schoolYear ?? '').trim() === selectedSchoolYear &&
+        String(record.semester ?? '').trim() === selectedSemester
+      )
     })
 
     if (batchRecords.length === 0) {
-      window.alert('No records found for this batch.')
+      window.alert('No records found for this batch, School Year, and semester.')
       return
     }
 
@@ -1124,6 +1201,7 @@ function Admin({ onLogout }) {
         'First Name',
         'MI.',
         'School Year',
+        'Semester',
         'Status',
         'Email Account',
         'Phone No.',
@@ -1141,6 +1219,7 @@ function Admin({ onLogout }) {
           record.firstName ?? '',
           record.middleInitial ?? '',
           record.schoolYear ?? '',
+          record.semester ?? '',
           record.status ?? '',
           account?.email ?? '',
           account?.phoneNumber ?? '',
@@ -1151,8 +1230,10 @@ function Admin({ onLogout }) {
     ]
 
     const safeBatch = sanitizeDownloadPart(selectedBatch, 'batch')
-    downloadCsvFile(`batch-info-${safeBatch}.csv`, csvRows)
-    setIsBatchExportOpen(false)
+    const safeSchoolYear = sanitizeDownloadPart(selectedSchoolYear, 'school-year')
+    const safeSemester = sanitizeDownloadPart(selectedSemester, 'semester')
+    downloadCsvFile(`batch-info-${safeBatch}-${safeSchoolYear}-${safeSemester}.csv`, csvRows)
+    closeBatchExportModal()
   }
 
   const exportUnifastCourseCsv = async (course) => {
@@ -1406,6 +1487,21 @@ function Admin({ onLogout }) {
     setSelectedUnifastCourse('')
     setCourseApplicantSearch('')
     setCurrentCourseApplicantPage(1)
+  }
+
+  const openBatchExportModal = () => {
+    setCurrentBatchExportPage(1)
+    setSelectedBatchExport('')
+    setSelectedBatchExportYear('')
+    setSelectedBatchExportSemester('')
+    setIsBatchExportOpen(true)
+  }
+
+  const closeBatchExportModal = () => {
+    setIsBatchExportOpen(false)
+    setSelectedBatchExport('')
+    setSelectedBatchExportYear('')
+    setSelectedBatchExportSemester('')
   }
 
   const openBatchDeleteModal = () => {
@@ -1762,6 +1858,9 @@ function Admin({ onLogout }) {
         setCurrentCourseApplicantPage(1)
         setIsAddRecordOpen(false)
         setIsBatchExportOpen(false)
+        setSelectedBatchExport('')
+        setSelectedBatchExportYear('')
+        setSelectedBatchExportSemester('')
         setIsBatchDeleteOpen(false)
         setSelectedDeleteBatch(null)
         setIsSchoolIdDownloadOpen(false)
@@ -1851,10 +1950,7 @@ function Admin({ onLogout }) {
               <button
                 className="admin-button admin-button--secondary"
                 disabled={availableBatches.length === 0}
-                onClick={() => {
-                  setCurrentBatchExportPage(1)
-                  setIsBatchExportOpen(true)
-                }}
+                onClick={openBatchExportModal}
                 title={
                   availableBatches.length === 0
                     ? 'No batches available to export'
@@ -2310,7 +2406,7 @@ function Admin({ onLogout }) {
         </div>
       )}
 
-      {isBatchExportOpen && (
+      {isBatchExportOpen && !selectedBatchExport && (
         <div
           aria-labelledby="admin-batch-export-title"
           aria-modal="true"
@@ -2320,7 +2416,7 @@ function Admin({ onLogout }) {
           <button
             aria-label="Close batch export modal"
             className="admin-modal-backdrop"
-            onClick={() => setIsBatchExportOpen(false)}
+            onClick={closeBatchExportModal}
             type="button"
           />
 
@@ -2335,7 +2431,7 @@ function Admin({ onLogout }) {
               <button
                 aria-label="Close batch export"
                 className="admin-modal-close"
-                onClick={() => setIsBatchExportOpen(false)}
+                onClick={closeBatchExportModal}
                 type="button"
               >
                 <span className="material-symbols-outlined">close</span>
@@ -2349,7 +2445,7 @@ function Admin({ onLogout }) {
                     className="admin-school-year-button"
                     disabled={studentAccounts === undefined}
                     key={batchId}
-                    onClick={() => exportBatchInfoCsv(batchId)}
+                    onClick={() => setSelectedBatchExport(batchId)}
                     type="button"
                   >
                     <span>{batchId}</span>
@@ -2411,7 +2507,7 @@ function Admin({ onLogout }) {
             <div className="admin-upload-actions">
               <button
                 className="admin-button admin-button--secondary"
-                onClick={() => setIsBatchExportOpen(false)}
+                onClick={closeBatchExportModal}
                 type="button"
               >
                 Cancel
@@ -2420,6 +2516,206 @@ function Admin({ onLogout }) {
           </section>
         </div>
       )}
+
+      {isBatchExportOpen && selectedBatchExport && !selectedBatchExportYear && (
+        <div
+          aria-labelledby="admin-batch-export-year-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School Year selection"
+            className="admin-modal-backdrop"
+            onClick={closeBatchExportModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Batch {selectedBatchExport}</p>
+                <h2 id="admin-batch-export-year-title">Choose School Year</h2>
+                <p>Select the School Year to include in this batch information CSV.</p>
+              </div>
+
+              <button
+                aria-label="Close School Year selection"
+                className="admin-modal-close"
+                onClick={closeBatchExportModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {batchExportSchoolYearRows.map(({ accountCount, recordCount, schoolYear }) => (
+                <button
+                  className="admin-school-year-button"
+                  key={schoolYear}
+                  onClick={() => setSelectedBatchExportYear(schoolYear)}
+                  type="button"
+                >
+                  <span>{schoolYear}</span>
+                  <strong>{recordCount} records / {accountCount} accounts</strong>
+                </button>
+              ))}
+
+              {batchExportSchoolYearRows.length === 0 && (
+                <div className="admin-modal-empty-state">
+                  No School Year information was found for this batch.
+                </div>
+              )}
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={() => setSelectedBatchExport('')}
+                type="button"
+              >
+                Back
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isBatchExportOpen &&
+        selectedBatchExport &&
+        selectedBatchExportYear &&
+        !selectedBatchExportSemester && (
+          <div
+            aria-labelledby="admin-batch-export-semester-title"
+            aria-modal="true"
+            className="admin-modal-overlay"
+            role="dialog"
+          >
+            <button
+              aria-label="Close semester selection"
+              className="admin-modal-backdrop"
+              onClick={closeBatchExportModal}
+              type="button"
+            />
+
+            <section className="admin-modal-card admin-modal-card--compact">
+              <div className="admin-modal-header">
+                <div>
+                  <p className="admin-modal-kicker">
+                    Batch {selectedBatchExport} · {selectedBatchExportYear}
+                  </p>
+                  <h2 id="admin-batch-export-semester-title">Choose Semester</h2>
+                  <p>Select the semester to include in the downloaded batch information.</p>
+                </div>
+
+                <button
+                  aria-label="Close semester selection"
+                  className="admin-modal-close"
+                  onClick={closeBatchExportModal}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              <div className="admin-school-year-downloads">
+                {batchExportSemesterRows.map(({ accountCount, recordCount, semester }) => (
+                  <button
+                    className="admin-school-year-button"
+                    key={semester}
+                    onClick={() => setSelectedBatchExportSemester(semester)}
+                    type="button"
+                  >
+                    <span>{semester}</span>
+                    <strong>{recordCount} records / {accountCount} accounts</strong>
+                  </button>
+                ))}
+
+                {batchExportSemesterRows.length === 0 && (
+                  <div className="admin-modal-empty-state">
+                    No semester information was found for this School Year.
+                  </div>
+                )}
+              </div>
+
+              <div className="admin-upload-actions">
+                <button
+                  className="admin-button admin-button--secondary"
+                  onClick={() => setSelectedBatchExportYear('')}
+                  type="button"
+                >
+                  Back
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+      {isBatchExportOpen &&
+        selectedBatchExport &&
+        selectedBatchExportYear &&
+        selectedBatchExportSemester && (
+          <div
+            aria-labelledby="admin-batch-export-confirm-title"
+            aria-modal="true"
+            className="admin-modal-overlay admin-confirm-overlay"
+            role="alertdialog"
+          >
+            <button
+              aria-label="Cancel batch information download"
+              className="admin-modal-backdrop"
+              onClick={() => setSelectedBatchExportSemester('')}
+              type="button"
+            />
+
+            <section className="admin-modal-card admin-confirm-card">
+              <div className="admin-confirm-card__icon" aria-hidden="true">
+                <span className="material-symbols-outlined">download</span>
+              </div>
+
+              <div className="admin-confirm-card__copy">
+                <p className="admin-modal-kicker">Batch CSV Export</p>
+                <h2 id="admin-batch-export-confirm-title">Download this batch information?</h2>
+                <p>
+                  Are you sure you want to download Batch <strong>{selectedBatchExport}</strong>,
+                  School Year <strong>{selectedBatchExportYear}</strong>,{' '}
+                  <strong>{selectedBatchExportSemester}</strong>?
+                </p>
+              </div>
+
+              <div className="admin-confirm-card__notice">
+                <span className="material-symbols-outlined">description</span>
+                The CSV will contain {selectedBatchExportSummary?.recordCount ?? 0} records and{' '}
+                {selectedBatchExportSummary?.accountCount ?? 0} matched student accounts.
+              </div>
+
+              <div className="admin-confirm-card__actions">
+                <button
+                  className="admin-button admin-button--secondary"
+                  onClick={() => setSelectedBatchExportSemester('')}
+                  type="button"
+                >
+                  No, Go Back
+                </button>
+
+                <button
+                  className="admin-button admin-button--primary"
+                  onClick={() =>
+                    exportBatchInfoCsv(
+                      selectedBatchExport,
+                      selectedBatchExportYear,
+                      selectedBatchExportSemester,
+                    )
+                  }
+                  type="button"
+                >
+                  Yes, Download CSV
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
 
       {isBatchDeleteOpen && (
         <div
