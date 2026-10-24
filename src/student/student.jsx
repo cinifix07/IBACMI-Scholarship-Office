@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import sampleSchoolIdFormat from '../assets/samp.jpg'
+import StudentInbox from './StudentInbox.jsx'
 import './student.css'
 
 const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
@@ -243,6 +244,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const [addressSuccess, setAddressSuccess] = useState('')
   const [isSavingCurrentAddress, setIsSavingCurrentAddress] = useState(false)
   const updateStudentFacebookProfile = useMutation(api.adminAuth.updateStudentFacebookProfile)
+  const logoutSupportSession = useMutation(api.support.logout)
   const [facebookProfileUrl, setFacebookProfileUrl] = useState(studentSession?.facebookProfileUrl ?? '')
   const [facebookError, setFacebookError] = useState('')
   const [facebookSuccess, setFacebookSuccess] = useState('')
@@ -307,9 +309,13 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     }
   }, [uploadSuccess])
 
-  const handleLogout = () => {
-    if (typeof onLogout === 'function') {
-      onLogout()
+  const handleLogout = async () => {
+    try {
+      if (studentSession?.sessionToken) await logoutSupportSession({ sessionToken: studentSession.sessionToken })
+    } catch {
+      // Clear the browser session even when revocation cannot reach Convex.
+    } finally {
+      if (typeof onLogout === 'function') onLogout()
     }
   }
 
@@ -621,6 +627,8 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
           <h2 id="student-title">Unifast Portal</h2>
           <p>Please ensure all details match your official documents for successful validation.</p>
         </section>
+
+        {hasStudentSession && <StudentInbox studentSession={studentSession} />}
 
         {!hasStudentSession && (
           <div className="student-state-box">

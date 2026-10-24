@@ -11,7 +11,8 @@ const STUDENT_SESSION_STORAGE_KEY = 'unifast.studentSession'
 function getStoredAdminSession() {
   try {
     const storedSession = window.localStorage.getItem(ADMIN_SESSION_STORAGE_KEY)
-    return storedSession ? JSON.parse(storedSession) : null
+    const session = storedSession ? JSON.parse(storedSession) : null
+    return session?.sessionToken ? session : null
   } catch {
     return null
   }
@@ -28,7 +29,8 @@ function getStoredStudentViewOpen() {
 function getStoredStudentSession() {
   try {
     const storedSession = window.localStorage.getItem(STUDENT_SESSION_STORAGE_KEY)
-    return storedSession ? JSON.parse(storedSession) : null
+    const session = storedSession ? JSON.parse(storedSession) : null
+    return session?.sessionToken ? session : null
   } catch {
     return null
   }
@@ -37,7 +39,9 @@ function getStoredStudentSession() {
 function App() {
   const [adminSession, setAdminSession] = useState(getStoredAdminSession)
   const [studentSession, setStudentSession] = useState(getStoredStudentSession)
-  const [isStudentViewOpen, setIsStudentViewOpen] = useState(getStoredStudentViewOpen)
+  const [isStudentViewOpen, setIsStudentViewOpen] = useState(
+    () => getStoredStudentViewOpen() && Boolean(getStoredStudentSession()?.sessionToken),
+  )
 
   const handleAdminLogout = () => {
     setAdminSession(null)

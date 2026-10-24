@@ -33,10 +33,21 @@ export const get = query({
 
 export const setReceivingApplicants = mutation({
   args: {
+    sessionToken: v.string(),
     isReceivingApplicants: v.boolean(),
     applicationYear: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    if (!args.sessionToken || args.sessionToken.length > 100) throw new Error('Please sign in again to continue.')
+    const session = await ctx.db.query('supportSessions')
+      .withIndex('by_token', (q) => q.eq('token', args.sessionToken)).first()
+    if (!session || session.role !== 'admin' || session.expiresAt < Date.now()) {
+      throw new Error('Your administrator session is invalid or expired. Please sign in again.')
+    }
+    const admin = await ctx.db.get(session.adminId)
+    if (!admin || admin.status !== 'active' || admin.role !== 'admin') {
+      throw new Error('Your administrator account is no longer active.')
+    }
     const existingSettings = await getPortalSettings(ctx)
     const now = Date.now()
     const applicationYear = args.applicationYear?.trim() ?? ''

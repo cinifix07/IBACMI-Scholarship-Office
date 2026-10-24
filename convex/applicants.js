@@ -12,7 +12,46 @@ async function logActivity(ctx, log) {
 }
 
 const PORTAL_SETTINGS_KEY = 'unifast-applicants'
+const APPLICANT_PDF_MAX_SIZE = 10 * 1024 * 1024
+const TES_PROGRAM_OPTIONS = [
+  'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
+  'BACHELOR OF SCIENCE IN ENTREPRENEURSHIP',
+  'BACHELOR OF SCIENCE IN CRIMINOLOGY',
+  'BACHELOR OF ELEMENTARY EDUCATION',
+  'BACHELOR OF EARLY CHILDHOOD EDUCATION',
+  'BACHELOR OF SCIENCE IN HOSPITALITY MANAGEMENT',
+  'BACHELOR OF PUBLIC ADMINISTRATION',
+]
+const TES_PROGRAMS = new Set(TES_PROGRAM_OPTIONS)
 
+async function requireAdminSession(ctx, token) {
+  if (!token || token.length > 100) throw new Error('Please sign in again to continue.')
+  const session = await ctx.db.query('supportSessions').withIndex('by_token', (q) => q.eq('token', token)).first()
+  if (!session || session.role !== 'admin' || session.expiresAt < Date.now()) throw new Error('Your administrator session is invalid or expired.')
+  const admin = await ctx.db.get(session.adminId)
+  if (!admin || admin.status !== 'active' || admin.role !== 'admin') throw new Error('Your administrator account is no longer active.')
+  return admin
+}
+
+function isIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value && value <= new Date().toISOString().slice(0, 10)
+}
+
+async function validateStoredPdf(ctx, storageId, required) {
+  if (!storageId) {
+    if (required) throw new Error('PSA Birth Certificate and School ID PDF are required.')
+    return
+  }
+  const metadata = await ctx.db.system.get('_storage', storageId)
+  if (!metadata || !metadata.size || metadata.size > APPLICANT_PDF_MAX_SIZE) {
+    throw new Error('Each PDF must be between 1 byte and 10 MB.')
+  }
+  if (metadata.contentType !== 'application/pdf') {
+    throw new Error('Uploaded documents must be PDF files.')
+  }
+}
 async function getPortalSettings(ctx) {
   return await ctx.db
     .query('applicantPortalSettings')
@@ -34,13 +73,8 @@ function isValidPhoneNumber(phoneNumber) {
   return /^09\d{9}$/.test(normalizedPhone) || /^\+639\d{9}$/.test(normalizedPhone)
 }
 
-function isGoogleDriveFileUrl(value) {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' && url.hostname === 'drive.google.com'
-  } catch {
-    return false
-  }
+function isValidSchoolId(studentId) {
+  return /^[A-Za-z0-9-]{4,30}$/.test(studentId)
 }
 
 function getGoogleDriveFileId(fileUrl) {
@@ -57,29 +91,29 @@ function getGoogleDriveFileId(fileUrl) {
 
 function trimApplicant(args) {
   return {
-    studentId: args.studentId.trim(),
-    lastName: args.lastName.trim(),
-    firstName: args.firstName.trim(),
-    extensionName: args.extensionName.trim(),
-    middleName: args.middleName.trim(),
-    gender: args.gender.trim(),
-    birthDate: args.birthDate.trim(),
-    course: args.course.trim(),
-    year: args.year.trim(),
-    fatherLastName: args.fatherLastName.trim(),
-    fatherFirstName: args.fatherFirstName.trim(),
-    fatherMiddleName: args.fatherMiddleName.trim(),
-    motherLastName: args.motherLastName.trim(),
-    motherFirstName: args.motherFirstName.trim(),
-    motherMiddleName: args.motherMiddleName.trim(),
-    address: args.address.trim(),
-    zipCode: args.zipCode.trim(),
-    pwdId: args.pwdId.trim(),
-    mobileNumber: normalizePhoneNumber(args.mobileNumber),
-    emailAddress: args.emailAddress.trim().toLowerCase(),
-    psaFileName: args.psaFileName.trim(),
-    schoolIdFileName: args.schoolIdFileName.trim(),
-    corFileName: args.corFileName.trim(),
+    studentId: String(args.studentId ?? '').trim(),
+    lastName: String(args.lastName ?? '').trim(),
+    firstName: String(args.firstName ?? '').trim(),
+    extensionName: String(args.extensionName ?? '').trim(),
+    middleName: String(args.middleName ?? '').trim(),
+    gender: String(args.gender ?? '').trim(),
+    birthDate: String(args.birthDate ?? '').trim(),
+    course: String(args.course ?? '').trim(),
+    year: String(args.year ?? '').trim(),
+    fatherLastName: String(args.fatherLastName ?? '').trim(),
+    fatherFirstName: String(args.fatherFirstName ?? '').trim(),
+    fatherMiddleName: String(args.fatherMiddleName ?? '').trim(),
+    motherLastName: String(args.motherLastName ?? '').trim(),
+    motherFirstName: String(args.motherFirstName ?? '').trim(),
+    motherMiddleName: String(args.motherMiddleName ?? '').trim(),
+    address: String(args.address ?? '').trim(),
+    zipCode: String(args.zipCode ?? '').trim(),
+    pwdId: String(args.pwdId ?? '').trim(),
+    mobileNumber: normalizePhoneNumber(String(args.mobileNumber ?? '')),
+    emailAddress: String(args.emailAddress ?? '').trim().toLowerCase(),
+    psaFileName: String(args.psaFileName ?? '').trim(),
+    schoolIdFileName: String(args.schoolIdFileName ?? '').trim(),
+    corFileName: String(args.corFileName ?? '').trim(),
     pwdIdFileName: args.pwdIdFileName?.trim() ?? '',
     fourPsFileName: args.fourPsFileName?.trim() ?? '',
   }
@@ -111,6 +145,15 @@ function createApplicantFormDataJson(applicant, applicationYear) {
 
   addOptionalField(student, 'extensionName', applicant.extensionName)
   addOptionalField(student, 'middleName', applicant.middleName)
+  addOptionalField(student, 'sexCode', applicant.sexCode)
+  addOptionalField(student, 'yearLevelCode', applicant.yearLevelCode)
+  addOptionalField(student, 'lrn', applicant.lrn)
+  addOptionalField(student, 'philSysIdNumber', applicant.philSysIdNumber)
+  addOptionalField(student, 'fourPsIdNumber', applicant.fourPsIdNumber)
+  addOptionalField(contact, 'streetBarangay', applicant.streetBarangay)
+  addOptionalField(contact, 'cityMunicipality', applicant.cityMunicipality)
+  addOptionalField(contact, 'province', applicant.province)
+  addOptionalField(contact, 'region', applicant.region)
   addOptionalField(father, 'lastName', applicant.fatherLastName)
   addOptionalField(father, 'firstName', applicant.fatherFirstName)
   addOptionalField(father, 'middleName', applicant.fatherMiddleName)
@@ -156,22 +199,168 @@ function createApplicantFormDataJson(applicant, applicationYear) {
     applicationYear,
     student,
     parents: {
+      fatherInformationUnavailable: applicant.fatherInformationUnavailable,
+      motherInformationUnavailable: applicant.motherInformationUnavailable,
       father,
       mother,
     },
     contact,
+    additional: {
+      hasDisability: applicant.hasDisability,
+      ...(applicant.disabilityType ? { disabilityType: applicant.disabilityType } : {}),
+      soloParentDependent: applicant.soloParentDependent,
+      firstGeneration: applicant.firstGeneration,
+      isIndigenous: applicant.isIndigenous,
+      ...(applicant.indigenousGroup ? { indigenousGroup: applicant.indigenousGroup } : {}),
+      applicantClassification: applicant.applicantClassification,
+    },
     documents,
   }
 }
 
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken)
     const applicants = await ctx.db.query('applicants').collect()
-
-    return applicants.sort((firstApplicant, secondApplicant) => {
+    const sortedApplicants = applicants.sort((firstApplicant, secondApplicant) => {
       return secondApplicant.submittedAt - firstApplicant.submittedAt
     })
+    return await Promise.all(sortedApplicants.map(async (applicant) => ({
+      ...applicant,
+      psaFileUrl: applicant.psaFileUrl ?? (applicant.psaFileStorageId ? await ctx.storage.getUrl(applicant.psaFileStorageId) : null),
+      schoolIdFileUrl: applicant.schoolIdFileUrl ?? (applicant.schoolIdFileStorageId ? await ctx.storage.getUrl(applicant.schoolIdFileStorageId) : null),
+      corFileUrl: applicant.corFileUrl ?? (applicant.corFileStorageId ? await ctx.storage.getUrl(applicant.corFileStorageId) : null),
+      pwdIdFileUrl: applicant.pwdIdFileUrl ?? (applicant.pwdIdFileStorageId ? await ctx.storage.getUrl(applicant.pwdIdFileStorageId) : null),
+      fourPsFileUrl: applicant.fourPsFileUrl ?? (applicant.fourPsFileStorageId ? await ctx.storage.getUrl(applicant.fourPsFileStorageId) : null),
+    })))
+  },
+})
+
+function getApplicantYearForExport(applicant) {
+  const applicationYear = String(applicant.applicationYear ?? '').trim()
+  if (applicationYear) return applicationYear
+  return applicant.submittedAt ? String(new Date(applicant.submittedAt).getFullYear()) : ''
+}
+
+function getApplicantCourseForExport(applicant) {
+  return String(applicant.course ?? applicant.program ?? applicant.degreeProgram ?? '').trim()
+}
+
+function getApplicantExportCourseMap(courses) {
+  const selected = new Set(courses.map((course) => String(course ?? '').trim().toLowerCase()))
+  const canonicalCourses = TES_PROGRAM_OPTIONS.filter((course) => selected.has(course.toLowerCase()))
+  if (!canonicalCourses.length || canonicalCourses.length !== selected.size || courses.length !== selected.size) {
+    throw new Error('Choose one or more valid TES courses to export.')
+  }
+  return new Map(canonicalCourses.map((course) => [course.toLowerCase(), course]))
+}
+
+export const getCourseCounts = query({
+  args: { sessionToken: v.string(), applicationYear: v.string() },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken)
+    const applicationYear = args.applicationYear.trim()
+    if (!/^\d{4}$/.test(applicationYear)) throw new Error('Choose a valid application year.')
+    const counts = Object.fromEntries(TES_PROGRAM_OPTIONS.map((course) => [course, 0]))
+    const applicants = await ctx.db.query('applicants').collect()
+    for (const applicant of applicants) {
+      const course = getApplicantCourseForExport(applicant)
+      const canonicalCourse = TES_PROGRAM_OPTIONS.find((option) => option.toLowerCase() === course.toLowerCase())
+      if (getApplicantYearForExport(applicant) === applicationYear && canonicalCourse) counts[canonicalCourse] += 1
+    }
+    return {
+      counts,
+      totalCount: Object.values(counts).reduce((total, count) => total + count, 0),
+    }
+  },
+})
+
+export const exportApplicantRows = internalQuery({
+  args: {
+    sessionToken: v.string(),
+    applicationYear: v.string(),
+    courses: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken)
+    const applicationYear = args.applicationYear.trim()
+    if (!/^\d{4}$/.test(applicationYear)) throw new Error('Choose a valid application year.')
+    if (!Array.isArray(args.courses) || args.courses.length > TES_PROGRAM_OPTIONS.length) {
+      throw new Error('Choose valid courses to export.')
+    }
+    const courseMap = getApplicantExportCourseMap(args.courses)
+    const applicants = await ctx.db.query('applicants').collect()
+    return applicants
+      .filter((applicant) => {
+        return getApplicantYearForExport(applicant) === applicationYear &&
+          courseMap.has(getApplicantCourseForExport(applicant).toLowerCase())
+      })
+      .sort((first, second) => second.submittedAt - first.submittedAt)
+      .map((applicant) => ({
+        applicationYear: getApplicantYearForExport(applicant),
+        course: getApplicantCourseForExport(applicant),
+        studentId: applicant.studentId,
+        lrn: applicant.lrn,
+        philSysIdNumber: applicant.philSysIdNumber,
+        fourPsIdNumber: applicant.fourPsIdNumber,
+        lastName: applicant.lastName,
+        firstName: applicant.firstName,
+        extensionName: applicant.extensionName,
+        middleName: applicant.middleName,
+        gender: applicant.gender,
+        sexCode: applicant.sexCode,
+        birthDate: applicant.birthDate,
+        year: applicant.year,
+        yearLevelCode: applicant.yearLevelCode,
+        fatherLastName: applicant.fatherLastName,
+        fatherFirstName: applicant.fatherFirstName,
+        fatherMiddleName: applicant.fatherMiddleName,
+        motherLastName: applicant.motherLastName,
+        motherFirstName: applicant.motherFirstName,
+        motherMiddleName: applicant.motherMiddleName,
+        address: applicant.address,
+        streetBarangay: applicant.streetBarangay,
+        cityMunicipality: applicant.cityMunicipality,
+        province: applicant.province,
+        region: applicant.region,
+        zipCode: applicant.zipCode,
+        pwdId: applicant.pwdId,
+        hasDisability: applicant.hasDisability,
+        disabilityType: applicant.disabilityType,
+        soloParentDependent: applicant.soloParentDependent,
+        firstGeneration: applicant.firstGeneration,
+        isIndigenous: applicant.isIndigenous,
+        indigenousGroup: applicant.indigenousGroup,
+        applicantClassification: applicant.applicantClassification,
+        pwdIdFileName: applicant.pwdIdFileName,
+        fourPsFileName: applicant.fourPsFileName,
+        corFileName: applicant.corFileName,
+        mobileNumber: applicant.mobileNumber,
+        emailAddress: applicant.emailAddress,
+        status: applicant.status,
+        submittedAt: applicant.submittedAt,
+      }))
+  },
+})
+
+export const exportCourseApplicants = action({
+  args: {
+    sessionToken: v.string(),
+    applicationYear: v.string(),
+    courses: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(internal.applicants.exportApplicantRows, args)
+  },
+})
+
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const portalSettings = await getPortalSettings(ctx)
+    if (!portalSettings?.isReceivingApplicants) throw new Error('The UNIFAST portal is closed for applicants right now.')
+    return await ctx.storage.generateUploadUrl()
   },
 })
 
@@ -444,41 +633,64 @@ export const create = mutation({
     studentId: v.string(),
     lastName: v.string(),
     firstName: v.string(),
-    extensionName: v.string(),
-    middleName: v.string(),
+    extensionName: v.optional(v.string()),
+    middleName: v.optional(v.string()),
     gender: v.string(),
+    sexCode: v.optional(v.union(v.literal(0), v.literal(1))),
     birthDate: v.string(),
     course: v.string(),
     year: v.string(),
-    fatherLastName: v.string(),
-    fatherFirstName: v.string(),
-    fatherMiddleName: v.string(),
-    motherLastName: v.string(),
-    motherFirstName: v.string(),
-    motherMiddleName: v.string(),
+    yearLevelCode: v.optional(v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4), v.literal(5), v.literal(6))),
+    lrn: v.optional(v.string()),
+    philSysIdNumber: v.optional(v.string()),
+    fourPsIdNumber: v.optional(v.string()),
+    fatherLastName: v.optional(v.string()),
+    fatherFirstName: v.optional(v.string()),
+    fatherMiddleName: v.optional(v.string()),
+    motherLastName: v.optional(v.string()),
+    motherFirstName: v.optional(v.string()),
+    motherMiddleName: v.optional(v.string()),
+    fatherInformationUnavailable: v.optional(v.boolean()),
+    motherInformationUnavailable: v.optional(v.boolean()),
     address: v.string(),
-    zipCode: v.string(),
-    pwdId: v.string(),
+    streetBarangay: v.optional(v.string()),
+    cityMunicipality: v.optional(v.string()),
+    province: v.optional(v.string()),
+    region: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    pwdId: v.optional(v.string()),
+    hasDisability: v.optional(v.boolean()),
+    disabilityType: v.optional(v.string()),
+    soloParentDependent: v.optional(v.union(v.literal(0), v.literal(1))),
+    firstGeneration: v.optional(v.union(v.literal(0), v.literal(1))),
+    isIndigenous: v.optional(v.boolean()),
+    indigenousGroup: v.optional(v.string()),
+    applicantClassification: v.optional(v.string()),
     mobileNumber: v.string(),
     emailAddress: v.string(),
-    psaFileStorageId: v.optional(v.id('_storage')),
-    psaFileUrl: v.optional(v.string()),
+    psaFileStorageId: v.id('_storage'),
     psaFileName: v.string(),
-    schoolIdFileStorageId: v.optional(v.id('_storage')),
-    schoolIdFileUrl: v.optional(v.string()),
+    schoolIdFileStorageId: v.id('_storage'),
     schoolIdFileName: v.string(),
     corFileStorageId: v.optional(v.id('_storage')),
-    corFileUrl: v.optional(v.string()),
-    corFileName: v.string(),
+    corFileName: v.optional(v.string()),
     pwdIdFileStorageId: v.optional(v.id('_storage')),
-    pwdIdFileUrl: v.optional(v.string()),
     pwdIdFileName: v.optional(v.string()),
     fourPsFileStorageId: v.optional(v.id('_storage')),
-    fourPsFileUrl: v.optional(v.string()),
     fourPsFileName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const applicant = trimApplicant(args)
+    const applicant = {
+      ...trimApplicant({ ...args, extensionName: args.extensionName ?? '', middleName: args.middleName ?? '', fatherLastName: args.fatherLastName ?? '', fatherFirstName: args.fatherFirstName ?? '', fatherMiddleName: args.fatherMiddleName ?? '', motherLastName: args.motherLastName ?? '', motherFirstName: args.motherFirstName ?? '', motherMiddleName: args.motherMiddleName ?? '', zipCode: args.zipCode ?? '', pwdId: args.pwdId ?? '', corFileName: args.corFileName ?? '', pwdIdFileName: args.pwdIdFileName ?? '', fourPsFileName: args.fourPsFileName ?? '' }),
+      lrn: String(args.lrn ?? '').trim(), philSysIdNumber: String(args.philSysIdNumber ?? '').trim(), fourPsIdNumber: String(args.fourPsIdNumber ?? '').trim(),
+      streetBarangay: String(args.streetBarangay ?? '').trim(), cityMunicipality: String(args.cityMunicipality ?? '').trim(), province: String(args.province ?? '').trim(), region: String(args.region ?? '').trim(),
+      fatherInformationUnavailable: Boolean(args.fatherInformationUnavailable), motherInformationUnavailable: Boolean(args.motherInformationUnavailable),
+      hasDisability: Boolean(args.hasDisability), disabilityType: String(args.disabilityType ?? '').trim(), soloParentDependent: args.soloParentDependent ?? 0, firstGeneration: args.firstGeneration ?? 0,
+      isIndigenous: Boolean(args.isIndigenous), indigenousGroup: String(args.indigenousGroup ?? '').trim(), applicantClassification: 'TES Applicant',
+      sexCode: args.sexCode, yearLevelCode: args.yearLevelCode,
+      psaFileName: String(args.psaFileName ?? '').trim(), schoolIdFileName: String(args.schoolIdFileName ?? '').trim(), corFileName: String(args.corFileName ?? '').trim(),
+      pwdIdFileName: String(args.pwdIdFileName ?? '').trim(), fourPsFileName: String(args.fourPsFileName ?? '').trim(),
+    }
     const portalSettings = await getPortalSettings(ctx)
     const applicationYear = portalSettings?.applicationYear ?? String(new Date().getFullYear())
 
@@ -499,15 +711,13 @@ export const create = mutation({
       !applicant.year ||
       !applicant.address ||
       !applicant.mobileNumber ||
-      !applicant.emailAddress ||
-      !applicant.psaFileName ||
-      !applicant.schoolIdFileName ||
-      !applicant.corFileName
+      !applicant.emailAddress || !applicant.streetBarangay || !applicant.cityMunicipality || !applicant.province || !applicant.region || !applicant.zipCode ||
+      !applicant.psaFileName || !applicant.schoolIdFileName
     ) {
       return {
         success: false,
         message:
-          'Student, course, address, mobile number, email, PSA PDF, School ID PDF, and COR / Study Load PDF are required.',
+          'Complete the required student, address, contact, and PSA / School ID document fields.',
       }
     }
 
@@ -525,29 +735,27 @@ export const create = mutation({
       }
     }
 
-    if (
-      (!args.psaFileUrl && !args.psaFileStorageId) ||
-      (!args.schoolIdFileUrl && !args.schoolIdFileStorageId) ||
-      (!args.corFileUrl && !args.corFileStorageId)
-    ) {
-      return {
-        success: false,
-        message: 'PSA PDF, School ID PDF, and COR / Study Load PDF uploads are required.',
-      }
-    }
+    if (!isValidSchoolId(applicant.studentId)) return { success: false, message: 'Student ID must be 4 to 30 letters, numbers, or hyphens.' }
+    if (applicant.lrn && !/^\d{12}$/.test(applicant.lrn)) return { success: false, message: 'LRN must contain exactly 12 digits.' }
+    if (!isIsoDate(applicant.birthDate)) return { success: false, message: 'Enter a valid birthdate that is not in the future.' }
+    if (!TES_PROGRAMS.has(applicant.course)) return { success: false, message: 'Choose a valid TES program.' }
+    if (!['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year', '6th Year'].includes(applicant.year)) return { success: false, message: 'Choose a valid year level.' }
+    if (![0, 1].includes(args.sexCode) || args.yearLevelCode !== Number(applicant.year.slice(0, 1))) return { success: false, message: 'The sex and year-level codes are invalid.' }
+    if (args.soloParentDependent !== 0 && args.soloParentDependent !== 1) return { success: false, message: 'Choose a solo parent dependent response.' }
+    if (args.firstGeneration !== 0 && args.firstGeneration !== 1) return { success: false, message: 'Choose a first-generation response.' }
+    if (typeof args.hasDisability !== 'boolean' || typeof args.isIndigenous !== 'boolean') return { success: false, message: 'Choose responses for disability and Indigenous Peoples group status.' }
+    if ((applicant.fatherInformationUnavailable !== true && (!applicant.fatherLastName || !applicant.fatherFirstName)) || (applicant.motherInformationUnavailable !== true && (!applicant.motherLastName || !applicant.motherFirstName))) return { success: false, message: 'Complete each parent name or select Information unavailable.' }
 
-    const requiredDriveUrls = [args.psaFileUrl, args.schoolIdFileUrl, args.corFileUrl]
-      .filter(Boolean)
-    const optionalDriveUrls = [args.pwdIdFileUrl, args.fourPsFileUrl].filter(Boolean)
+    await validateStoredPdf(ctx, args.psaFileStorageId, true)
+    await validateStoredPdf(ctx, args.schoolIdFileStorageId, true)
+    await validateStoredPdf(ctx, args.corFileStorageId, false)
+    await validateStoredPdf(ctx, args.pwdIdFileStorageId, false)
+    await validateStoredPdf(ctx, args.fourPsFileStorageId, false)
 
-    if (
-      requiredDriveUrls.some((fileUrl) => !isGoogleDriveFileUrl(fileUrl)) ||
-      optionalDriveUrls.some((fileUrl) => !isGoogleDriveFileUrl(fileUrl))
-    ) {
-      return {
-        success: false,
-        message: 'Applicant documents must be uploaded to the configured Google Drive folder.',
-      }
+    const existing = await ctx.db.query('applicants').withIndex('by_student_id_application_year', (q) => q.eq('studentId', applicant.studentId).eq('applicationYear', applicationYear)).first()
+    if (existing) {
+      await Promise.all([args.psaFileStorageId, args.schoolIdFileStorageId, args.corFileStorageId, args.pwdIdFileStorageId, args.fourPsFileStorageId].filter(Boolean).map((storageId) => ctx.storage.delete(storageId)))
+      return { success: false, message: `An application for Student ID ${applicant.studentId} already exists for ${applicationYear}. Contact the Scholarship Office if you need help correcting it.` }
     }
 
     const applicantRecord = {
@@ -555,15 +763,32 @@ export const create = mutation({
       lastName: applicant.lastName,
       firstName: applicant.firstName,
       gender: applicant.gender,
+      sexCode: args.sexCode,
       birthDate: applicant.birthDate,
       course: applicant.course,
       year: applicant.year,
-      address: applicant.address,
+      yearLevelCode: args.yearLevelCode,
+      address: [applicant.streetBarangay, applicant.cityMunicipality, applicant.province, applicant.region].join(', '),
+      streetBarangay: applicant.streetBarangay,
+      cityMunicipality: applicant.cityMunicipality,
+      province: applicant.province,
+      region: applicant.region,
+      lrn: applicant.lrn,
+      philSysIdNumber: applicant.philSysIdNumber,
+      fourPsIdNumber: applicant.fourPsIdNumber,
+      fatherInformationUnavailable: applicant.fatherInformationUnavailable,
+      motherInformationUnavailable: applicant.motherInformationUnavailable,
+      hasDisability: applicant.hasDisability,
+      disabilityType: applicant.disabilityType,
+      soloParentDependent: applicant.soloParentDependent,
+      firstGeneration: applicant.firstGeneration,
+      isIndigenous: applicant.isIndigenous,
+      indigenousGroup: applicant.indigenousGroup,
+      applicantClassification: applicant.applicantClassification,
       mobileNumber: applicant.mobileNumber,
       emailAddress: applicant.emailAddress,
       psaFileName: applicant.psaFileName,
       schoolIdFileName: applicant.schoolIdFileName,
-      corFileName: applicant.corFileName,
       applicationYear,
       formDataJson: createApplicantFormDataJson(applicant, applicationYear),
       status: 'Submitted',
@@ -572,6 +797,10 @@ export const create = mutation({
 
     addOptionalField(applicantRecord, 'extensionName', applicant.extensionName)
     addOptionalField(applicantRecord, 'middleName', applicant.middleName)
+    addOptionalField(applicantRecord, 'fourPsIdNumber', applicant.fourPsIdNumber)
+    addOptionalField(applicantRecord, 'lrn', applicant.lrn)
+    addOptionalField(applicantRecord, 'philSysIdNumber', applicant.philSysIdNumber)
+    addOptionalField(applicantRecord, 'corFileName', applicant.corFileName)
     addOptionalField(applicantRecord, 'fatherLastName', applicant.fatherLastName)
     addOptionalField(applicantRecord, 'fatherFirstName', applicant.fatherFirstName)
     addOptionalField(applicantRecord, 'fatherMiddleName', applicant.fatherMiddleName)
@@ -581,11 +810,8 @@ export const create = mutation({
     addOptionalField(applicantRecord, 'zipCode', applicant.zipCode)
     addOptionalField(applicantRecord, 'pwdId', applicant.pwdId)
     addOptionalField(applicantRecord, 'psaFileStorageId', args.psaFileStorageId)
-    addOptionalField(applicantRecord, 'psaFileUrl', args.psaFileUrl)
     addOptionalField(applicantRecord, 'schoolIdFileStorageId', args.schoolIdFileStorageId)
-    addOptionalField(applicantRecord, 'schoolIdFileUrl', args.schoolIdFileUrl)
     addOptionalField(applicantRecord, 'corFileStorageId', args.corFileStorageId)
-    addOptionalField(applicantRecord, 'corFileUrl', args.corFileUrl)
     addOptionalField(applicantRecord, 'pwdIdFileStorageId', args.pwdIdFileStorageId)
     addOptionalField(applicantRecord, 'pwdIdFileUrl', args.pwdIdFileUrl)
     addOptionalField(applicantRecord, 'pwdIdFileName', applicant.pwdIdFileName)

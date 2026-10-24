@@ -193,6 +193,16 @@ export const login = mutation({
       }
     }
 
+    const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`
+    const now = Date.now()
+    await ctx.db.insert('supportSessions', {
+      token: sessionToken,
+      adminId: admin._id,
+      role: admin.role,
+      createdAt: now,
+      expiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    })
+
     return {
       success: true,
       admin: {
@@ -204,6 +214,7 @@ export const login = mutation({
         facebookProfileUrl: admin.facebookProfileUrl ?? '',
         name: admin.name,
         role: admin.role,
+        sessionToken,
       },
     }
   },
@@ -293,6 +304,15 @@ export const register = mutation({
       updatedAt: now,
     })
 
+    const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`
+    await ctx.db.insert('supportSessions', {
+      token: sessionToken,
+      adminId,
+      role: 'student',
+      createdAt: now,
+      expiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    })
+
     await logActivity(ctx, {
       action: 'student_registered',
       actorRole: 'student',
@@ -315,6 +335,7 @@ export const register = mutation({
         facebookProfileUrl: '',
         name: email.split('@')[0] || schoolId,
         role: 'student',
+        sessionToken,
       },
     }
   },

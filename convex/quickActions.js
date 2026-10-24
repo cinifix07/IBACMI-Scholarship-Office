@@ -10,9 +10,20 @@ async function logActivity(ctx, log) {
   })
 }
 
+async function requireAdmin(ctx, token) {
+  const session = await ctx.db.query('supportSessions')
+    .withIndex('by_token', (q) => q.eq('token', token)).first()
+  if (!session || session.role !== 'admin' || session.expiresAt < Date.now()) {
+    throw new Error('Please sign in again with an administrator account.')
+  }
+  const admin = await ctx.db.get(session.adminId)
+  if (!admin || admin.role !== 'admin' || admin.status !== 'active') throw new Error('Administrator access is required.')
+}
+
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.sessionToken)
     return await ctx.db
       .query('quickActions')
       .withIndex('by_submittedAt')
@@ -76,8 +87,9 @@ export const create = mutation({
 })
 
 export const clearAll = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.sessionToken)
     const messages = await ctx.db.query('quickActions').collect()
 
     for (const message of messages) {

@@ -21,6 +21,57 @@ export default defineSchema({
     .index('by_school_id', ['schoolId'])
     .index('by_role', ['role']),
 
+  supportSessions: defineTable({
+    token: v.string(),
+    adminId: v.id('admins'),
+    role: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  }).index('by_token', ['token']),
+
+  supportSettings: defineTable({
+    key: v.string(),
+    link1Name: v.string(),
+    link1Url: v.string(),
+    link2Name: v.string(),
+    link2Url: v.string(),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
+
+  supportConversations: defineTable({
+    studentAccountId: v.optional(v.id('admins')),
+    studentId: v.string(),
+    studentName: v.string(),
+    email: v.string(),
+    source: v.string(),
+    status: v.string(),
+    legacyRequestId: v.optional(v.id('quickActions')),
+    visitorType: v.optional(v.string()),
+    visitorStudentName: v.optional(v.string()),
+    visitorSessionHash: v.optional(v.string()),
+    visitorExpiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_updatedAt', ['updatedAt'])
+    .index('by_studentAccount', ['studentAccountId'])
+    .index('by_studentId', ['studentId'])
+    .index('by_legacyRequest', ['legacyRequestId'])
+    .index('by_visitorSessionHash', ['visitorSessionHash']),
+
+  supportMessages: defineTable({
+    conversationId: v.id('supportConversations'),
+    senderId: v.string(),
+    senderRole: v.union(v.literal('student'), v.literal('admin'), v.literal('visitor')),
+    content: v.string(),
+    readByAdmin: v.boolean(),
+    readByStudent: v.boolean(),
+    clientMessageId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_conversation', ['conversationId'])
+    .index('by_clientMessage', ['clientMessageId']),
+
   activityLogs: defineTable({
     action: v.string(),
     actorRole: v.string(),
@@ -73,18 +124,36 @@ export default defineSchema({
     extensionName: v.optional(v.string()),
     middleName: v.optional(v.string()),
     gender: v.string(),
+    sexCode: v.optional(v.union(v.literal(0), v.literal(1))),
     birthDate: v.string(),
     course: v.string(),
     year: v.string(),
+    yearLevelCode: v.optional(v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4), v.literal(5), v.literal(6))),
+    lrn: v.optional(v.string()),
+    philSysIdNumber: v.optional(v.string()),
+    fourPsIdNumber: v.optional(v.string()),
     fatherLastName: v.optional(v.string()),
     fatherFirstName: v.optional(v.string()),
     fatherMiddleName: v.optional(v.string()),
     motherLastName: v.optional(v.string()),
     motherFirstName: v.optional(v.string()),
     motherMiddleName: v.optional(v.string()),
+    fatherInformationUnavailable: v.optional(v.boolean()),
+    motherInformationUnavailable: v.optional(v.boolean()),
     address: v.string(),
+    streetBarangay: v.optional(v.string()),
+    cityMunicipality: v.optional(v.string()),
+    province: v.optional(v.string()),
+    region: v.optional(v.string()),
     zipCode: v.optional(v.string()),
     pwdId: v.optional(v.string()),
+    hasDisability: v.optional(v.boolean()),
+    disabilityType: v.optional(v.string()),
+    soloParentDependent: v.optional(v.union(v.literal(0), v.literal(1))),
+    firstGeneration: v.optional(v.union(v.literal(0), v.literal(1))),
+    isIndigenous: v.optional(v.boolean()),
+    indigenousGroup: v.optional(v.string()),
+    applicantClassification: v.optional(v.string()),
     mobileNumber: v.string(),
     emailAddress: v.string(),
     psaFileStorageId: v.optional(v.id('_storage')),
@@ -112,11 +181,18 @@ export default defineSchema({
         extensionName: v.optional(v.string()),
         middleName: v.optional(v.string()),
         gender: v.string(),
+        sexCode: v.optional(v.union(v.literal(0), v.literal(1))),
         birthDate: v.string(),
         course: v.string(),
         year: v.string(),
+        yearLevelCode: v.optional(v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4), v.literal(5), v.literal(6))),
+        lrn: v.optional(v.string()),
+        philSysIdNumber: v.optional(v.string()),
+        fourPsIdNumber: v.optional(v.string()),
       }),
       parents: v.object({
+        fatherInformationUnavailable: v.optional(v.boolean()),
+        motherInformationUnavailable: v.optional(v.boolean()),
         father: v.object({
           lastName: v.optional(v.string()),
           firstName: v.optional(v.string()),
@@ -130,11 +206,24 @@ export default defineSchema({
       }),
       contact: v.object({
         address: v.string(),
+        streetBarangay: v.optional(v.string()),
+        cityMunicipality: v.optional(v.string()),
+        province: v.optional(v.string()),
+        region: v.optional(v.string()),
         zipCode: v.optional(v.string()),
         pwdId: v.optional(v.string()),
         mobileNumber: v.string(),
         emailAddress: v.string(),
       }),
+      additional: v.optional(v.object({
+        hasDisability: v.boolean(),
+        disabilityType: v.optional(v.string()),
+        soloParentDependent: v.union(v.literal(0), v.literal(1)),
+        firstGeneration: v.union(v.literal(0), v.literal(1)),
+        isIndigenous: v.boolean(),
+        indigenousGroup: v.optional(v.string()),
+        applicantClassification: v.string(),
+      })),
       documents: v.optional(
         v.object({
           psa: v.optional(
@@ -170,6 +259,7 @@ export default defineSchema({
   })
     .index('by_course', ['course'])
     .index('by_application_year_course', ['applicationYear', 'course'])
+    .index('by_student_id_application_year', ['studentId', 'applicationYear'])
     .index('by_submittedAt', ['submittedAt']),
 
   applicantPortalSettings: defineTable({

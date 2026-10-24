@@ -1,0 +1,262 @@
+import { v } from 'convex/values'
+import { mutation, query } from './_generated/server'
+import { archiveRecord } from './archiveHelpers'
+
+async function requireSession(ctx, token, roles) {
+  if (!token || token.length > 100) throw new Error('Please sign in again to continue.')
+  const session = await ctx.db
+    .query('supportSessions')
+    .withIndex('by_token', (q) => q.eq('token', token))
+    .first()
+
+  if (!session || session.expiresAt < Date.now() || !roles.includes(session.role)) {
+    throw new Error('Your session is invalid or expired. Please sign in again.')
+  }
+  const account = await ctx.db.get(session.adminId)
+  if (!account || account.status !== 'active' || account.role !== session.role) {
+    throw new Error('Your account is no longer active.')
+  }
+  return { session, account }
+}
+
+export const logout = mutation({
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.query('supportSessions')
+      .withIndex('by_token', (q) => q.eq('token', args.sessionToken)).first()
+    if (session) await ctx.db.delete(session._id)
+    return { success: true }
+  },
+})
+
+function cleanHttpUrl(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  let parsed
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error('Enter a valid support link URL.')
+  }
+  if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) {
+    throw new Error('Support links must use a valid HTTPS URL.')
+  }
+  return parsed.toString()
+}
+
+export const getSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    const settings = await ctx.db.query('supportSettings').withIndex('by_key', (q) => q.eq('key', 'main')).first()
+    return settings
+      ? { link1Name: settings.link1Name, link1Url: settings.link1Url, link2Name: settings.link2Name, link2Url: settings.link2Url }
+      : { link1Name: '', link1Url: '', link2Name: '', link2Url: '' }
+  },
+})
+
+export const saveSettings = mutation({
+  args: {
+    sessionToken: v.string(),
+    link1Name: v.string(), link1Url: v.string(), link2Name: v.string(), link2Url: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireSession(ctx, args.sessionToken, ['admin'])
+    const values = {
+      link1Name: args.link1Name.trim().slice(0, 80),
+      link1Url: cleanHttpUrl(args.link1Url),
+      link2Name: args.link2Name.trim().slice(0, 80),
+      link2Url: cleanHttpUrl(args.link2Url),
+      updatedAt: Date.now(),
+    }
+    if (Boolean(values.link1Name) !== Boolean(values.link1Url) || Boolean(values.link2Name) !== Boolean(values.link2Url)) {
+      throw new Error('Enter both a name and URL for each support link you use.')
+    }
+    const previous = await ctx.db.query('supportSettings').withIndex('by_key', (q) => q.eq('key', 'main')).first()
+    if (previous) await ctx.db.patch(previous._id, values)
+    else await ctx.db.insert('supportSettings', { key: 'main', ...values })
+    return { success: true }
+  },
+})
+
+export const migrateLegacyRequests = mutation({
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireSession(ctx, args.sessionToken, ['admin'])
+    const requests = await ctx.db.query('quickActions').collect()
+    const existingConversations = await ctx.db.query('supportConversations').collect()
+    let migratedCount = 0
+    for (const request of requests) {
+      const existing = await ctx.db.query('supportConversations')
+        .withIndex('by_legacyRequest', (q) => q.eq('legacyRequestId', request._id)).first()
+      if (existing) continue
+      const restoredCandidate = existingConversations.find((conversation) =>
+        conversation.studentId === (request.studentId ?? '') &&
+        conversation.email.toLowerCase() === request.email.toLowerCase() &&
+        conversation.source === request.source &&
+        conversation.createdAt === request.submittedAt,
+      )
+      if (restoredCandidate) {
+        const firstMessage = await ctx.db.query('supportMessages')
+          .withIndex('by_conversation', (q) => q.eq('conversationId', restoredCandidate._id)).first()
+        if (firstMessage?.content === request.question) continue
+      }
+      const studentAccount = request.studentId
+        ? await ctx.db.query('admins').withIndex('by_school_id', (q) => q.eq('schoolId', request.studentId)).first()
+        : null
+      const ownsRequest = studentAccount?.role === 'student' &&
+        studentAccount.email.trim().toLowerCase() === request.email.trim().toLowerCase()
+      const now = request.submittedAt || Date.now()
+      const isResolved = String(request.status ?? '').toLowerCase().includes('resolved')
+      const conversationId = await ctx.db.insert('supportConversations', {
+        studentAccountId: ownsRequest ? studentAccount._id : undefined,
+        studentId: request.studentId ?? '',
+        studentName: [request.firstName, request.middleInitial, request.lastName].filter(Boolean).join(' ').trim(),
+        email: request.email,
+        source: request.source,
+        status: isResolved ? 'resolved' : 'open',
+        legacyRequestId: request._id,
+        createdAt: now,
+        updatedAt: now,
+      })
+      await ctx.db.insert('supportMessages', {
+        conversationId,
+        senderId: request.studentId || request.email,
+        senderRole: 'student',
+        content: request.question,
+        readByAdmin: false,
+        readByStudent: true,
+        createdAt: now,
+      })
+      migratedCount += 1
+    }
+    return { migratedCount }
+  },
+})
+
+export const listConversations = query({
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireSession(ctx, args.sessionToken, ['admin'])
+    const conversations = await ctx.db.query('supportConversations').withIndex('by_updatedAt').order('desc').collect()
+    return await Promise.all(conversations.map(async (conversation) => {
+      const messages = await ctx.db.query('supportMessages')
+        .withIndex('by_conversation', (q) => q.eq('conversationId', conversation._id)).order('asc').collect()
+      return { ...conversation, messages, unreadCount: messages.filter((message) => message.senderRole === 'student' && !message.readByAdmin).length }
+    }))
+  },
+})
+
+export const listStudentConversations = query({
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    const { account } = await requireSession(ctx, args.sessionToken, ['student'])
+    const conversations = await ctx.db.query('supportConversations')
+      .withIndex('by_studentAccount', (q) => q.eq('studentAccountId', account._id)).order('desc').collect()
+    return await Promise.all(conversations.map(async (conversation) => ({
+      ...conversation,
+      messages: await ctx.db.query('supportMessages')
+        .withIndex('by_conversation', (q) => q.eq('conversationId', conversation._id)).order('asc').collect(),
+    })))
+  },
+})
+
+export const sendMessage = mutation({
+  args: { sessionToken: v.string(), conversationId: v.id('supportConversations'), content: v.string(), clientMessageId: v.string() },
+  handler: async (ctx, args) => {
+    const { session, account } = await requireSession(ctx, args.sessionToken, ['admin', 'student'])
+    const content = args.content.trim()
+    if (!content || content.length > 2000) throw new Error('Messages must contain 1 to 2,000 characters.')
+    if (!/^[\w-]{8,100}$/.test(args.clientMessageId)) throw new Error('Invalid message submission identifier.')
+    const conversation = await ctx.db.get(args.conversationId)
+    if (!conversation) throw new Error('Conversation not found.')
+    if (session.role === 'student' && conversation.studentAccountId !== account._id) throw new Error('You do not have access to this conversation.')
+    const existing = await ctx.db.query('supportMessages')
+      .withIndex('by_clientMessage', (q) => q.eq('clientMessageId', args.clientMessageId)).first()
+    if (existing) {
+      if (existing.conversationId !== conversation._id || existing.senderId !== String(account._id)) throw new Error('Duplicate message identifier.')
+      return existing._id
+    }
+    if (session.role === 'student' && conversation.status === 'resolved') throw new Error('This conversation has been resolved.')
+    const messages = await ctx.db.query('supportMessages')
+      .withIndex('by_conversation', (q) => q.eq('conversationId', conversation._id)).collect()
+    const recentCount = messages.filter((message) => message.senderId === String(account._id) && message.createdAt > Date.now() - 60_000).length
+    if (recentCount >= 8) throw new Error('Please wait a moment before sending another message.')
+    const now = Date.now()
+    const messageId = await ctx.db.insert('supportMessages', {
+      conversationId: conversation._id,
+      senderId: String(account._id),
+      senderRole: session.role,
+      content,
+      readByAdmin: session.role === 'admin',
+      readByStudent: session.role === 'student',
+      clientMessageId: args.clientMessageId,
+      createdAt: now,
+    })
+    await ctx.db.patch(conversation._id, { updatedAt: now, status: session.role === 'admin' && conversation.status === 'resolved' ? 'open' : conversation.status })
+    return messageId
+  },
+})
+
+export const markRead = mutation({
+  args: { sessionToken: v.string(), conversationId: v.id('supportConversations') },
+  handler: async (ctx, args) => {
+    const { session, account } = await requireSession(ctx, args.sessionToken, ['admin', 'student'])
+    const conversation = await ctx.db.get(args.conversationId)
+    if (!conversation) return { updated: 0 }
+    if (session.role === 'student' && conversation.studentAccountId !== account._id) throw new Error('You do not have access to this conversation.')
+    const messages = await ctx.db.query('supportMessages')
+      .withIndex('by_conversation', (q) => q.eq('conversationId', conversation._id)).collect()
+    let updated = 0
+    for (const message of messages) {
+      const shouldRead = session.role === 'admin' ? message.senderRole === 'student' && !message.readByAdmin : message.senderRole === 'admin' && !message.readByStudent
+      if (shouldRead) {
+        await ctx.db.patch(message._id, session.role === 'admin' ? { readByAdmin: true } : { readByStudent: true })
+        updated += 1
+      }
+    }
+    return { updated }
+  },
+})
+
+export const setStatus = mutation({
+  args: { sessionToken: v.string(), conversationId: v.id('supportConversations'), status: v.union(v.literal('open'), v.literal('resolved')) },
+  handler: async (ctx, args) => {
+    await requireSession(ctx, args.sessionToken, ['admin'])
+    await ctx.db.patch(args.conversationId, { status: args.status, updatedAt: Date.now() })
+  },
+})
+
+export const clearAll = mutation({
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireSession(ctx, args.sessionToken, ['admin'])
+    const conversations = await ctx.db.query('supportConversations').collect()
+    for (const conversation of conversations) {
+      const messages = await ctx.db.query('supportMessages')
+        .withIndex('by_conversation', (q) => q.eq('conversationId', conversation._id)).collect()
+      await archiveRecord(ctx, {
+        record: {
+          ...conversation,
+          messages: messages.map((message) => {
+            const snapshot = { ...message }
+            delete snapshot._id
+            delete snapshot._creationTime
+            return snapshot
+          }),
+        },
+        sourceLabel: conversation.studentId || conversation.email,
+        sourceTable: 'supportConversations',
+      })
+      for (const message of messages) {
+        await ctx.db.delete(message._id)
+      }
+      await ctx.db.delete(conversation._id)
+    }
+    const requests = await ctx.db.query('quickActions').collect()
+    for (const request of requests) {
+      await archiveRecord(ctx, { record: request, sourceLabel: `${request.studentId ?? request.email} / ${request.source}`, sourceTable: 'quickActions' })
+      await ctx.db.delete(request._id)
+    }
+    return { deletedCount: conversations.length }
+  },
+})

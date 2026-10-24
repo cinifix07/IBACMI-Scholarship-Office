@@ -1,0 +1,218 @@
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+import ibacmiLogo from '../assets/IBACMI.png'
+import './visitor-support.css'
+
+const TOKEN_KEY = 'ibacmi-visitor-support-token'
+
+function createClientMessageId() {
+  const cryptoApi = globalThis.crypto
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    try { return cryptoApi.randomUUID() } catch { /* Use the compatible fallback below. */ }
+  }
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    try {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16))
+      return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+    } catch { /* Use the compatible fallback below. */ }
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}
+
+function formatTime(timestamp) {
+  return new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp))
+}
+
+function formatDate(timestamp) {
+  return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(timestamp))
+}
+
+function isSafeSupportUrl(value) {
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    const isPlaceholder = ['example.com', 'example.org', 'example.net', 'localhost'].some((domain) => host === domain || host.endsWith(`.${domain}`)) ||
+      ['.test', '.invalid', '.local'].some((suffix) => host.endsWith(suffix))
+    return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname) && !url.username && !url.password && !isPlaceholder
+  } catch {
+    return false
+  }
+}
+
+function supportIcon(link) {
+  const label = `${link.name} ${link.url}`.toLowerCase()
+  if (label.includes('messenger') || label.includes('facebook')) return 'forum'
+  if (label.includes('whatsapp') || label.includes('phone')) return 'call'
+  if (label.includes('email') || label.includes('mail')) return 'mail'
+  if (label.includes('student') || label.includes('school') || label.includes('portal')) return 'school'
+  return 'link'
+}
+
+export default function VisitorSupport({ onRequest }) {
+  const [visitorToken, setVisitorToken] = useState(() => window.localStorage.getItem(TOKEN_KEY) || '')
+  const [isOpen, setIsOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [visitorType, setVisitorType] = useState('Student')
+  const [schoolId, setSchoolId] = useState('')
+  const [studentName, setStudentName] = useState('')
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState('')
+  const [isSupportOptionsOpen, setIsSupportOptionsOpen] = useState(false)
+  const [isStarting, setIsStarting] = useState(false)
+  const [isSending, setIsSending] = useState(false)
+  const historyRef = useRef(null)
+  const textareaRef = useRef(null)
+  const conversationData = useQuery(api.support.getVisitorConversation, visitorToken ? { visitorToken } : 'skip')
+  const createConversation = useMutation(api.support.createVisitorConversation)
+  const sendMessage = useMutation(api.support.sendVisitorMessage)
+  const markRead = useMutation(api.support.markVisitorRead)
+  const supportSettings = useQuery(api.support.getPublicLinks, isSupportOptionsOpen ? {} : 'skip')
+  const messages = conversationData?.messages ?? []
+  const supportLinks = (supportSettings?.links ?? []).filter((link) => isSafeSupportUrl(link.url))
+  const unreadCount = isOpen ? 0 : (conversationData?.unreadCount ?? 0)
+
+  const isExpired = Boolean(visitorToken && conversationData === null)
+
+  useEffect(() => {
+    if (!isOpen || !visitorToken || !conversationData?.unreadCount) return
+    markRead({ visitorToken }).catch(() => {})
+  }, [isOpen, visitorToken, conversationData?.unreadCount, markRead])
+
+  useEffect(() => {
+    if (!isOpen || !historyRef.current) return
+    historyRef.current.scrollTo({ top: historyRef.current.scrollHeight, behavior: 'smooth' })
+  }, [isOpen, messages.length])
+
+  useEffect(() => {
+    if (!isSupportOptionsOpen) return undefined
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setIsSupportOptionsOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [isSupportOptionsOpen])
+
+  const startConversation = async (event) => {
+    event.preventDefault()
+    if (isStarting) return
+    setIsStarting(true)
+    setError('')
+    try {
+      const result = await createConversation({
+        name,
+        visitorType,
+        ...(visitorType === 'Student' && schoolId.trim() ? { schoolId: schoolId.trim() } : {}),
+        ...(visitorType === 'Parent / Guardian' && studentName.trim() ? { studentName: studentName.trim() } : {}),
+      })
+      window.localStorage.setItem(TOKEN_KEY, result.visitorToken)
+      setVisitorToken(result.visitorToken)
+    } catch (startError) {
+      setError(startError.message || 'Unable to start a conversation. Please try again.')
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const submitMessage = async () => {
+    const content = draft.trim()
+    if (!content || isSending || !visitorToken || isExpired) return
+    setIsSending(true)
+    setError('')
+    try {
+      await sendMessage({ visitorToken, content, clientMessageId: createClientMessageId() })
+      setDraft('')
+      if (textareaRef.current) textareaRef.current.style.height = ''
+    } catch (sendError) {
+      setError(sendError.message || 'Message could not be sent. Please try again.')
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  const resizeComposer = (event) => {
+    setDraft(event.target.value)
+    event.target.style.height = 'auto'
+    event.target.style.height = `${Math.min(event.target.scrollHeight, 120)}px`
+  }
+
+  const startNew = isExpired || !visitorToken
+
+  return <>
+    <button className="visitor-launcher" type="button" aria-label="Chat with Scholarship Support" aria-expanded={isOpen} onClick={() => setIsOpen((open) => !open)}>
+      <span className="material-symbols-outlined" aria-hidden="true">{isOpen ? 'close' : 'chat'}</span>
+      {unreadCount > 0 && <span className="visitor-launcher__badge" aria-label={`${unreadCount} unread replies`}>{unreadCount > 9 ? '9+' : unreadCount}</span>}
+      <span className="visitor-launcher__hint">Need help? Chat with us</span>
+    </button>
+
+    {isOpen && <section className="visitor-chat" role="dialog" aria-modal="false" aria-label="IBACMI Scholarship Support chat">
+      <header className="visitor-chat__header">
+        <img src={ibacmiLogo} alt="IBACMI" />
+        <div><strong>IBACMI Scholarship Support</strong><span>Chat with our Scholarship Office</span></div>
+        <button type="button" aria-label="Minimize chat" onClick={() => setIsOpen(false)}><span className="material-symbols-outlined">expand_more</span></button>
+      </header>
+
+      {!startNew && conversationData === undefined && <div className="visitor-chat__loading" role="status">Restoring your conversation…</div>}
+      {startNew && <form className="visitor-welcome" onSubmit={startConversation}>
+        <p className="visitor-welcome__intro">Welcome to IBACMI Scholarship Office Support! We&apos;re here to assist you with your scholarship questions.</p>
+        {isExpired && <p className="visitor-chat__expired">Your previous chat session has expired. You can start a new conversation.</p>}
+        <label>May I know your name?<input required minLength={2} maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" autoComplete="name" /></label>
+        <fieldset><legend>May I know if you are a Student or Parent/Guardian?</legend>
+          {['Student', 'Parent / Guardian', 'Other Visitor'].map((type) => <label className="visitor-choice" key={type}><input type="radio" name="visitorType" value={type} checked={visitorType === type} onChange={() => setVisitorType(type)} />{type}</label>)}
+        </fieldset>
+        {visitorType === 'Student' && <label>School ID <span>(optional)</span><input maxLength={30} value={schoolId} onChange={(event) => setSchoolId(event.target.value)} placeholder="Your school ID" /></label>}
+        {visitorType === 'Parent / Guardian' && <label>Student&apos;s name <span>(optional)</span><input maxLength={100} value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Student's name" /></label>}
+        <p className="visitor-privacy">We use these details only to identify your conversation and respond to your inquiry.</p>
+        {error && <p className="visitor-chat__error" role="alert">{error}</p>}
+        <button className="visitor-primary" type="submit" disabled={isStarting}>{isStarting ? 'Starting…' : 'Start Conversation'}</button>
+        {onRequest && <button className="visitor-request-link" type="button" onClick={() => setIsSupportOptionsOpen(true)}>Submit a student support request</button>}
+      </form>}
+
+      {!startNew && conversationData && <>
+        <div className="visitor-chat__history" ref={historyRef}>
+          {messages.length === 0 && <div className="visitor-chat__empty"><span className="material-symbols-outlined">forum</span><p>Hi {conversationData.conversation.studentName}, how can we help?</p></div>}
+          {messages.map((message, index) => {
+            const previous = messages[index - 1]
+            const showDate = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString()
+            const own = message.senderRole === 'visitor'
+            return <div key={message._id}>
+              {showDate && <div className="visitor-date"><span>{formatDate(message.createdAt)}</span></div>}
+              <div className={`visitor-message ${own ? 'is-own' : ''}`}>
+                {!own && <img src={ibacmiLogo} alt="" />}
+                <div className="visitor-message__body"><p>{message.content}</p><time>{formatTime(message.createdAt)}</time></div>
+              </div>
+            </div>
+          })}
+        </div>
+        <form className="visitor-composer" onSubmit={(event) => { event.preventDefault(); submitMessage() }}>
+          {error && <p className="visitor-chat__error" role="alert">{error}</p>}
+          <div><textarea ref={textareaRef} value={draft} onChange={resizeComposer} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitMessage() } }} maxLength={2000} placeholder="Write a message…" aria-label="Write a message" />
+            <button type="submit" aria-label="Send message" disabled={!draft.trim() || isSending}>{isSending ? <span className="material-symbols-outlined">hourglass_top</span> : <span className="material-symbols-outlined">send</span>}</button></div>
+          <small>Enter to send · Shift + Enter for a new line</small>
+        </form>
+      </>}
+    </section>}
+
+    {isSupportOptionsOpen && <div className="support-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsSupportOptionsOpen(false) }}>
+      <section className="support-options-modal" role="dialog" aria-modal="true" aria-labelledby="support-options-title">
+        <button className="support-options-close" type="button" aria-label="Close support options" onClick={() => setIsSupportOptionsOpen(false)}><span className="material-symbols-outlined">close</span></button>
+        <div className="support-options-heading">
+          <img src={ibacmiLogo} alt="IBACMI" />
+          <span className="support-options-eyebrow">IBACMI SCHOLARSHIP OFFICE</span>
+          <h2 id="support-options-title">How can we help you?</h2>
+          <p>Choose your preferred support channel to contact the IBACMI Scholarship Office.</p>
+        </div>
+        <div className="support-options-list" aria-live="polite">
+          {supportSettings === undefined && <div className="support-options-state" role="status"><span className="support-options-spinner" />Loading support channels…</div>}
+          {supportSettings?.error && <div className="support-options-state support-options-state--error" role="alert">Support channels could not be loaded. Please try again shortly.</div>}
+          {supportSettings && !supportSettings.error && supportLinks.length === 0 && <div className="support-options-state">No support channels are configured yet. Please continue using this chat for help.</div>}
+          {supportLinks.map((link) => <a className="support-option-card" key={link.id} href={link.url} target="_blank" rel="noopener noreferrer">
+            <span className="support-option-card__icon"><span className="material-symbols-outlined" aria-hidden="true">{supportIcon(link)}</span></span>
+            <span className="support-option-card__copy"><strong>{link.name}</strong><small>Open this support channel</small></span>
+            <span className="material-symbols-outlined support-option-card__arrow" aria-hidden="true">open_in_new</span>
+          </a>)}
+        </div>
+      </section>
+    </div>}
+  </>
+}

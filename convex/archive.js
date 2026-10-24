@@ -8,6 +8,7 @@ const restorableTables = new Set([
   'allinfo',
   'applicants',
   'quickActions',
+  'supportConversations',
 ])
 
 export const list = query({
@@ -26,7 +27,36 @@ export const restore = mutation({
       throw new Error('This archived table cannot be restored.')
     }
 
-    if (archived.deletionKind === 'fields') {
+    if (archived.sourceTable === 'supportConversations' && archived.deletionKind === 'record') {
+      const { messages = [], ...conversationData } = archived.data
+      const activeConversations = await ctx.db.query('supportConversations').collect()
+      let alreadyRestored = false
+      for (const candidate of activeConversations) {
+        if (
+          candidate.studentId !== conversationData.studentId ||
+          candidate.email !== conversationData.email ||
+          candidate.source !== conversationData.source ||
+          candidate.createdAt !== conversationData.createdAt
+        ) continue
+        const candidateMessage = await ctx.db.query('supportMessages')
+          .withIndex('by_conversation', (q) => q.eq('conversationId', candidate._id)).first()
+        const archivedQuestion = messages.find((message) => message.senderRole === 'student')
+        if (candidateMessage?.content === archivedQuestion?.content) {
+          alreadyRestored = true
+          break
+        }
+      }
+
+      if (!alreadyRestored) {
+        const conversationId = await ctx.db.insert('supportConversations', conversationData)
+        for (const message of messages) {
+          const { conversationId: oldConversationId, clientMessageId, ...messageData } = message
+          void oldConversationId
+          void clientMessageId
+          await ctx.db.insert('supportMessages', { ...messageData, conversationId })
+        }
+      }
+    } else if (archived.deletionKind === 'fields') {
       const targetId = ctx.db.normalizeId(archived.sourceTable, archived.sourceId)
       const target = targetId ? await ctx.db.get(targetId) : null
       if (!targetId || !target) {

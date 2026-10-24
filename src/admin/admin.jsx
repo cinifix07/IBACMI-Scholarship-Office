@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import ibacmiLogo from '../assets/IBACMI.png'
+import StudentSupport from './StudentSupport.jsx'
 
 const granteesPerPage = 5
-const quickActionsPerPage = 5
 const usersPerPage = 5
 const logsPerPage = 5
 const archiveItemsPerPage = 7
@@ -12,6 +12,7 @@ const batchExportsPerPage = 5
 const schoolIdDownloadsPerPage = 5
 const schoolIdBatchDownloadsPerPage = 5
 const courseApplicantsPerPage = 10
+const receivingApplicantsPerPage = 10
 const applicantYearsPerPage = 5
 const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
 const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
@@ -97,8 +98,10 @@ function escapeCsvValue(value) {
 }
 
 function downloadCsvFile(filename, rows) {
+  if (!Array.isArray(rows) || rows.length < 2) throw new Error('No applicant rows are available to download.')
   const csvMarkup = rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n')
   const blob = new Blob([csvMarkup], { type: 'text/csv;charset=utf-8' })
+  if (!blob.size) throw new Error('The applicant CSV file could not be generated.')
   const downloadUrl = URL.createObjectURL(blob)
   const link = document.createElement('a')
 
@@ -108,6 +111,7 @@ function downloadCsvFile(filename, rows) {
   link.click()
   link.remove()
   URL.revokeObjectURL(downloadUrl)
+  return true
 }
 
 function downloadGranteeTemplate() {
@@ -168,13 +172,6 @@ function compareSchoolIdGranteesByName(firstGrantee, secondGrantee) {
   return 0
 }
 
-function formatQuickActionStudentName(request) {
-  return [request?.lastName, request?.firstName, request?.middleInitial]
-    .map((value) => String(value ?? '').trim())
-    .filter(Boolean)
-    .join(', ')
-}
-
 function getApplicantCourse(record) {
   return String(record?.course ?? record?.program ?? record?.degreeProgram ?? '').trim()
 }
@@ -185,6 +182,41 @@ function getApplicantApplicationYear(applicant) {
 
   const submittedAt = applicant?.submittedAt
   return submittedAt ? String(new Date(submittedAt).getFullYear()) : ''
+}
+
+function createUnifastApplicantCsvRows(records, fallbackCourse = '') {
+  return [
+    [
+      'Application Year', 'Course', 'Student ID', 'LRN', 'PhilSys ID Number', '4Ps ID Number',
+      'Last Name', 'First Name', 'Ext Name', 'Middle Name', 'Gender', 'Sex Code', 'Birth Date',
+      'Year', 'Year Level Code', 'Father Last Name', 'Father First Name', 'Father Middle Name',
+      'Mother Last Name', 'Mother First Name', 'Mother Middle Name', 'Address', 'Street / Barangay',
+      'City / Municipality', 'Province', 'Region', 'Zip Code', 'PWD ID', 'Has Disability',
+      'Disability Type', 'Solo Parent Dependent Code', 'First Generation Code',
+      'Indigenous Peoples Member', 'Indigenous Group', 'Applicant Classification', 'PWD ID PDF',
+      '4Ps ID PDF', 'COR / Study Load PDF', 'Mobile No.', 'Email Address', 'Status', 'Submitted At',
+    ],
+    ...records.map((applicant) => [
+      getApplicantApplicationYear(applicant), getApplicantCourse(applicant) || fallbackCourse,
+      applicant.studentId ?? '', applicant.lrn ?? '', applicant.philSysIdNumber ?? '',
+      applicant.fourPsIdNumber ?? '', applicant.lastName ?? '', applicant.firstName ?? '',
+      applicant.extensionName ?? '', applicant.middleName ?? '', applicant.gender ?? '',
+      applicant.sexCode ?? '', applicant.birthDate ?? '', applicant.year ?? '',
+      applicant.yearLevelCode ?? '', applicant.fatherLastName ?? '', applicant.fatherFirstName ?? '',
+      applicant.fatherMiddleName ?? '', applicant.motherLastName ?? '', applicant.motherFirstName ?? '',
+      applicant.motherMiddleName ?? '', applicant.address ?? '', applicant.streetBarangay ?? '',
+      applicant.cityMunicipality ?? '', applicant.province ?? '', applicant.region ?? '',
+      applicant.zipCode ?? '', applicant.pwdId ?? '',
+      applicant.hasDisability === undefined ? '' : applicant.hasDisability ? 'Yes' : 'No',
+      applicant.disabilityType ?? '', applicant.soloParentDependent ?? '',
+      applicant.firstGeneration ?? '',
+      applicant.isIndigenous === undefined ? '' : applicant.isIndigenous ? 'Yes' : 'No',
+      applicant.indigenousGroup ?? '', applicant.applicantClassification ?? '',
+      applicant.pwdIdFileName ?? '', applicant.fourPsFileName ?? '', applicant.corFileName ?? '',
+      applicant.mobileNumber ?? '', applicant.emailAddress ?? '', applicant.status ?? '',
+      formatSubmittedAt(applicant.submittedAt),
+    ]),
+  ]
 }
 
 function getPaginationItems(currentPage, totalPages) {
@@ -433,7 +465,7 @@ function parseGranteeUpload(text) {
     )
 }
 
-function Admin({ onLogout }) {
+function Admin({ adminSession, onLogout }) {
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
@@ -452,9 +484,19 @@ function Admin({ onLogout }) {
   const [isDeletingUser, setIsDeletingUser] = useState(false)
   const [currentUserPage, setCurrentUserPage] = useState(1)
   const [userSearchQuery, setUserSearchQuery] = useState('')
-  const [isQuickActionsClearConfirmOpen, setIsQuickActionsClearConfirmOpen] = useState(false)
   const [isUnifastPortalConfirmOpen, setIsUnifastPortalConfirmOpen] = useState(false)
   const [isUnifastPortalCoursesOpen, setIsUnifastPortalCoursesOpen] = useState(false)
+  const [isApplicantDownloadOpen, setIsApplicantDownloadOpen] = useState(false)
+  const [receivingApplicantSearch, setReceivingApplicantSearch] = useState('')
+  const [receivingApplicantCourseFilter, setReceivingApplicantCourseFilter] = useState('')
+  const [receivingApplicantYearFilter, setReceivingApplicantYearFilter] = useState('')
+  const [receivingApplicantStatusFilter, setReceivingApplicantStatusFilter] = useState('')
+  const [receivingApplicantPage, setReceivingApplicantPage] = useState(1)
+  const [viewReceivingApplicant, setViewReceivingApplicant] = useState(null)
+  const [applicantDownloadMode, setApplicantDownloadMode] = useState('all')
+  const [selectedApplicantCourses, setSelectedApplicantCourses] = useState([])
+  const [applicantCourseSearch, setApplicantCourseSearch] = useState('')
+  const [applicantDownloadError, setApplicantDownloadError] = useState('')
   const [isApplicantYearOpen, setIsApplicantYearOpen] = useState(false)
   const [selectedUnifastCourse, setSelectedUnifastCourse] = useState('')
   const [isAddRecordOpen, setIsAddRecordOpen] = useState(false)
@@ -477,10 +519,8 @@ function Admin({ onLogout }) {
   const [deleteMessage, setDeleteMessage] = useState('')
   const [isUploadingRecords, setIsUploadingRecords] = useState(false)
   const [isDeletingRecords, setIsDeletingRecords] = useState(false)
-  const [isClearingQuickActions, setIsClearingQuickActions] = useState(false)
   const [isClearingActivityLogs, setIsClearingActivityLogs] = useState(false)
   const [currentGranteePage, setCurrentGranteePage] = useState(1)
-  const [currentQuickActionPage, setCurrentQuickActionPage] = useState(1)
   const [selectedGranteeIds, setSelectedGranteeIds] = useState([])
   const [selectedGranteeRecord, setSelectedGranteeRecord] = useState(null)
   const [editGranteeForm, setEditGranteeForm] = useState(null)
@@ -488,6 +528,9 @@ function Admin({ onLogout }) {
   const [isSavingEdit, setIsSavingEdit] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedBatch, setSelectedBatch] = useState('')
+  const [selectedSemester, setSelectedSemester] = useState('')
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState('')
+  const [granteeRefreshVersion, setGranteeRefreshVersion] = useState(0)
   const [currentLogPage, setCurrentLogPage] = useState(1)
   const [currentBatchExportPage, setCurrentBatchExportPage] = useState(1)
   const [currentSchoolIdDownloadPage, setCurrentSchoolIdDownloadPage] = useState(1)
@@ -502,23 +545,30 @@ function Admin({ onLogout }) {
   const [currentCourseApplicantPage, setCurrentCourseApplicantPage] = useState(1)
   const [currentApplicantYearPage, setCurrentApplicantYearPage] = useState(1)
 
-  const quickActions = useQuery(api.quickActions.list)
+  const quickActions = useQuery(
+    api.quickActions.list,
+    adminSession?.sessionToken ? { sessionToken: adminSession.sessionToken } : 'skip',
+  )
+  const logoutSupportSession = useMutation(api.support.logout)
   const activityLogs = useQuery(api.activityLogs.list)
   const archivedItems = useQuery(api.archive.list, isArchiveOpen ? {} : 'skip')
-  const allInfoRecords = useQuery(api.allinfo.list)
-  const applicants = useQuery(api.applicants.list)
+  const allInfoRecords = useQuery(api.allinfo.list, { refreshVersion: granteeRefreshVersion })
+  const applicants = useQuery(
+    api.applicants.list,
+    adminSession?.sessionToken ? { sessionToken: adminSession.sessionToken } : 'skip',
+  )
   const applicantPortal = useQuery(api.applicantPortal.get)
   const studentAccounts = useQuery(api.adminAuth.listStudentAccounts)
   const setReceivingApplicants = useMutation(api.applicantPortal.setReceivingApplicants)
   const createAllInfoRecords = useMutation(api.allinfo.bulkCreate)
   const updateAllInfoRecord = useMutation(api.allinfo.update)
   const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
-  const clearAllQuickActions = useMutation(api.quickActions.clearAll)
   const clearAllActivityLogs = useMutation(api.activityLogs.clearAll)
   const restoreArchivedItem = useMutation(api.archive.restore)
   const removeArchivedItem = useAction(api.archive.remove)
   const deleteSchoolIdFilesByBatch = useAction(api.allinfo.deleteSchoolIdFilesByBatch)
   const deleteAllApplicantsByCourse = useAction(api.applicants.deleteAllByCourse)
+  const exportCourseApplicants = useAction(api.applicants.exportCourseApplicants)
   const updateStudentAccount = useMutation(api.adminAuth.updateStudentAccount)
   const deleteStudentAccount = useMutation(api.adminAuth.deleteStudentAccount)
 
@@ -529,9 +579,9 @@ function Admin({ onLogout }) {
     isUserManagementOpen ||
     Boolean(selectedUser) ||
     Boolean(userToDelete) ||
-    isQuickActionsClearConfirmOpen ||
     isUnifastPortalConfirmOpen ||
     isUnifastPortalCoursesOpen ||
+    isApplicantDownloadOpen ||
     isApplicantYearOpen ||
     Boolean(selectedUnifastCourse) ||
     isCourseApplicantDeleteConfirmOpen ||
@@ -551,6 +601,16 @@ function Admin({ onLogout }) {
     Boolean(schoolIdFileSuccess) ||
     Boolean(selectedGranteeRecord)
 
+  const handleAdminLogout = async () => {
+    try {
+      if (adminSession?.sessionToken) await logoutSupportSession({ sessionToken: adminSession.sessionToken })
+    } catch {
+      // Clear the browser session even when revocation cannot reach Convex.
+    } finally {
+      onLogout?.()
+    }
+  }
+
   const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
   const quickActionRows = quickActions ?? []
   const activityLogRows = activityLogs ?? []
@@ -559,6 +619,54 @@ function Admin({ onLogout }) {
   const studentAccountRows = useMemo(() => studentAccounts ?? [], [studentAccounts])
   const portalApplicationYear = applicantPortal?.applicationYear
   const activeApplicantYear = String(portalApplicationYear ?? new Date().getFullYear())
+  const applicantCourseCounts = useQuery(
+    api.applicants.getCourseCounts,
+    isApplicantDownloadOpen && adminSession?.sessionToken
+      ? { sessionToken: adminSession.sessionToken, applicationYear: activeApplicantYear }
+      : 'skip',
+  )
+  const visibleApplicantCourses = unifastPortalCourses.filter((course) =>
+    course.toLowerCase().includes(applicantCourseSearch.trim().toLowerCase()),
+  )
+  const applicantDownloadCount = applicantCourseCounts
+    ? applicantDownloadMode === 'all'
+      ? applicantCourseCounts.totalCount
+      : selectedApplicantCourses.reduce((total, course) => total + (applicantCourseCounts.counts?.[course] ?? 0), 0)
+    : 0
+
+  const receivingApplicantCourseOptions = useMemo(() => Array.from(
+    new Set(applicantRows.map((applicant) => getApplicantCourse(applicant)).filter(Boolean)),
+  ).sort((first, second) => first.localeCompare(second)), [applicantRows])
+  const receivingApplicantYearOptions = useMemo(() => Array.from(
+    new Set(applicantRows.map((applicant) => getApplicantApplicationYear(applicant)).filter(Boolean)),
+  ).sort((first, second) => second.localeCompare(first, undefined, { numeric: true })), [applicantRows])
+  const receivingApplicantStatusOptions = useMemo(() => Array.from(
+    new Set(applicantRows.map((applicant) => String(applicant.status ?? '').trim()).filter(Boolean)),
+  ).sort((first, second) => first.localeCompare(second)), [applicantRows])
+  const filteredReceivingApplicants = useMemo(() => {
+    const search = receivingApplicantSearch.trim().toLowerCase()
+    return applicantRows.filter((applicant) => {
+      const applicantName = [applicant.firstName, applicant.middleName, applicant.lastName, applicant.extensionName].filter(Boolean).join(' ')
+      const searchText = [
+        applicant.studentId, applicantName, applicant.course, applicant.year,
+        applicant.applicationYear, applicant.emailAddress, applicant.mobileNumber, applicant.status,
+      ].map((value) => String(value ?? '').toLowerCase()).join(' ')
+      return (!search || searchText.includes(search)) &&
+        (!receivingApplicantCourseFilter || getApplicantCourse(applicant) === receivingApplicantCourseFilter) &&
+        (!receivingApplicantYearFilter || getApplicantApplicationYear(applicant) === receivingApplicantYearFilter) &&
+        (!receivingApplicantStatusFilter || String(applicant.status ?? '').trim() === receivingApplicantStatusFilter)
+    })
+  }, [applicantRows, receivingApplicantSearch, receivingApplicantCourseFilter, receivingApplicantYearFilter, receivingApplicantStatusFilter])
+  const totalReceivingApplicantPages = Math.max(1, Math.ceil(filteredReceivingApplicants.length / receivingApplicantsPerPage))
+  const activeReceivingApplicantPage = Math.min(receivingApplicantPage, totalReceivingApplicantPages)
+  const firstReceivingApplicantIndex = (activeReceivingApplicantPage - 1) * receivingApplicantsPerPage
+  const currentReceivingApplicants = filteredReceivingApplicants.slice(
+    firstReceivingApplicantIndex,
+    firstReceivingApplicantIndex + receivingApplicantsPerPage,
+  )
+  const receivingApplicantPaginationItems = getPaginationItems(activeReceivingApplicantPage, totalReceivingApplicantPages)
+  const receivingApplicantShowingStart = filteredReceivingApplicants.length ? firstReceivingApplicantIndex + 1 : 0
+  const receivingApplicantShowingEnd = firstReceivingApplicantIndex + currentReceivingApplicants.length
 
   const applicantYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear()
@@ -607,6 +715,16 @@ function Admin({ onLogout }) {
           .filter(Boolean),
       ),
     ).sort()
+  }, [granteeRows])
+
+  const availableSchoolYears = useMemo(() => {
+    return Array.from(
+      new Set(granteeRows.map((record) => String(record.schoolYear ?? '').trim()).filter(Boolean)),
+    ).sort((firstYear, secondYear) => {
+      const firstStart = Number(firstYear.match(/\d{4}/)?.[0] ?? 0)
+      const secondStart = Number(secondYear.match(/\d{4}/)?.[0] ?? 0)
+      return secondStart - firstStart || secondYear.localeCompare(firstYear)
+    })
   }, [granteeRows])
 
   const batchExportRows = useMemo(() => {
@@ -697,22 +815,6 @@ function Admin({ onLogout }) {
     (row) => row.semester === selectedBatchExportSemester,
   )
 
-  const unifastCourseRows = useMemo(() => {
-    return unifastPortalCourses.map((course) => {
-      const applicantCount = applicantRows.filter((applicant) => {
-        return (
-          getApplicantApplicationYear(applicant) === activeApplicantYear &&
-          getApplicantCourse(applicant).toLowerCase() === course.toLowerCase()
-        )
-      }).length
-
-      return {
-        applicantCount,
-        course,
-      }
-    })
-  }, [activeApplicantYear, applicantRows])
-
   const selectedCourseApplicants = useMemo(() => {
     const selectedCourse = selectedUnifastCourse.trim().toLowerCase()
     if (!selectedCourse) return []
@@ -787,6 +889,8 @@ function Admin({ onLogout }) {
   const filteredGranteeRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     const batch = selectedBatch.trim().toLowerCase()
+    const semester = selectedSemester.trim().toLowerCase()
+    const schoolYear = selectedSchoolYear.trim().toLowerCase()
 
     return granteeRows.filter((record) => {
       const searchableText = [
@@ -808,10 +912,16 @@ function Admin({ onLogout }) {
       const matchesBatch = batch
         ? String(record.batchId ?? '').trim().toLowerCase() === batch
         : true
+      const matchesSemester = semester
+        ? String(record.semester ?? '').trim().toLowerCase() === semester
+        : true
+      const matchesSchoolYear = schoolYear
+        ? String(record.schoolYear ?? '').trim().toLowerCase() === schoolYear
+        : true
 
-      return matchesSearch && matchesBatch
+      return matchesSearch && matchesBatch && matchesSemester && matchesSchoolYear
     })
-  }, [granteeRows, searchQuery, selectedBatch])
+  }, [granteeRows, searchQuery, selectedBatch, selectedSemester, selectedSchoolYear])
 
   const totalGranteePages = Math.max(1, Math.ceil(filteredGranteeRows.length / granteesPerPage))
   const activeGranteePage = Math.min(currentGranteePage, totalGranteePages)
@@ -874,22 +984,6 @@ function Admin({ onLogout }) {
 
   const showingStart = filteredGranteeRows.length === 0 ? 0 : firstGranteeIndex + 1
   const showingEnd = firstGranteeIndex + currentGrantees.length
-
-  const totalQuickActionPages = Math.max(1, Math.ceil(quickActionRows.length / quickActionsPerPage))
-  const activeQuickActionPage = Math.min(currentQuickActionPage, totalQuickActionPages)
-  const firstQuickActionIndex = (activeQuickActionPage - 1) * quickActionsPerPage
-  const quickActionPaginationItems = getPaginationItems(
-    activeQuickActionPage,
-    totalQuickActionPages,
-  )
-
-  const currentQuickActions = quickActionRows.slice(
-    firstQuickActionIndex,
-    firstQuickActionIndex + quickActionsPerPage,
-  )
-
-  const quickActionShowingStart = quickActionRows.length === 0 ? 0 : firstQuickActionIndex + 1
-  const quickActionShowingEnd = firstQuickActionIndex + currentQuickActions.length
 
   const filteredStudentAccountRows = useMemo(() => {
     const query = userSearchQuery.trim().toLowerCase()
@@ -1016,10 +1110,6 @@ function Admin({ onLogout }) {
     setCurrentGranteePage(Math.min(Math.max(pageNumber, 1), totalGranteePages))
   }
 
-  const goToQuickActionPage = (pageNumber) => {
-    setCurrentQuickActionPage(Math.min(Math.max(pageNumber, 1), totalQuickActionPages))
-  }
-
   const goToLogPage = (pageNumber) => {
     setCurrentLogPage(Math.min(Math.max(pageNumber, 1), totalLogPages))
   }
@@ -1048,12 +1138,6 @@ function Admin({ onLogout }) {
 
   const goToApplicantYearPage = (pageNumber) => {
     setCurrentApplicantYearPage(Math.min(Math.max(pageNumber, 1), totalApplicantYearPages))
-  }
-
-  const openCourseApplicantModal = (course) => {
-    setSelectedUnifastCourse(course)
-    setCourseApplicantSearch('')
-    setCurrentCourseApplicantPage(1)
   }
 
   const closeCourseApplicantModal = () => {
@@ -1098,12 +1182,6 @@ function Admin({ onLogout }) {
     setIsSchoolIdDeleteConfirmOpen(false)
   }
 
-  const resetFilters = () => {
-    setSearchQuery('')
-    setSelectedBatch('')
-    setCurrentGranteePage(1)
-  }
-
   const handleSearchQueryChange = (event) => {
     setSearchQuery(event.target.value)
     setCurrentGranteePage(1)
@@ -1111,6 +1189,16 @@ function Admin({ onLogout }) {
 
   const handleSelectedBatchChange = (event) => {
     setSelectedBatch(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const handleSelectedSemesterChange = (event) => {
+    setSelectedSemester(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const handleSelectedSchoolYearChange = (event) => {
+    setSelectedSchoolYear(event.target.value)
     setCurrentGranteePage(1)
   }
 
@@ -1312,64 +1400,7 @@ function Admin({ onLogout }) {
 
     await new Promise((resolve) => window.setTimeout(resolve, 120))
 
-    const csvRows = [
-      [
-        'Application Year',
-        'Course',
-        'Student ID',
-        'Last Name',
-        'First Name',
-        'Ext Name',
-        'Middle Name',
-        'Gender',
-        'Birth Date',
-        'Year',
-        'Father Last Name',
-        'Father First Name',
-        'Father Middle Name',
-        'Mother Last Name',
-        'Mother First Name',
-        'Mother Middle Name',
-        'Address',
-        'Zip Code',
-        'PWD ID',
-        'PWD ID PDF',
-        '4Ps ID PDF',
-        'COR / Study Load PDF',
-        'Mobile No.',
-        'Email Address',
-        'Status',
-        'Submitted At',
-      ],
-      ...courseRecords.map((applicant) => [
-        getApplicantApplicationYear(applicant),
-        getApplicantCourse(applicant) || selectedCourse,
-        applicant.studentId ?? '',
-        applicant.lastName ?? '',
-        applicant.firstName ?? '',
-        applicant.extensionName ?? '',
-        applicant.middleName ?? '',
-        applicant.gender ?? '',
-        applicant.birthDate ?? '',
-        applicant.year ?? '',
-        applicant.fatherLastName ?? '',
-        applicant.fatherFirstName ?? '',
-        applicant.fatherMiddleName ?? '',
-        applicant.motherLastName ?? '',
-        applicant.motherFirstName ?? '',
-        applicant.motherMiddleName ?? '',
-        applicant.address ?? '',
-        applicant.zipCode ?? '',
-        applicant.pwdId ?? '',
-        applicant.pwdIdFileName ?? '',
-        applicant.fourPsFileName ?? '',
-        applicant.corFileName ?? '',
-        applicant.mobileNumber ?? '',
-        applicant.emailAddress ?? '',
-        applicant.status ?? '',
-        formatSubmittedAt(applicant.submittedAt),
-      ]),
-    ]
+    const csvRows = createUnifastApplicantCsvRows(courseRecords, selectedCourse)
 
     setCourseApplicantDownloadProgress(72)
     await new Promise((resolve) => window.setTimeout(resolve, 120))
@@ -1463,30 +1494,6 @@ function Admin({ onLogout }) {
     downloadCsvFile(`student-requests-responses-${exportedDate}.csv`, csvRows)
   }
 
-  const openClearAllQuickActionsConfirm = () => {
-    if (isClearingQuickActions || quickActionRows.length === 0) return
-
-    setIsQuickActionsClearConfirmOpen(true)
-  }
-
-  const handleClearAllQuickActions = async () => {
-    if (isClearingQuickActions || quickActionRows.length === 0) return
-
-    setIsClearingQuickActions(true)
-
-    try {
-      await clearAllQuickActions({})
-      setCurrentQuickActionPage(1)
-      setIsQuickActionsClearConfirmOpen(false)
-    } catch (error) {
-      window.alert(
-        error instanceof Error ? error.message : 'Unable to clear Quick Action messages.',
-      )
-    } finally {
-      setIsClearingQuickActions(false)
-    }
-  }
-
   const handleClearAllActivityLogs = async () => {
     if (isClearingActivityLogs || activityLogRows.length === 0) return
 
@@ -1555,6 +1562,7 @@ function Admin({ onLogout }) {
   const updateApplicantPortalStatus = async (isReceivingApplicants, applicationYear) => {
     try {
       const result = await setReceivingApplicants({
+        sessionToken: adminSession?.sessionToken,
         isReceivingApplicants,
         ...(applicationYear ? { applicationYear } : {}),
       })
@@ -1578,11 +1586,88 @@ function Admin({ onLogout }) {
   const closeUnifastPortalModals = () => {
     setIsUnifastPortalConfirmOpen(false)
     setIsUnifastPortalCoursesOpen(false)
+    setIsApplicantDownloadOpen(false)
     setIsApplicantYearOpen(false)
     setCurrentApplicantYearPage(1)
     setSelectedUnifastCourse('')
     setCourseApplicantSearch('')
     setCurrentCourseApplicantPage(1)
+    setViewReceivingApplicant(null)
+  }
+
+  const openApplicantDownloadModal = () => {
+    setApplicantDownloadMode('all')
+    setSelectedApplicantCourses([])
+    setApplicantCourseSearch('')
+    setApplicantDownloadError('')
+    setIsApplicantDownloadOpen(true)
+  }
+
+  const closeApplicantDownloadModal = () => {
+    if (isDownloadingCourseApplicants) return
+    setIsApplicantDownloadOpen(false)
+    setApplicantDownloadError('')
+  }
+
+  const toggleApplicantCourse = (course) => {
+    setSelectedApplicantCourses((current) => current.includes(course)
+      ? current.filter((selectedCourse) => selectedCourse !== course)
+      : [...current, course])
+    setApplicantDownloadError('')
+  }
+
+  const downloadSelectedApplicantRecords = async () => {
+    if (isDownloadingCourseApplicants) return
+    if (applicantCourseCounts === undefined) {
+      setApplicantDownloadError('Applicant counts are still loading. Please try again in a moment.')
+      return
+    }
+    const courses = applicantDownloadMode === 'all'
+      ? unifastPortalCourses
+      : unifastPortalCourses.filter((course) => selectedApplicantCourses.includes(course))
+    if (!courses.length) {
+      setApplicantDownloadError('Select at least one course to download applicant records.')
+      return
+    }
+    if (applicantDownloadCount === 0) {
+      setApplicantDownloadError('No applicant records match the selected courses and application year.')
+      return
+    }
+
+    setApplicantDownloadError('')
+    setIsDownloadingCourseApplicants(true)
+    setCourseApplicantDownloadProgress(12)
+    try {
+      const records = await exportCourseApplicants({
+        sessionToken: adminSession?.sessionToken,
+        applicationYear: activeApplicantYear,
+        courses,
+      })
+      if (!Array.isArray(records) || records.length === 0) {
+        throw new Error('No applicant records matched the selected courses and application year.')
+      }
+      setCourseApplicantDownloadProgress(76)
+      const csvRows = createUnifastApplicantCsvRows(records)
+      const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
+      const courseLabel = applicantDownloadMode === 'all' ? 'all-courses' : 'selected-courses'
+      if (!downloadCsvFile(`unifast-applicants-${safeYear}-${courseLabel}.csv`, csvRows)) {
+        throw new Error('The applicant CSV file could not be generated.')
+      }
+      setCourseApplicantDownloadProgress(100)
+      await new Promise((resolve) => window.setTimeout(resolve, 220))
+      setIsApplicantDownloadOpen(false)
+      setCourseApplicantSuccess({
+        count: records.length,
+        course: applicantDownloadMode === 'all' ? 'All courses' : `${courses.length} selected courses`,
+        type: 'download',
+        year: activeApplicantYear,
+      })
+    } catch (error) {
+      setApplicantDownloadError(error instanceof Error ? error.message : 'Unable to download applicant records. Please try again.')
+    } finally {
+      setIsDownloadingCourseApplicants(false)
+      setCourseApplicantDownloadProgress(0)
+    }
   }
 
   const openBatchExportModal = () => {
@@ -1614,7 +1699,6 @@ function Admin({ onLogout }) {
   }
 
   const openQuickActions = () => {
-    setCurrentQuickActionPage(1)
     setIsQuickActionsOpen(true)
   }
 
@@ -1934,18 +2018,12 @@ function Admin({ onLogout }) {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
-        if (isQuickActionsClearConfirmOpen && !isClearingQuickActions) {
-          setIsQuickActionsClearConfirmOpen(false)
-          return
-        }
-
         setIsLogsOpen(false)
         setIsArchiveOpen(false)
         setIsQuickActionsOpen(false)
         setIsUserManagementOpen(false)
         setSelectedUser(null)
         setUserToDelete(null)
-        setIsQuickActionsClearConfirmOpen(false)
         setIsUnifastPortalConfirmOpen(false)
         setIsUnifastPortalCoursesOpen(false)
         setIsApplicantYearOpen(false)
@@ -1977,7 +2055,7 @@ function Admin({ onLogout }) {
       document.body.style.overflow = ''
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isAnyModalOpen, isClearingQuickActions, isQuickActionsClearConfirmOpen])
+  }, [isAnyModalOpen])
 
   return (
     <div className="admin-page">
@@ -2040,7 +2118,7 @@ function Admin({ onLogout }) {
             Quick Actions
           </button>
 
-          <button className="admin-button admin-button--admin" onClick={onLogout} type="button">
+          <button className="admin-button admin-button--admin" onClick={handleAdminLogout} type="button">
             <span className="material-symbols-outlined">logout</span>
             Logout
           </button>
@@ -2142,14 +2220,15 @@ function Admin({ onLogout }) {
             <div className="admin-search-field">
               <span className="material-symbols-outlined">search</span>
               <input
-                placeholder="Search by Student ID, award number, status, semester..."
+                aria-label="Search grantee records"
+                placeholder="Search by Student ID, award number, status, or semester..."
                 type="text"
                 value={searchQuery}
                 onChange={handleSearchQueryChange}
               />
             </div>
 
-            <select value={selectedBatch} onChange={handleSelectedBatchChange}>
+            <select aria-label="Filter by batch" value={selectedBatch} onChange={handleSelectedBatchChange}>
               <option value="">All Batches</option>
               {availableBatches.map((batch) => (
                 <option key={batch} value={batch}>
@@ -2158,12 +2237,25 @@ function Admin({ onLogout }) {
               ))}
             </select>
 
+            <select aria-label="Filter by semester" value={selectedSemester} onChange={handleSelectedSemesterChange}>
+              <option value="">All Semesters</option>
+              <option value="1st Semester">1st Semester</option>
+              <option value="2nd Semester">2nd Semester</option>
+            </select>
+
+            <select aria-label="Filter by school year" value={selectedSchoolYear} onChange={handleSelectedSchoolYearChange}>
+              <option value="">All School Years</option>
+              {availableSchoolYears.map((schoolYear) => (
+                <option key={schoolYear} value={schoolYear}>{schoolYear}</option>
+              ))}
+            </select>
+
             <button
               className="admin-filter-button"
               type="button"
-              aria-label="Reset filters"
-              title="Reset filters"
-              onClick={resetFilters}
+              aria-label="Refresh records"
+              title="Refresh records"
+              onClick={() => setGranteeRefreshVersion((version) => version + 1)}
             >
               <span className="material-symbols-outlined">refresh</span>
             </button>
@@ -2184,6 +2276,7 @@ function Admin({ onLogout }) {
                     <th>No.</th>
                     <th>TES Award Number</th>
                     <th>Student ID</th>
+                    <th>TES Details</th>
                     <th>Last Name</th>
                     <th>First Name</th>
                     <th>MI.</th>
@@ -3236,6 +3329,7 @@ function Admin({ onLogout }) {
                 className="admin-button admin-button--primary"
                 onClick={() => {
                   setIsUnifastPortalConfirmOpen(false)
+                  setReceivingApplicantPage(1)
                   setIsUnifastPortalCoursesOpen(true)
                 }}
                 type="button"
@@ -3251,7 +3345,7 @@ function Admin({ onLogout }) {
         <div
           aria-labelledby="admin-unifast-courses-title"
           aria-modal="true"
-          className="admin-modal-overlay"
+          className="admin-modal-overlay admin-receiving-applicants-overlay"
           role="dialog"
         >
           <button
@@ -3261,14 +3355,12 @@ function Admin({ onLogout }) {
             type="button"
           />
 
-          <section className="admin-modal-card">
-            <div className="admin-modal-header">
+          <section className="admin-modal-card admin-receiving-applicants-modal">
+            <div className="admin-modal-header admin-receiving-applicants-header">
               <div>
                 <p className="admin-modal-kicker">Receiving Applicants Information</p>
-                <h2 id="admin-unifast-courses-title">Choose Course</h2>
-                <p>
-                  Select a specific course to download applicant information for {activeApplicantYear}.
-                </p>
+                <h2 id="admin-unifast-courses-title">Receiving Applicants Management</h2>
+                <p>Manage applicant records, application availability, and downloads.</p>
               </div>
 
               <button
@@ -3281,17 +3373,17 @@ function Admin({ onLogout }) {
               </button>
             </div>
 
-            <div className="admin-applicant-portal-controls">
-              <div>
+            <div className="admin-receiving-applicants-controls">
+              <div className="admin-receiving-status">
+                <span className={`admin-receiving-status__indicator${applicantPortal?.isReceivingApplicants ? ' is-open' : ' is-closed'}`} />
+                <div>
                 <span>Landing Portal Status</span>
-                <strong>
-                  {applicantPortal?.isReceivingApplicants
-                    ? `Receiving ${activeApplicantYear} applicants`
-                    : 'Closed for applicants'}
-                </strong>
+                  <strong>{applicantPortal === undefined ? 'Checking status' : applicantPortal.isReceivingApplicants ? 'OPEN' : 'CLOSED'}</strong>
+                  <small>{applicantPortal?.isReceivingApplicants ? `Receiving ${activeApplicantYear} applicants` : `Not receiving ${activeApplicantYear} applicants`}</small>
+                </div>
               </div>
 
-              <div className="admin-applicant-portal-actions">
+              <div className="admin-receiving-applicants-actions">
                 <button
                   className="admin-button admin-button--primary"
                   disabled={applicantPortal === undefined || applicantPortal?.isReceivingApplicants}
@@ -3312,35 +3404,300 @@ function Admin({ onLogout }) {
                 >
                   Close Applicants
                 </button>
+                <button
+                  className="admin-button admin-button--primary admin-download-applicants-button"
+                  onClick={openApplicantDownloadModal}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">download</span>
+                  Download Applicants
+                </button>
               </div>
             </div>
 
-            <div className="admin-school-year-downloads admin-course-downloads">
-              {unifastCourseRows.map(({ applicantCount, course }) => (
-                <button
-                  className="admin-school-year-button"
-                  disabled={applicants === undefined}
-                  key={course}
-                  onClick={() => openCourseApplicantModal(course)}
-                  type="button"
-                >
-                  <span>{course}</span>
-                  <strong>
-                    {applicants === undefined
-                      ? 'Loading...'
-                      : `${applicantCount} ${applicantCount === 1 ? 'applicant' : 'applicants'}`}
-                  </strong>
+            <div className="admin-receiving-applicants-body">
+              <div className="admin-receiving-grantee-toolbar">
+                <label className="admin-receiving-grantee-search">
+                  <span className="material-symbols-outlined" aria-hidden="true">search</span>
+                  <input
+                    aria-label="Search applicants"
+                    onChange={(event) => { setReceivingApplicantSearch(event.target.value); setReceivingApplicantPage(1) }}
+                    placeholder="Search student ID, applicant name, email, or course"
+                    type="search"
+                    value={receivingApplicantSearch}
+                  />
+                </label>
+                <select aria-label="Filter applicants by course" onChange={(event) => { setReceivingApplicantCourseFilter(event.target.value); setReceivingApplicantPage(1) }} value={receivingApplicantCourseFilter}>
+                  <option value="">All Courses</option>
+                  {receivingApplicantCourseOptions.map((course) => <option key={course} value={course}>{course}</option>)}
+                </select>
+                <select aria-label="Filter applicants by application year" onChange={(event) => { setReceivingApplicantYearFilter(event.target.value); setReceivingApplicantPage(1) }} value={receivingApplicantYearFilter}>
+                  <option value="">All Application Years</option>
+                  {receivingApplicantYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                </select>
+                <select aria-label="Filter applicants by status" onChange={(event) => { setReceivingApplicantStatusFilter(event.target.value); setReceivingApplicantPage(1) }} value={receivingApplicantStatusFilter}>
+                  <option value="">All Statuses</option>
+                  {receivingApplicantStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+                <button className="admin-button admin-button--secondary admin-receiving-reset" onClick={() => { setReceivingApplicantSearch(''); setReceivingApplicantCourseFilter(''); setReceivingApplicantYearFilter(''); setReceivingApplicantStatusFilter(''); setReceivingApplicantPage(1) }} type="button">
+                  <span className="material-symbols-outlined" aria-hidden="true">filter_alt_off</span>
+                  Reset Filters
                 </button>
-              ))}
+              </div>
+
+              <div className="admin-receiving-grantee-table-wrap">
+                <table className="admin-receiving-grantee-table">
+                  <thead>
+                    <tr>
+                      <th>Student ID</th><th>Applicant Name</th><th>Course</th><th>Year Level</th><th>Application Year</th><th>Status</th><th>Mobile Number</th><th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {applicants === undefined ? (
+                      <tr><td className="admin-receiving-empty" colSpan={8}>Loading applicants...</td></tr>
+                    ) : filteredReceivingApplicants.length === 0 ? (
+                      <tr><td className="admin-receiving-empty" colSpan={8}>{applicantRows.length ? 'No applicants match these filters.' : 'No applicant records are available yet.'}</td></tr>
+                    ) : currentReceivingApplicants.map((applicant) => {
+                      const applicantName = [applicant.firstName, applicant.middleName, applicant.lastName, applicant.extensionName].filter(Boolean).join(' ')
+                      return (
+                        <tr key={applicant._id}>
+                          <td>{applicant.studentId || '—'}</td>
+                          <td>{applicantName || '—'}</td>
+                          <td>{getApplicantCourse(applicant) || '—'}</td>
+                          <td>{applicant.year || applicant.yearLevelCode || '—'}</td>
+                          <td>{getApplicantApplicationYear(applicant) || '—'}</td>
+                          <td><AdminStatusBadge status={applicant.status} tone={getQuickActionStatusTone(applicant.status)} /></td>
+                          <td>{applicant.mobileNumber || '—'}</td>
+                          <td><button aria-label={`View details for applicant ${applicant.studentId || ''}`} className="admin-receiving-view-button" onClick={() => setViewReceivingApplicant(applicant)} type="button"><span className="material-symbols-outlined" aria-hidden="true">visibility</span>View</button></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            <div className="admin-upload-actions">
+            <footer className="admin-receiving-applicants-footer">
+              <p>Showing <strong>{receivingApplicantShowingStart}–{receivingApplicantShowingEnd}</strong> of <strong>{filteredReceivingApplicants.length}</strong> applicants</p>
+              <div className="admin-pagination__buttons" aria-label="Applicant records pages">
+                <button aria-label="Previous page" disabled={activeReceivingApplicantPage <= 1} onClick={() => setReceivingApplicantPage((page) => Math.max(1, page - 1))} type="button">‹</button>
+                {receivingApplicantPaginationItems.map((pageItem, index) => typeof pageItem === 'string' ? (
+                  <span className="admin-pagination__ellipsis" key={`ellipsis-${index}`}>…</span>
+                ) : (
+                  <button aria-current={activeReceivingApplicantPage === pageItem ? 'page' : undefined} className={activeReceivingApplicantPage === pageItem ? 'admin-page-button--active' : ''} key={pageItem} onClick={() => setReceivingApplicantPage(pageItem)} type="button">{pageItem}</button>
+                ))}
+                <button aria-label="Next page" disabled={activeReceivingApplicantPage >= totalReceivingApplicantPages} onClick={() => setReceivingApplicantPage((page) => Math.min(totalReceivingApplicantPages, page + 1))} type="button">›</button>
+              </div>
+              <button className="admin-button admin-button--secondary admin-receiving-close" onClick={closeUnifastPortalModals} type="button">Close</button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {viewReceivingApplicant && (
+        <div className="admin-modal-overlay admin-receiving-details-overlay" role="dialog" aria-modal="true" aria-labelledby="admin-receiving-details-title">
+          <button aria-label="Close applicant details" className="admin-modal-backdrop" onClick={() => setViewReceivingApplicant(null)} type="button" />
+          <section className="admin-modal-card admin-receiving-details-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Applicant Record</p>
+                <h2 id="admin-receiving-details-title">Applicant Details</h2>
+                <p>Application information submitted to the Scholarship Office.</p>
+              </div>
+              <button aria-label="Close applicant details" className="admin-modal-close" onClick={() => setViewReceivingApplicant(null)} type="button">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="admin-receiving-details-body">
+              <div className="admin-receiving-details-grid">
+                {[
+                  ['Student ID', viewReceivingApplicant.studentId],
+                  ['Applicant Name', [viewReceivingApplicant.firstName, viewReceivingApplicant.middleName, viewReceivingApplicant.lastName, viewReceivingApplicant.extensionName].filter(Boolean).join(' ')],
+                  ['Course', getApplicantCourse(viewReceivingApplicant)],
+                  ['Year Level', viewReceivingApplicant.year || viewReceivingApplicant.yearLevelCode],
+                  ['Application Year', getApplicantApplicationYear(viewReceivingApplicant)],
+                  ['Status', viewReceivingApplicant.status],
+                  ['Gender', viewReceivingApplicant.gender],
+                  ['Birth Date', viewReceivingApplicant.birthDate],
+                  ['Mobile Number', viewReceivingApplicant.mobileNumber],
+                  ['Email Address', viewReceivingApplicant.emailAddress],
+                  ['Address', viewReceivingApplicant.address],
+                ].map(([label, value]) => (
+                  <div key={label}><span>{label}</span><strong>{value || '—'}</strong></div>
+                ))}
+              </div>
+
+              <section className="admin-receiving-documents" aria-labelledby="admin-receiving-documents-title">
+                <div className="admin-receiving-documents__heading">
+                  <div>
+                    <span className="material-symbols-outlined" aria-hidden="true">folder_open</span>
+                    <h3 id="admin-receiving-documents-title">Submitted ID Files</h3>
+                  </div>
+                  <p>Open a submitted PDF in a new tab.</p>
+                </div>
+                <div className="admin-receiving-documents-grid">
+                  {[
+                    { label: 'Birth Certificate (PSA)', url: viewReceivingApplicant.psaFileUrl, fileName: viewReceivingApplicant.psaFileName, icon: 'picture_as_pdf' },
+                    { label: 'School ID', url: viewReceivingApplicant.schoolIdFileUrl, fileName: viewReceivingApplicant.schoolIdFileName, icon: 'badge' },
+                    { label: 'COR / Study Load', url: viewReceivingApplicant.corFileUrl, fileName: viewReceivingApplicant.corFileName, icon: 'description' },
+                    { label: 'PWD ID', url: viewReceivingApplicant.pwdIdFileUrl, fileName: viewReceivingApplicant.pwdIdFileName, icon: 'accessible' },
+                    { label: '4Ps ID', url: viewReceivingApplicant.fourPsFileUrl, fileName: viewReceivingApplicant.fourPsFileName, icon: 'family_restroom' },
+                  ].map(({ fileName, icon, label, url }) => (
+                    <div className="admin-receiving-document-card" key={label}>
+                      <span className="admin-receiving-document-card__icon material-symbols-outlined" aria-hidden="true">{icon}</span>
+                      <div className="admin-receiving-document-card__copy">
+                        <strong>{label}</strong>
+                        <small>{url ? fileName || 'PDF document' : 'Not submitted'}</small>
+                      </div>
+                      {url ? (
+                        <a className="admin-receiving-document-view" href={url} rel="noopener noreferrer" target="_blank" aria-label={`View ${label}`}>
+                          <span className="material-symbols-outlined" aria-hidden="true">visibility</span>
+                          View
+                        </a>
+                      ) : (
+                        <span className="admin-receiving-document-missing">—</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+            <div className="admin-receiving-details-footer">
+              <button className="admin-button admin-button--secondary" onClick={() => setViewReceivingApplicant(null)} type="button">Done</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isApplicantDownloadOpen && (
+        <div
+          aria-labelledby="admin-applicant-download-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-applicant-download-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant download dialog"
+            className="admin-modal-backdrop"
+            disabled={isDownloadingCourseApplicants}
+            onClick={closeApplicantDownloadModal}
+            type="button"
+          />
+          <section className="admin-modal-card admin-applicant-download-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Receiving Applicants Information</p>
+                <h2 id="admin-applicant-download-title">Download Applicant Records</h2>
+                <p>Choose all courses or select the courses to include in your {activeApplicantYear} CSV.</p>
+              </div>
               <button
-                className="admin-button admin-button--secondary"
-                onClick={closeUnifastPortalModals}
+                aria-label="Close applicant download dialog"
+                className="admin-modal-close"
+                disabled={isDownloadingCourseApplicants}
+                onClick={closeApplicantDownloadModal}
                 type="button"
               >
-                Cancel
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-applicant-download-body">
+              {applicantCourseCounts === undefined ? (
+                <div className="admin-applicant-download-loading" role="status">
+                  <span className="material-symbols-outlined" aria-hidden="true">progress_activity</span>
+                  Loading live applicant counts for {activeApplicantYear}...
+                </div>
+              ) : (
+                <>
+                  <div className="admin-applicant-download-options">
+                    <label className={`admin-applicant-download-option${applicantDownloadMode === 'all' ? ' is-selected' : ''}`}>
+                      <input
+                        checked={applicantDownloadMode === 'all'}
+                        name="applicant-download-mode"
+                        onChange={() => { setApplicantDownloadMode('all'); setApplicantDownloadError('') }}
+                        type="radio"
+                        value="all"
+                      />
+                      <span className="admin-applicant-download-option__copy">
+                        <strong>All Courses</strong>
+                        <small>Include every course with applicant records.</small>
+                      </span>
+                      <span className="admin-applicant-download-count">{applicantCourseCounts.totalCount} records</span>
+                    </label>
+                    <label className={`admin-applicant-download-option${applicantDownloadMode === 'specific' ? ' is-selected' : ''}`}>
+                      <input
+                        checked={applicantDownloadMode === 'specific'}
+                        name="applicant-download-mode"
+                        onChange={() => { setApplicantDownloadMode('specific'); setApplicantDownloadError('') }}
+                        type="radio"
+                        value="specific"
+                      />
+                      <span className="admin-applicant-download-option__copy">
+                        <strong>Select Specific Courses</strong>
+                        <small>Choose one or more courses to include.</small>
+                      </span>
+                      <span className="admin-applicant-download-count">{selectedApplicantCourses.length} selected</span>
+                    </label>
+                  </div>
+
+                  {applicantDownloadMode === 'specific' && (
+                    <div className="admin-applicant-course-picker">
+                      <div className="admin-applicant-course-picker__toolbar">
+                        <label className="admin-applicant-course-search">
+                          <span className="material-symbols-outlined" aria-hidden="true">search</span>
+                          <input
+                            aria-label="Search courses"
+                            onChange={(event) => setApplicantCourseSearch(event.target.value)}
+                            placeholder="Search courses"
+                            type="search"
+                            value={applicantCourseSearch}
+                          />
+                        </label>
+                        <div>
+                          <button className="admin-link-button" onClick={() => setSelectedApplicantCourses(unifastPortalCourses)} type="button">Select all</button>
+                          <button className="admin-link-button" onClick={() => setSelectedApplicantCourses([])} type="button">Deselect all</button>
+                        </div>
+                      </div>
+                      <div className="admin-applicant-course-list">
+                        {visibleApplicantCourses.length ? visibleApplicantCourses.map((course) => (
+                          <label className="admin-applicant-course-item" key={course}>
+                            <input
+                              checked={selectedApplicantCourses.includes(course)}
+                              onChange={() => toggleApplicantCourse(course)}
+                              type="checkbox"
+                            />
+                            <span>{course}</span>
+                            <strong>{applicantCourseCounts.counts?.[course] ?? 0}</strong>
+                          </label>
+                        )) : (
+                          <p className="admin-applicant-course-empty">No courses match “{applicantCourseSearch}”.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="admin-applicant-download-summary">
+                    <span>Matching records for {activeApplicantYear}</span>
+                    <strong>{applicantDownloadCount.toLocaleString()}</strong>
+                  </div>
+                  {applicantDownloadCount === 0 && (
+                    <p className="admin-applicant-download-empty">No applicant records match this selection for {activeApplicantYear}.</p>
+                  )}
+                </>
+              )}
+              {applicantDownloadError && <p className="admin-applicant-download-error" role="alert">{applicantDownloadError}</p>}
+            </div>
+
+            <div className="admin-applicant-download-footer">
+              <button className="admin-button admin-button--secondary" disabled={isDownloadingCourseApplicants} onClick={closeApplicantDownloadModal} type="button">Cancel</button>
+              <button
+                className="admin-button admin-button--primary"
+                disabled={applicantCourseCounts === undefined || !applicantDownloadCount || (applicantDownloadMode === 'specific' && !selectedApplicantCourses.length) || isDownloadingCourseApplicants}
+                onClick={downloadSelectedApplicantRecords}
+                type="button"
+              >
+                <span className="material-symbols-outlined" aria-hidden="true">download</span>
+                {isDownloadingCourseApplicants ? 'Preparing CSV...' : `Download CSV (${applicantDownloadCount.toLocaleString()} Applicants)`}
               </button>
             </div>
           </section>
@@ -3597,7 +3954,7 @@ function Admin({ onLogout }) {
                 <tbody>
                   {applicants === undefined && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={16}>
+                      <td className="admin-empty-state" colSpan={17}>
                         Loading applicants...
                       </td>
                     </tr>
@@ -3605,7 +3962,7 @@ function Admin({ onLogout }) {
 
                   {applicants !== undefined && filteredCourseApplicants.length === 0 && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={16}>
+                      <td className="admin-empty-state" colSpan={17}>
                         No applicants found for this course.
                       </td>
                     </tr>
@@ -3626,6 +3983,24 @@ function Admin({ onLogout }) {
                       <tr key={applicant._id}>
                         <td data-label="No.">{firstCourseApplicantIndex + index + 1}</td>
                         <td data-label="Student ID">{applicant.studentId}</td>
+                        <td data-label="TES Details">
+                          <details className="admin-applicant-details">
+                            <summary>View details</summary>
+                            <dl>
+                              <div><dt>LRN</dt><dd>{applicant.lrn || 'Not provided'}</dd></div>
+                              <div><dt>PhilSys ID</dt><dd>{applicant.philSysIdNumber || 'Not provided'}</dd></div>
+                              <div><dt>4Ps ID</dt><dd>{applicant.fourPsIdNumber || 'Not provided'}</dd></div>
+                              <div><dt>Address</dt><dd>{[applicant.streetBarangay, applicant.cityMunicipality, applicant.province, applicant.region, applicant.zipCode].filter(Boolean).join(', ') || applicant.address}</dd></div>
+                              <div><dt>Father</dt><dd>{applicant.fatherInformationUnavailable ? 'Information unavailable' : [applicant.fatherFirstName, applicant.fatherMiddleName, applicant.fatherLastName].filter(Boolean).join(' ') || 'Not provided'}</dd></div>
+                              <div><dt>Mother</dt><dd>{applicant.motherInformationUnavailable ? 'Information unavailable' : [applicant.motherFirstName, applicant.motherMiddleName, applicant.motherLastName].filter(Boolean).join(' ') || 'Not provided'}</dd></div>
+                              <div><dt>Disability</dt><dd>{applicant.hasDisability ? `Yes${applicant.disabilityType ? ` — ${applicant.disabilityType}` : ''}` : 'No'}</dd></div>
+                              <div><dt>Solo parent dependent</dt><dd>{applicant.soloParentDependent === 1 ? 'Yes' : 'No'}</dd></div>
+                              <div><dt>First generation</dt><dd>{applicant.firstGeneration === 1 ? 'Yes' : 'No'}</dd></div>
+                              <div><dt>Indigenous Peoples member</dt><dd>{applicant.isIndigenous ? `Yes${applicant.indigenousGroup ? ` — ${applicant.indigenousGroup}` : ''}` : 'No'}</dd></div>
+                              <div><dt>Classification</dt><dd>{applicant.applicantClassification || 'TES Applicant'}</dd></div>
+                            </dl>
+                          </details>
+                        </td>
                         <td className="admin-applicant-name" data-label="Applicant Name">
                           {applicantName}
                         </td>
@@ -4816,280 +5191,25 @@ function Admin({ onLogout }) {
         <div
           aria-labelledby="admin-quick-actions-title"
           aria-modal="true"
-          className="admin-modal-overlay"
+          className="admin-modal-overlay admin-modal-overlay--support"
           role="dialog"
         >
           <button
-            aria-label="Close quick actions modal"
+            aria-label="Close Student Support modal"
             className="admin-modal-backdrop"
-            onClick={() => {
-              if (!isQuickActionsClearConfirmOpen) setIsQuickActionsOpen(false)
-            }}
+            onClick={() => setIsQuickActionsOpen(false)}
             type="button"
           />
-
           <section className="admin-modal-card admin-modal-card--wide admin-modal-card--quick-actions">
-            <div className="admin-modal-header">
-              <div>
-                <p className="admin-modal-kicker">Quick Actions</p>
-                <h2 id="admin-quick-actions-title">Student Requests</h2>
-                <p>Review submitted questions and requests from the student portal.</p>
-              </div>
-
-              <button
-                aria-label="Close quick actions"
-                className="admin-modal-close"
-                onClick={() => {
-                  setIsQuickActionsOpen(false)
-                  setIsQuickActionsClearConfirmOpen(false)
-                }}
-                type="button"
-              >
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-
-            <div className="admin-quick-actions-summary">
-              <div>
-                <span>Total Requests</span>
-                <strong>{quickActions?.length ?? 0}</strong>
-              </div>
-
-              <div>
-                <span>Source</span>
-                <strong>Student Portal</strong>
-              </div>
-
-              <div>
-                <span>Status</span>
-                <strong>Live Data</strong>
-              </div>
-            </div>
-
-            <div className="admin-quick-actions-toolbar">
-              <div>
-                <span>Export Report</span>
-                <strong>Download all student responses with email accounts.</strong>
-              </div>
-
-              <div className="admin-quick-actions-toolbar__actions">
-                <button
-                  className="admin-button admin-button--primary"
-                  disabled={
-                    quickActions === undefined ||
-                    quickActionRows.length === 0 ||
-                    isClearingQuickActions
-                  }
-                  onClick={exportQuickActionResponsesCsv}
-                  type="button"
-                >
-                  <span className="material-symbols-outlined">download</span>
-                  Export All Responses
-                </button>
-
-                <button
-                  className="admin-button admin-button--danger"
-                  disabled={
-                    quickActions === undefined ||
-                    quickActionRows.length === 0 ||
-                    isClearingQuickActions
-                  }
-                  onClick={openClearAllQuickActionsConfirm}
-                  type="button"
-                >
-                  <span className="material-symbols-outlined">delete_sweep</span>
-                  {isClearingQuickActions ? 'Clearing...' : 'Clear All Messages'}
-                </button>
-              </div>
-            </div>
-
-            <div className="admin-quick-actions-table-wrap">
-              <table className="admin-quick-actions-table">
-                <thead>
-                  <tr>
-                    <th>No.</th>
-                    <th>Student Details</th>
-                    <th>Email Account</th>
-                    <th>Question</th>
-                    <th>Source</th>
-                    <th>Status</th>
-                    <th>Submitted</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {quickActions === undefined && (
-                    <tr>
-                      <td className="admin-empty-state" colSpan={7}>
-                        Loading quick actions...
-                      </td>
-                    </tr>
-                  )}
-
-                  {quickActions?.length === 0 && (
-                    <tr>
-                      <td className="admin-empty-state" colSpan={7}>
-                        No quick action requests yet.
-                      </td>
-                    </tr>
-                  )}
-
-                  {currentQuickActions.map((request, index) => (
-                    <tr key={request._id}>
-                      <td data-label="No.">{firstQuickActionIndex + index + 1}</td>
-
-                      <td className="admin-request-student" data-label="Student Details">
-                        <strong>{formatQuickActionStudentName(request) || 'Not provided'}</strong>
-                        <span>{request.studentId || 'No Student ID'}</span>
-                      </td>
-
-                      <td className="admin-request-email" data-label="Email Account">
-                        {request.email}
-                      </td>
-
-                      <td className="admin-request-question" data-label="Question">
-                        {request.question}
-                      </td>
-
-                      <td data-label="Source">{request.source}</td>
-
-                      <td data-label="Status">
-                        <AdminStatusBadge
-                          status={request.status}
-                          tone={getQuickActionStatusTone(request.status)}
-                        />
-                      </td>
-
-                      <td data-label="Submitted">{formatSubmittedAt(request.submittedAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="admin-pagination admin-quick-actions-pagination">
-              <p>
-                Showing <strong>{quickActionShowingStart}</strong> to{' '}
-                <strong>{quickActionShowingEnd}</strong> of{' '}
-                <strong>{quickActionRows.length}</strong> requests
-              </p>
-
-              <div className="admin-pagination__buttons">
-                <button
-                  type="button"
-                  disabled={activeQuickActionPage === 1 || quickActionRows.length === 0}
-                  aria-label="Previous quick actions page"
-                  onClick={() => goToQuickActionPage(activeQuickActionPage - 1)}
-                >
-                  <span className="material-symbols-outlined">chevron_left</span>
-                </button>
-
-                {quickActionPaginationItems.map((pageItem) => {
-                  if (typeof pageItem === 'string') {
-                    return (
-                      <span className="admin-pagination__ellipsis" key={pageItem}>
-                        ...
-                      </span>
-                    )
-                  }
-
-                  return (
-                    <button
-                      className={
-                        activeQuickActionPage === pageItem
-                          ? 'admin-page-button--active'
-                          : undefined
-                      }
-                      disabled={quickActionRows.length === 0}
-                      key={pageItem}
-                      onClick={() => goToQuickActionPage(pageItem)}
-                      type="button"
-                    >
-                      {pageItem}
-                    </button>
-                  )
-                })}
-
-                <button
-                  type="button"
-                  disabled={
-                    activeQuickActionPage === totalQuickActionPages || quickActionRows.length === 0
-                  }
-                  aria-label="Next quick actions page"
-                  onClick={() => goToQuickActionPage(activeQuickActionPage + 1)}
-                >
-                  <span className="material-symbols-outlined">chevron_right</span>
-                </button>
-              </div>
-            </div>
+            <StudentSupport
+              sessionToken={adminSession?.sessionToken}
+              requestCount={quickActionRows.length}
+              onExport={exportQuickActionResponsesCsv}
+              onClose={() => setIsQuickActionsOpen(false)}
+            />
           </section>
         </div>
       )}
-
-      {isQuickActionsClearConfirmOpen && (
-        <div
-          aria-describedby="clear-quick-actions-description"
-          aria-labelledby="clear-quick-actions-title"
-          aria-modal="true"
-          className="admin-modal-overlay admin-confirm-overlay"
-          role="alertdialog"
-        >
-          <button
-            aria-label="Keep Quick Action messages"
-            className="admin-modal-backdrop"
-            disabled={isClearingQuickActions}
-            onClick={() => setIsQuickActionsClearConfirmOpen(false)}
-            type="button"
-          />
-
-          <section className="admin-modal-card admin-confirm-card">
-            <div className="admin-confirm-card__icon" aria-hidden="true">
-              <span className="material-symbols-outlined">delete_sweep</span>
-            </div>
-
-            <div className="admin-confirm-card__copy">
-              <p className="admin-modal-kicker">Move to Archive</p>
-              <h2 id="clear-quick-actions-title">Clear all messages?</h2>
-              <p id="clear-quick-actions-description">
-                You are about to move{' '}
-                <strong>
-                  {quickActionRows.length} message{quickActionRows.length === 1 ? '' : 's'}
-                </strong>
-                {' '}to the archive. These messages can be restored later.
-              </p>
-            </div>
-
-            <div className="admin-confirm-card__notice">
-              <span className="material-symbols-outlined" aria-hidden="true">
-                warning
-              </span>
-              Export the responses first if you need to keep a copy.
-            </div>
-
-            <div className="admin-confirm-card__actions">
-              <button
-                className="admin-button admin-button--secondary"
-                disabled={isClearingQuickActions}
-                onClick={() => setIsQuickActionsClearConfirmOpen(false)}
-                type="button"
-              >
-                No, Keep Messages
-              </button>
-
-              <button
-                className="admin-button admin-button--danger"
-                disabled={isClearingQuickActions}
-                onClick={handleClearAllQuickActions}
-                type="button"
-              >
-                <span className="material-symbols-outlined">delete_forever</span>
-                {isClearingQuickActions ? 'Clearing Messages...' : 'Yes, Clear All'}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
-
       <div className="admin-scroll-progress" style={{ '--admin-scroll': scrollProgress }} />
     </div>
   )
@@ -5388,7 +5508,7 @@ const adminStyles = `
 
 .admin-filter-panel {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(180px, 260px) 48px;
+  grid-template-columns: minmax(260px, 1.8fr) repeat(3, minmax(140px, 0.7fr)) 48px;
   align-items: center;
   gap: 12px;
   margin-bottom: 18px;
@@ -6040,6 +6160,719 @@ const adminStyles = `
   overflow-y: auto;
 }
 
+.admin-receiving-applicants-overlay {
+  z-index: 70;
+  padding: 0;
+}
+
+.admin-receiving-applicants-modal {
+  display: flex;
+  width: min(96vw, 1500px);
+  height: min(94dvh, 950px);
+  max-height: 94dvh;
+  min-width: 0;
+  flex-direction: column;
+  border-radius: 22px;
+  box-shadow: 0 28px 90px rgba(51, 27, 17, 0.28);
+  box-sizing: border-box;
+}
+
+.admin-receiving-applicants-header {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding-top: 20px;
+  padding-bottom: 18px;
+}
+
+.admin-receiving-applicants-header h2 {
+  font-size: clamp(21px, 2vw, 28px);
+  letter-spacing: -0.025em;
+}
+
+.admin-receiving-applicants-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: linear-gradient(100deg, #fff9f3, #ffffff 70%);
+  padding: 14px 24px;
+}
+
+.admin-receiving-status {
+  display: flex;
+  min-width: 190px;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-receiving-status > div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-receiving-status > div > span {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.admin-receiving-status strong {
+  color: var(--admin-text);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.admin-receiving-status small {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-receiving-status__indicator {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 4px solid #d9eadd;
+  border-radius: 50%;
+  background: #168344;
+  box-sizing: content-box;
+}
+
+.admin-receiving-status__indicator.is-closed {
+  border-color: #f5dfd9;
+  background: #b84b38;
+}
+
+.admin-receiving-applicants-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.admin-download-applicants-button {
+  box-shadow: 0 7px 18px rgba(220, 91, 12, 0.2);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-download-applicants-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 23px rgba(220, 91, 12, 0.28);
+}
+
+.admin-receiving-grantee-toolbar select {
+  min-width: 0;
+  height: 40px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--admin-text);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.admin-receiving-applicants-body {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.admin-receiving-grantee-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffcf9;
+  padding: 12px 24px;
+}
+
+.admin-receiving-grantee-search {
+  display: flex;
+  min-width: 220px;
+  height: 40px;
+  flex: 1 1 420px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--admin-muted);
+  padding: 0 11px;
+}
+
+.admin-receiving-grantee-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--admin-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.admin-receiving-grantee-toolbar select {
+  flex: 0 0 150px;
+}
+
+.admin-receiving-reset {
+  min-height: 40px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.admin-receiving-grantee-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-receiving-grantee-table {
+  width: 100%;
+  min-width: 1260px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.admin-receiving-grantee-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff5ec;
+}
+
+.admin-receiving-grantee-table th,
+.admin-receiving-grantee-table td {
+  border-bottom: 1px solid #f0e6dd;
+  padding: 12px 13px;
+  color: var(--admin-text);
+  font-size: 13px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.admin-receiving-grantee-table th {
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.admin-receiving-grantee-table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-receiving-empty {
+  height: 180px;
+  color: var(--admin-muted) !important;
+  font-size: 14px !important;
+  font-weight: 700;
+  text-align: center !important;
+}
+
+.admin-receiving-view-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #f4d7c2;
+  border-radius: 9px;
+  background: #fff8f2;
+  color: var(--admin-primary-dark);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-receiving-view-button .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.admin-receiving-applicants-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--admin-outline);
+  background: #ffffff;
+  padding: 11px 20px;
+}
+
+.admin-receiving-applicants-footer p {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-receiving-applicants-footer p strong {
+  color: var(--admin-text);
+}
+
+.admin-receiving-applicants-footer .admin-pagination__buttons {
+  justify-content: center;
+}
+
+.admin-receiving-applicants-footer .admin-pagination__buttons button {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.admin-receiving-applicants-footer .admin-button {
+  min-height: 36px;
+}
+
+.admin-receiving-details-overlay {
+  z-index: 95;
+}
+
+.admin-receiving-details-card {
+  display: flex;
+  width: min(100%, 680px);
+  max-height: min(820px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-receiving-details-card .admin-modal-header,
+.admin-receiving-details-footer {
+  flex: 0 0 auto;
+}
+
+.admin-receiving-details-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-receiving-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 20px 24px;
+}
+
+.admin-receiving-details-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 11px;
+  background: #fffdfb;
+  padding: 11px 12px;
+}
+
+.admin-receiving-details-grid span {
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.admin-receiving-details-grid strong {
+  overflow-wrap: anywhere;
+  color: var(--admin-text);
+  font-size: 13px;
+}
+
+.admin-receiving-documents {
+  margin: 0 24px 20px;
+  overflow: hidden;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #fffdfb;
+}
+
+.admin-receiving-documents__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fff8f1;
+  padding: 12px 14px;
+}
+
+.admin-receiving-documents__heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-receiving-documents__heading .material-symbols-outlined {
+  color: var(--admin-primary-dark);
+}
+
+.admin-receiving-documents__heading h3 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 14px;
+}
+
+.admin-receiving-documents__heading p {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+
+.admin-receiving-documents-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 12px;
+}
+
+.admin-receiving-document-card {
+  display: flex;
+  min-width: 0;
+  min-height: 62px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #eee2d8;
+  border-radius: 11px;
+  background: #ffffff;
+  padding: 9px 10px;
+}
+
+.admin-receiving-document-card__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: #fff1e5;
+  color: var(--admin-primary-dark);
+  font-size: 19px;
+}
+
+.admin-receiving-document-card__copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 3px;
+}
+
+.admin-receiving-document-card__copy strong,
+.admin-receiving-document-card__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-receiving-document-card__copy strong {
+  color: var(--admin-text);
+  font-size: 11px;
+}
+
+.admin-receiving-document-card__copy small {
+  color: var(--admin-muted);
+  font-size: 10px;
+}
+
+.admin-receiving-document-view {
+  display: inline-flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #f0c7a8;
+  border-radius: 9px;
+  background: #fff8f2;
+  color: var(--admin-primary-dark);
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.admin-receiving-document-view:hover {
+  background: #ffeddd;
+}
+
+.admin-receiving-document-view .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.admin-receiving-document-missing {
+  flex: 0 0 auto;
+  color: #a79c93;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-receiving-details-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--admin-outline);
+  padding: 12px 24px;
+}
+
+.admin-applicant-download-launch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 24px;
+}
+
+.admin-applicant-download-launch > div,
+.admin-applicant-download-option__copy {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-applicant-download-launch strong {
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.admin-applicant-download-launch span:not(.material-symbols-outlined) {
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-applicant-download-overlay {
+  z-index: 80;
+}
+
+.admin-applicant-download-card {
+  display: flex;
+  width: min(100%, 760px);
+  max-height: min(780px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-applicant-download-card .admin-modal-header,
+.admin-applicant-download-footer {
+  flex: 0 0 auto;
+}
+
+.admin-applicant-download-body {
+  display: grid;
+  min-height: 0;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.admin-applicant-download-options {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-applicant-download-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.admin-applicant-download-option.is-selected {
+  border-color: var(--admin-primary);
+  background: #fff8f0;
+  box-shadow: 0 0 0 2px rgba(234, 112, 25, 0.1);
+}
+
+.admin-applicant-download-option input,
+.admin-applicant-course-item input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: var(--admin-primary);
+}
+
+.admin-applicant-download-option__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-applicant-download-option__copy strong {
+  color: var(--admin-text);
+  font-size: 14px;
+}
+
+.admin-applicant-download-option__copy small {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-applicant-download-count {
+  flex: 0 0 auto;
+  color: var(--admin-primary-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-applicant-course-picker {
+  overflow: hidden;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+}
+
+.admin-applicant-course-picker__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 10px 12px;
+}
+
+.admin-applicant-course-picker__toolbar > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.admin-applicant-course-search {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--admin-muted);
+}
+
+.admin-applicant-course-search input {
+  width: 100%;
+  min-width: 100px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--admin-text);
+  font: inherit;
+}
+
+.admin-link-button {
+  border: 0;
+  background: transparent;
+  color: var(--admin-primary-dark);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-applicant-course-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px 14px;
+}
+
+.admin-applicant-course-item {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #f2e8df;
+  color: var(--admin-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.admin-applicant-course-item:last-child {
+  border-bottom: 0;
+}
+
+.admin-applicant-course-item span {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-applicant-course-item strong {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-applicant-course-empty,
+.admin-applicant-download-empty {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-applicant-course-empty {
+  padding: 18px 8px;
+  text-align: center;
+}
+
+.admin-applicant-download-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 12px;
+  background: #fff8f0;
+  color: var(--admin-muted);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.admin-applicant-download-summary strong {
+  color: var(--admin-primary-dark);
+  font-size: 16px;
+}
+
+.admin-applicant-download-loading {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--admin-muted);
+  font-size: 14px;
+}
+
+.admin-applicant-download-loading .material-symbols-outlined {
+  color: var(--admin-primary);
+  animation: admin-progress-pulse 1s ease-in-out infinite;
+}
+
+.admin-applicant-download-error {
+  margin: 0;
+  border: 1px solid #f1c7c0;
+  border-radius: 10px;
+  background: #fff4f2;
+  color: #ad3528;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.admin-applicant-download-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--admin-outline);
+  background: #ffffff;
+  padding: 14px 24px;
+}
+
 .admin-confirm-body {
   display: grid;
   gap: 8px;
@@ -6345,6 +7178,39 @@ const adminStyles = `
 .admin-applicant-email,
 .admin-applicant-address {
   overflow-wrap: anywhere;
+}
+
+.admin-applicant-details summary {
+  color: var(--admin-primary-dark);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-applicant-details dl {
+  display: grid;
+  gap: 7px;
+  min-width: 220px;
+  margin: 10px 0 0;
+}
+
+.admin-applicant-details dl div {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.admin-applicant-details dt {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.admin-applicant-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
 }
 
 .admin-applicant-file-link {
@@ -7246,15 +8112,175 @@ const adminStyles = `
   }
 
   .admin-filter-panel {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 48px;
+  }
+
+  .admin-search-field {
+    grid-column: 1 / -1;
   }
 
   .admin-filter-button {
     width: 100%;
   }
+
+  .admin-receiving-applicants-modal {
+    width: 96vw;
+    height: 94dvh;
+    max-height: 94dvh;
+  }
+
+  .admin-receiving-applicants-controls {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+  }
+
+  .admin-receiving-applicants-actions {
+    flex: 1 1 500px;
+  }
+
+  .admin-receiving-grantee-toolbar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 12px 18px;
+  }
+
+  .admin-receiving-grantee-search {
+    grid-column: 1 / -1;
+  }
+
+  .admin-receiving-grantee-toolbar select {
+    width: 100%;
+  }
 }
 
 @media (max-width: 700px) {
+  .admin-receiving-applicants-overlay {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .admin-receiving-applicants-modal {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .admin-receiving-applicants-header {
+    padding: 16px 16px 13px;
+  }
+
+  .admin-receiving-applicants-header h2 {
+    max-width: calc(100vw - 82px);
+    font-size: 20px;
+  }
+
+  .admin-receiving-applicants-header p:last-child {
+    max-width: calc(100vw - 80px);
+    font-size: 12px;
+  }
+
+  .admin-receiving-applicants-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .admin-receiving-applicants-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-receiving-applicants-actions .admin-button {
+    min-width: 0;
+    justify-content: center;
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+
+  .admin-receiving-applicants-actions .admin-download-applicants-button {
+    grid-column: 1 / -1;
+  }
+
+  .admin-receiving-grantee-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .admin-receiving-grantee-search {
+    grid-column: 1 / -1;
+  }
+
+  .admin-receiving-grantee-toolbar select {
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .admin-receiving-reset {
+    width: 100%;
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+
+  .admin-receiving-applicants-footer {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .admin-receiving-applicants-footer p {
+    font-size: 11px;
+  }
+
+  .admin-receiving-applicants-footer .admin-pagination__buttons {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  .admin-receiving-applicants-footer .admin-pagination__buttons button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .admin-receiving-close {
+    justify-self: end;
+  }
+
+  .admin-receiving-details-overlay {
+    padding: 12px;
+  }
+
+  .admin-receiving-details-grid {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
+  }
+
+  .admin-receiving-documents {
+    margin: 0 18px 16px;
+  }
+
+  .admin-receiving-documents__heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-receiving-documents-grid {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .admin-receiving-details-footer {
+    padding: 10px 18px;
+  }
+
   .admin-topbar {
     align-items: stretch;
     flex-direction: column;
@@ -7315,7 +8341,12 @@ const adminStyles = `
   }
 
   .admin-filter-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 12px;
+  }
+
+  .admin-filter-panel .admin-search-field {
+    grid-column: 1 / -1;
   }
 
   .admin-table-card {
@@ -7491,6 +8522,54 @@ const adminStyles = `
     align-items: stretch;
     flex-direction: column;
     padding: 14px 18px;
+  }
+
+  .admin-applicant-download-launch {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-applicant-download-launch .admin-button,
+  .admin-applicant-download-footer .admin-button {
+    width: 100%;
+  }
+
+  .admin-applicant-download-card {
+    max-height: calc(100dvh - 24px);
+    border-radius: 16px;
+  }
+
+  .admin-applicant-download-body {
+    padding: 16px 18px;
+  }
+
+  .admin-applicant-download-option {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .admin-applicant-download-option__copy {
+    flex-basis: calc(100% - 42px);
+  }
+
+  .admin-applicant-download-count {
+    margin-left: 29px;
+  }
+
+  .admin-applicant-course-picker__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-applicant-course-picker__toolbar > div {
+    justify-content: space-between;
+  }
+
+  .admin-applicant-download-footer {
+    flex-direction: column-reverse;
+    padding: 12px 18px;
   }
 
   .admin-applicant-portal-actions,

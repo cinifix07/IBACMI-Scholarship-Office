@@ -17,6 +17,7 @@ import type * as archive from "../archive.js";
 import type * as archiveHelpers from "../archiveHelpers.js";
 import type * as http from "../http.js";
 import type * as quickActions from "../quickActions.js";
+import type * as support from "../support.js";
 
 import type {
   ApiFromModules,
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   archiveHelpers: typeof archiveHelpers;
   http: typeof http;
   quickActions: typeof quickActions;
+  support: typeof support;
 }>;
 
 /**

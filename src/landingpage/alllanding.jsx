@@ -4,6 +4,7 @@ import { api } from '../../convex/_generated/api'
 import quickActionsData from '../../data.json'
 import ibacmiLogo from '../assets/IBACMI.png'
 import scholarshipOfficeBanner from '../assets/desktop.png'
+import VisitorSupport from './VisitorSupport'
 import './lan.css'
 
 function StatusBadge({ status, tone }) {
@@ -88,20 +89,17 @@ function sanitizeSingleParagraphInput(value) {
   return value.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ')
 }
 
+function normalizePortalText(value) {
+  return String(value ?? '').toUpperCase().replace(/Ñ/g, 'N')
+}
+
 function isValidPhoneNumber(phoneNumber) {
   const normalizedPhone = normalizePhoneNumber(phoneNumber)
 
   return /^09\d{9}$/.test(normalizedPhone) || /^\+639\d{9}$/.test(normalizedPhone)
 }
 
-const applicantPdfMaxSize = 5 * 1024 * 1024
-const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
-const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
-const convexSiteUrl = (
-  import.meta.env.VITE_CONVEX_SITE_URL ||
-  activeConvexUrl.replace(/\.convex\.cloud\/?$/i, '.convex.site')
-).replace(/\/+$/, '')
-
+const applicantPdfMaxSize = 10 * 1024 * 1024
 function isValidApplicantPdf(file) {
   if (!file) return false
 
@@ -134,6 +132,9 @@ const studentPortalFields = [
   { label: 'First Name', name: 'firstName', autoComplete: 'given-name', required: true },
   { label: 'Ext Name (JR)', name: 'extensionName', autoComplete: 'honorific-suffix' },
   { label: 'Middle Name', name: 'middleName', autoComplete: 'additional-name' },
+  { label: 'Learner Reference Number (LRN)', name: 'lrn', autoComplete: 'off', inputMode: 'numeric', pattern: '\\d{12}', helper: 'Optional if not assigned' },
+  { label: 'PhilSys ID Number', name: 'philSysIdNumber', autoComplete: 'off', helper: 'Optional' },
+  { label: '4Ps ID Number', name: 'fourPsIdNumber', autoComplete: 'off', helper: 'Optional' },
 ]
 
 const fatherPortalFields = [
@@ -158,16 +159,26 @@ const portalCourseOptions = [
   'BACHELOR OF PUBLIC ADMINISTRATION',
 ]
 
+const portalFormSteps = [
+  'Student Information',
+  'Parent Information',
+  'Permanent Address',
+  'Additional Information',
+  'Required Documents',
+  'Review & Submit',
+]
+
 const contactPortalFields = [
   {
-    label: 'Address',
-    name: 'address',
-    autoComplete: 'street-address',
-    className: 'portal-full-field',
+    label: 'Street / Purok / Barangay',
+    name: 'streetBarangay',
+    autoComplete: 'address-line1',
     required: true,
   },
-  { label: 'Zip Code', name: 'zipCode', autoComplete: 'postal-code', inputMode: 'numeric' },
-  { label: 'PWD ID', name: 'pwdId', autoComplete: 'off' },
+  { label: 'City / Municipality', name: 'cityMunicipality', required: true },
+  { label: 'Province', name: 'province', required: true },
+  { label: 'Region', name: 'region', required: true },
+  { label: 'ZIP Code', name: 'zipCode', autoComplete: 'postal-code', inputMode: 'numeric', required: true },
   {
     label: 'Mobile No.',
     name: 'mobileNumber',
@@ -200,6 +211,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
   const [isUnifastPortalOpen, setIsUnifastPortalOpen] = useState(false)
+  const [isGranteeQuestionOpen, setIsGranteeQuestionOpen] = useState(false)
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false)
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
   const [isSignUpOpen, setIsSignUpOpen] = useState(false)
@@ -221,6 +233,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     fourPsFile: null,
   })
   const [portalReviewData, setPortalReviewData] = useState(null)
+  const [portalStep, setPortalStep] = useState(0)
+  const [portalUploadProgress, setPortalUploadProgress] = useState({})
+  const [hasAcknowledgedPortalApplication, setHasAcknowledgedPortalApplication] = useState(false)
 
   const [isSubmittingAdminLogin, setIsSubmittingAdminLogin] = useState(false)
   const [isSubmittingQuickAction, setIsSubmittingQuickAction] = useState(false)
@@ -258,6 +273,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const rowsPerPage = 6
 
   const createApplicant = useMutation(api.applicants.create)
+  const generateApplicantUploadUrl = useMutation(api.applicants.generateUploadUrl)
   const createQuickAction = useMutation(api.quickActions.create)
   const loginAdmin = useMutation(api.adminAuth.login)
   const registerAdmin = useMutation(api.adminAuth.register)
@@ -345,7 +361,16 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     if (typeof onStudentRegistrationSuccess === 'function') {
       onStudentRegistrationSuccess(registeredStudentAccount)
     }
-  }, [onStudentRegistrationSuccess, registeredStudentAccount])
+  }, [
+    onStudentRegistrationSuccess,
+    registeredStudentAccount,
+    setSignUpSuccess,
+    setRegisteredStudentAccount,
+    setSignUpEmail,
+    setSignUpSchoolId,
+    setSignUpPassword,
+    setSignUpConfirmPassword,
+  ])
 
   useEffect(() => {
     const handleScroll = () => {
@@ -366,6 +391,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     if (
       !isQuickActionsOpen &&
       !isUnifastPortalOpen &&
+      !isGranteeQuestionOpen &&
       !isAdminLoginOpen &&
       !isForgotPasswordOpen &&
       !isSignUpOpen &&
@@ -395,6 +421,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
         setIsQuickActionsOpen(false)
         setIsUnifastPortalOpen(false)
+        setIsGranteeQuestionOpen(false)
         setPortalError('')
         setPortalSuccess('')
         setPortalReviewData(null)
@@ -428,6 +455,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   }, [
     isQuickActionsOpen,
     isUnifastPortalOpen,
+    isGranteeQuestionOpen,
     isAdminLoginOpen,
     isForgotPasswordOpen,
     isSignUpOpen,
@@ -469,12 +497,27 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setPortalSuccess('')
     setIsPortalPrivacyOpen(false)
     setIsPortalSubmissionSuccessOpen(false)
+    setIsGranteeQuestionOpen(true)
+  }
+
+  const openStudentInformationForm = () => {
+    setIsGranteeQuestionOpen(false)
+    setPortalError('')
+    setPortalSuccess('')
+    setIsPortalPrivacyOpen(false)
+    setIsPortalSubmissionSuccessOpen(false)
     setIsUnifastPortalOpen(true)
+  }
+
+  const openStudentLoginFromPortal = () => {
+    setIsGranteeQuestionOpen(false)
+    openAdminLogin()
   }
 
   const closeUnifastPortal = () => {
     if (isSubmittingPortal) return
 
+    setIsGranteeQuestionOpen(false)
     setIsUnifastPortalOpen(false)
     setPortalError('')
     setPortalSuccess('')
@@ -489,56 +532,61 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setPortalReviewData(null)
   }
 
-  const uploadApplicantPdfToGoogleDrive = async (file, documentType, applicant) => {
-    const applicantFullName = [
-      applicant.lastName,
-      applicant.firstName,
-      applicant.middleName,
-      applicant.extensionName,
-    ]
-      .filter(Boolean)
-      .join(' ')
-
-    const uploadParams = new URLSearchParams({
-      applicationYear: applicantPortal?.applicationYear || String(new Date().getFullYear()),
-      documentType,
-      fileName: file.name,
-      fullName: applicantFullName,
-      studentId: applicant.studentId,
+  const uploadApplicantPdf = async (file, documentKey) => {
+    const uploadUrl = await generateApplicantUploadUrl({})
+    setPortalUploadProgress((current) => ({ ...current, [documentKey]: 0 }))
+    const result = await new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest()
+      request.open('POST', uploadUrl)
+      request.setRequestHeader('Content-Type', 'application/pdf')
+      request.upload.onprogress = (event) => {
+        if (event.lengthComputable) setPortalUploadProgress((current) => ({ ...current, [documentKey]: Math.round((event.loaded / event.total) * 100) }))
+      }
+      request.onload = () => {
+        if (request.status < 200 || request.status >= 300) {
+          try { reject(new Error(JSON.parse(request.responseText)?.message || `Unable to upload ${file.name}.`)) }
+          catch { reject(new Error(`Unable to upload ${file.name}.`)) }
+          return
+        }
+        try { resolve(JSON.parse(request.responseText)) }
+        catch { reject(new Error('Upload service returned an invalid response.')) }
+      }
+      request.onerror = () => reject(new Error(`Unable to upload ${file.name}. Check your internet connection and try again.`))
+      request.send(file)
     })
-    let uploadResult
-
-    try {
-      uploadResult = await fetch(
-        `${convexSiteUrl}/google-drive/upload?${uploadParams.toString()}`,
-        {
-          body: file,
-          headers: {
-            'Content-Type': file.type || 'application/pdf',
-          },
-          method: 'POST',
-        },
-      )
-    } catch {
-      throw new Error(
-        'Unable to connect to the PDF upload service. Deploy the Convex HTTP functions and check VITE_CONVEX_URL or VITE_CONVEX_SITE_URL.',
-      )
-    }
-
-    if (!uploadResult.ok) {
-      const errorResult = await uploadResult.json().catch(() => null)
-      throw new Error(errorResult?.message || `Unable to upload ${file.name} to Google Drive.`)
-    }
-
-    const { fileUrl } = await uploadResult.json()
-    if (!fileUrl) {
-      throw new Error(`Google Drive did not return a file link for ${file.name}.`)
-    }
-
-    return fileUrl
+    if (!result.storageId) throw new Error(`Upload service did not return storage for ${file.name}.`)
+    setPortalUploadProgress((current) => ({ ...current, [documentKey]: 100 }))
+    return result.storageId
   }
 
-  const handlePortalDocumentChange = (event) => {
+  const previewApplicantPdf = (file) => {
+    if (!file) return
+    const previewUrl = URL.createObjectURL(file)
+    window.open(previewUrl, '_blank', 'noopener,noreferrer')
+    window.setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000)
+  }
+
+  const removeApplicantPdf = (name) => {
+    const input = portalFormRef.current?.elements.namedItem(name)
+    if (input) input.value = ''
+    setPortalDocumentFiles((current) => ({ ...current, [name]: null }))
+    setPortalReviewData(null)
+    setPortalError('')
+  }
+
+  const renderPortalPdfControls = (name) => {
+    const file = portalDocumentFiles[name]
+    if (!file && !isSubmittingPortal) return null
+    return <span className="portal-document-controls">
+      {file && <>
+        <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); previewApplicantPdf(file) }}>Preview</button>
+        <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeApplicantPdf(name) }}>Remove</button>
+      </>}
+      {isSubmittingPortal && portalUploadProgress[name] !== undefined && <progress max="100" value={portalUploadProgress[name]} aria-label={`${name} upload progress`} />}
+    </span>
+  }
+
+  const handlePortalDocumentChange = async (event) => {
     const { files, name } = event.target
     const file = files?.[0] ?? null
 
@@ -570,7 +618,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         ...currentFiles,
         [name]: null,
       }))
-      setPortalError('Each uploaded PDF must be 5MB or smaller.')
+      setPortalError('Each uploaded PDF must be 10MB or smaller.')
+      return
+    }
+
+    const header = await file.slice(0, 5).text()
+    if (header !== '%PDF-') {
+      event.target.value = ''
+      setPortalDocumentFiles((currentFiles) => ({ ...currentFiles, [name]: null }))
+      setPortalError('This file does not appear to be a valid PDF. Choose a valid PDF document.')
       return
     }
 
@@ -580,10 +636,35 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     }))
   }
 
+  const handlePortalTextInput = (event) => {
+    const input = event.target
+    if (!(input instanceof HTMLInputElement) || input.name === 'emailAddress') return
+    if (!['text', 'tel', 'search', 'url'].includes(input.type)) return
+
+    const { selectionStart, selectionEnd } = input
+    const normalizedValue = normalizePortalText(input.value)
+    if (input.value === normalizedValue) return
+
+    const normalizedStart = selectionStart === null
+      ? null
+      : normalizePortalText(input.value.slice(0, selectionStart)).length
+    const normalizedEnd = selectionEnd === null
+      ? null
+      : normalizePortalText(input.value.slice(0, selectionEnd)).length
+    input.value = normalizedValue
+    if (normalizedStart !== null && normalizedEnd !== null) {
+      input.setSelectionRange(normalizedStart, normalizedEnd)
+    }
+  }
+
   const handleUnifastPortalSubmit = async (event) => {
     event.preventDefault()
-
     const form = event.currentTarget
+    form.querySelectorAll('input').forEach((input) => {
+      if (input.name !== 'emailAddress' && ['text', 'tel', 'search', 'url'].includes(input.type)) {
+        input.value = normalizePortalText(input.value)
+      }
+    })
     const formData = new FormData(form)
     const mobileNumber = normalizePhoneNumber(String(formData.get('mobileNumber') || ''))
     const emailAddress = String(formData.get('emailAddress') || '').trim().toLowerCase()
@@ -592,7 +673,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     const corFile = formData.get('corFile')
     const pwdIdFile = formData.get('pwdIdFile')
     const fourPsFile = formData.get('fourPsFile')
-
     setPortalError('')
     setPortalSuccess('')
 
@@ -601,85 +681,157 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       return
     }
 
+    const requiredFields = [
+      ['Student ID', 'studentId'], ['Last Name', 'lastName'], ['Given / First Name', 'firstName'],
+      ['Birthdate', 'birthDate'], ['Program', 'course'], ['Year level', 'year'],
+      ['Street / Purok / Barangay', 'streetBarangay'], ['City / Municipality', 'cityMunicipality'],
+      ['Province', 'province'], ['Region', 'region'], ['ZIP Code', 'zipCode'],
+    ]
+    for (const [label, name] of requiredFields) {
+      if (!String(formData.get(name) || '').trim()) {
+        setPortalError(`${label} is required.`)
+        const targetStep = ['streetBarangay', 'cityMunicipality', 'province', 'region', 'zipCode'].includes(name) ? 2 : 0
+        setPortalStep(targetStep)
+        window.setTimeout(() => form.elements.namedItem(name)?.focus(), 0)
+        return
+      }
+    }
+    const studentId = String(formData.get('studentId') || '').trim()
+    if (!isValidSchoolId(studentId)) {
+      setPortalStep(0)
+      setPortalError('Student ID must be 4 to 30 letters, numbers, or hyphens.')
+      return
+    }
+    const lrn = String(formData.get('lrn') || '').trim()
+    if (lrn && !/^\d{12}$/.test(lrn)) {
+      setPortalStep(0)
+      setPortalError('LRN must contain exactly 12 digits.')
+      return
+    }
+    const birthDate = String(formData.get('birthDate') || '')
+    if (!birthDate || new Date(`${birthDate}T00:00:00`) > new Date()) {
+      setPortalStep(0)
+      setPortalError('Enter a valid birthdate that is not in the future.')
+      return
+    }
     if (!isValidPhoneNumber(mobileNumber)) {
+      setPortalStep(2)
       setPortalError('Please enter a valid mobile number. Example: 09123456789 or +639123456789.')
       return
     }
-
     if (!isValidEmailAddress(emailAddress)) {
+      setPortalStep(2)
       setPortalError('Please enter a valid email address.')
       return
     }
-
-    if (!(psaFile instanceof File) || !psaFile.name || !isValidApplicantPdf(psaFile)) {
-      setPortalError('Please upload your PSA as a PDF file.')
+    if (formData.get('fatherInformationUnavailable') !== 'on' && (!String(formData.get('fatherLastName') || '').trim() || !String(formData.get('fatherFirstName') || '').trim())) {
+      setPortalStep(1)
+      setPortalError("Enter father's last and given name, or select Information unavailable.")
       return
     }
-
-    if (
-      !(schoolIdFile instanceof File) ||
-      !schoolIdFile.name ||
-      !isValidApplicantPdf(schoolIdFile)
-    ) {
-      setPortalError('Please upload your colored School ID photocopy as a PDF file.')
+    if (formData.get('motherInformationUnavailable') !== 'on' && (!String(formData.get('motherLastName') || '').trim() || !String(formData.get('motherFirstName') || '').trim())) {
+      setPortalStep(1)
+      setPortalError("Enter mother's maiden last and given name, or select Information unavailable.")
       return
     }
-
-    if (!(corFile instanceof File) || !corFile.name || !isValidApplicantPdf(corFile)) {
-      setPortalError('Please upload your COR or Study Load as a PDF file.')
+    if (!(psaFile instanceof File) || !psaFile.size || !isValidApplicantPdf(psaFile)) {
+      setPortalStep(4)
+      setPortalError('Please upload a valid PSA Birth Certificate PDF.')
       return
     }
-
-    if (
-      psaFile.size > applicantPdfMaxSize ||
-      schoolIdFile.size > applicantPdfMaxSize ||
-      corFile.size > applicantPdfMaxSize
-    ) {
-      setPortalError('Each uploaded PDF must be 5MB or smaller.')
+    if (!(schoolIdFile instanceof File) || !schoolIdFile.size || !isValidApplicantPdf(schoolIdFile)) {
+      setPortalStep(4)
+      setPortalError('Please upload a valid School ID or valid ID PDF.')
       return
     }
-
-    const optionalFiles = [pwdIdFile, fourPsFile].filter(
-      (file) => file instanceof File && file.name,
-    )
-
-    if (optionalFiles.some((file) => !isValidApplicantPdf(file))) {
-      setPortalError('Optional PWD ID and 4Ps ID documents must be PDF files.')
+    const optionalFiles = [pwdIdFile, fourPsFile, corFile].filter((file) => file instanceof File && file.size)
+    if ([psaFile, schoolIdFile, ...optionalFiles].some((file) => file.size > applicantPdfMaxSize)) {
+      setPortalStep(4)
+      setPortalError('Each uploaded PDF must be 10MB or smaller.')
       return
     }
-
-    if (optionalFiles.some((file) => file.size > applicantPdfMaxSize)) {
-      setPortalError('Each uploaded PDF must be 5MB or smaller.')
+    for (const file of [psaFile, schoolIdFile, ...optionalFiles]) {
+      if (!isValidApplicantPdf(file) || await file.slice(0, 5).text() !== '%PDF-') {
+        setPortalStep(4)
+        setPortalError(`${file.name} is not a valid PDF document.`)
+        return
+      }
+    }
+    if (!formData.get('sexCode') || !formData.get('course') || !formData.get('year')) {
+      setPortalStep(0)
+      setPortalError('Select sex, program, and year level.')
+      return
+    }
+    if (!formData.get('soloParentDependent') || !formData.get('firstGeneration')) {
+      setPortalStep(3)
+      setPortalError('Answer both additional information questions.')
       return
     }
 
     setPortalReviewData({
-      studentId: String(formData.get('studentId') || '').trim(),
+      studentId,
+      lrn,
+      philSysIdNumber: String(formData.get('philSysIdNumber') || '').trim(),
+      fourPsIdNumber: String(formData.get('fourPsIdNumber') || '').trim(),
       lastName: String(formData.get('lastName') || '').trim(),
       firstName: String(formData.get('firstName') || '').trim(),
       extensionName: String(formData.get('extensionName') || '').trim(),
       middleName: String(formData.get('middleName') || '').trim(),
-      gender: String(formData.get('gender') || ''),
-      birthDate: String(formData.get('birthDate') || ''),
+      gender: Number(formData.get('sexCode')) === 0 ? 'Male' : 'Female',
+      sexCode: Number(formData.get('sexCode')),
+      birthDate,
       course: String(formData.get('course') || ''),
       year: String(formData.get('year') || ''),
+      yearLevelCode: Number(String(formData.get('year') || '').charAt(0)),
+      fatherInformationUnavailable: formData.get('fatherInformationUnavailable') === 'on',
+      motherInformationUnavailable: formData.get('motherInformationUnavailable') === 'on',
       fatherLastName: String(formData.get('fatherLastName') || '').trim(),
       fatherFirstName: String(formData.get('fatherFirstName') || '').trim(),
       fatherMiddleName: String(formData.get('fatherMiddleName') || '').trim(),
       motherLastName: String(formData.get('motherLastName') || '').trim(),
       motherFirstName: String(formData.get('motherFirstName') || '').trim(),
       motherMiddleName: String(formData.get('motherMiddleName') || '').trim(),
-      address: String(formData.get('address') || '').trim(),
+      streetBarangay: String(formData.get('streetBarangay') || '').trim(),
+      cityMunicipality: String(formData.get('cityMunicipality') || '').trim(),
+      province: String(formData.get('province') || '').trim(),
+      region: String(formData.get('region') || '').trim(),
+      address: ['streetBarangay', 'cityMunicipality', 'province', 'region'].map((key) => String(formData.get(key) || '').trim()).join(', '),
       zipCode: String(formData.get('zipCode') || '').trim(),
       pwdId: String(formData.get('pwdId') || '').trim(),
       mobileNumber,
       emailAddress,
+      hasDisability: formData.get('hasDisability') === 'yes',
+      disabilityType: String(formData.get('disabilityType') || '').trim(),
+      soloParentDependent: Number(formData.get('soloParentDependent')),
+      firstGeneration: Number(formData.get('firstGeneration')),
+      isIndigenous: formData.get('isIndigenous') === 'yes',
+      indigenousGroup: String(formData.get('indigenousGroup') || '').trim(),
+      applicantClassification: 'TES Applicant',
       psaFile,
       schoolIdFile,
-      corFile,
-      pwdIdFile: optionalFiles.includes(pwdIdFile) ? pwdIdFile : null,
-      fourPsFile: optionalFiles.includes(fourPsFile) ? fourPsFile : null,
+      corFile: corFile instanceof File && corFile.size ? corFile : null,
+      pwdIdFile: pwdIdFile instanceof File && pwdIdFile.size ? pwdIdFile : null,
+      fourPsFile: fourPsFile instanceof File && fourPsFile.size ? fourPsFile : null,
     })
+    setPortalStep(5)
+  }
+
+  const validatePortalStep = (step) => {
+    const panel = portalFormRef.current?.querySelector(`[data-portal-step="${step}"]`)
+    if (!panel) return true
+    const invalid = [...panel.querySelectorAll('input, select, textarea')].find((field) => field.required && !field.checkValidity())
+    if (invalid) {
+      invalid.reportValidity()
+      invalid.focus()
+      return false
+    }
+    return true
+  }
+
+  const movePortalStep = (nextStep) => {
+    setPortalError('')
+    if (nextStep > portalStep && !validatePortalStep(portalStep)) return
+    setPortalStep(nextStep)
   }
 
   const handleEditPortalInformation = () => {
@@ -687,6 +839,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setPortalSuccess('')
     setIsPortalPrivacyOpen(false)
     setPortalReviewData(null)
+    setPortalStep(0)
   }
 
   const handleOpenPortalPrivacy = () => {
@@ -697,6 +850,11 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
     if (!applicantPortal?.isReceivingApplicants) {
       setPortalError('The UNIFAST portal is closed for applicants right now.')
+      return
+    }
+
+    if (!hasAcknowledgedPortalApplication) {
+      setPortalError('Please certify that your information and documents are true and accurate.')
       return
     }
 
@@ -717,38 +875,13 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsSubmittingPortal(true)
 
     try {
-      const [psaFileUrl, schoolIdFileUrl, corFileUrl, pwdIdFileUrl, fourPsFileUrl] =
-        await Promise.all([
-          uploadApplicantPdfToGoogleDrive(
-            portalReviewData.psaFile,
-            'PSA',
-            portalReviewData,
-          ),
-          uploadApplicantPdfToGoogleDrive(
-            portalReviewData.schoolIdFile,
-            'School-ID',
-            portalReviewData,
-          ),
-          uploadApplicantPdfToGoogleDrive(
-            portalReviewData.corFile,
-            'COR-or-Study-Load',
-            portalReviewData,
-          ),
-          portalReviewData.pwdIdFile
-            ? uploadApplicantPdfToGoogleDrive(
-                portalReviewData.pwdIdFile,
-                'PWD-ID',
-                portalReviewData,
-              )
-            : Promise.resolve(undefined),
-          portalReviewData.fourPsFile
-            ? uploadApplicantPdfToGoogleDrive(
-                portalReviewData.fourPsFile,
-                '4Ps-ID',
-                portalReviewData,
-              )
-            : Promise.resolve(undefined),
-        ])
+      const [psaFileStorageId, schoolIdFileStorageId, corFileStorageId, pwdIdFileStorageId, fourPsFileStorageId] = await Promise.all([
+        uploadApplicantPdf(portalReviewData.psaFile, 'psaFile'),
+        uploadApplicantPdf(portalReviewData.schoolIdFile, 'schoolIdFile'),
+        portalReviewData.corFile ? uploadApplicantPdf(portalReviewData.corFile, 'corFile') : Promise.resolve(undefined),
+        portalReviewData.pwdIdFile ? uploadApplicantPdf(portalReviewData.pwdIdFile, 'pwdIdFile') : Promise.resolve(undefined),
+        portalReviewData.fourPsFile ? uploadApplicantPdf(portalReviewData.fourPsFile, 'fourPsFile') : Promise.resolve(undefined),
+      ])
 
       const applicantSubmission = {
         studentId: portalReviewData.studentId,
@@ -757,35 +890,52 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         extensionName: portalReviewData.extensionName,
         middleName: portalReviewData.middleName,
         gender: portalReviewData.gender,
+        sexCode: portalReviewData.sexCode,
         birthDate: portalReviewData.birthDate,
         course: portalReviewData.course,
         year: portalReviewData.year,
+        yearLevelCode: portalReviewData.yearLevelCode,
+        lrn: portalReviewData.lrn,
+        philSysIdNumber: portalReviewData.philSysIdNumber,
+        fourPsIdNumber: portalReviewData.fourPsIdNumber,
         fatherLastName: portalReviewData.fatherLastName,
         fatherFirstName: portalReviewData.fatherFirstName,
         fatherMiddleName: portalReviewData.fatherMiddleName,
         motherLastName: portalReviewData.motherLastName,
         motherFirstName: portalReviewData.motherFirstName,
         motherMiddleName: portalReviewData.motherMiddleName,
+        fatherInformationUnavailable: portalReviewData.fatherInformationUnavailable,
+        motherInformationUnavailable: portalReviewData.motherInformationUnavailable,
         address: portalReviewData.address,
+        streetBarangay: portalReviewData.streetBarangay,
+        cityMunicipality: portalReviewData.cityMunicipality,
+        province: portalReviewData.province,
+        region: portalReviewData.region,
         zipCode: portalReviewData.zipCode,
         pwdId: portalReviewData.pwdId,
         mobileNumber: portalReviewData.mobileNumber,
         emailAddress: portalReviewData.emailAddress,
-        psaFileUrl,
+        hasDisability: portalReviewData.hasDisability,
+        disabilityType: portalReviewData.disabilityType,
+        soloParentDependent: portalReviewData.soloParentDependent,
+        firstGeneration: portalReviewData.firstGeneration,
+        isIndigenous: portalReviewData.isIndigenous,
+        indigenousGroup: portalReviewData.indigenousGroup,
+        applicantClassification: 'TES Applicant',
+        psaFileStorageId,
         psaFileName: portalReviewData.psaFile.name,
-        schoolIdFileUrl,
+        schoolIdFileStorageId,
         schoolIdFileName: portalReviewData.schoolIdFile.name,
-        corFileUrl,
-        corFileName: portalReviewData.corFile.name,
+        ...(corFileStorageId ? { corFileStorageId, corFileName: portalReviewData.corFile.name } : {}),
       }
 
-      if (pwdIdFileUrl && portalReviewData.pwdIdFile) {
-        applicantSubmission.pwdIdFileUrl = pwdIdFileUrl
+      if (pwdIdFileStorageId && portalReviewData.pwdIdFile) {
+        applicantSubmission.pwdIdFileStorageId = pwdIdFileStorageId
         applicantSubmission.pwdIdFileName = portalReviewData.pwdIdFile.name
       }
 
-      if (fourPsFileUrl && portalReviewData.fourPsFile) {
-        applicantSubmission.fourPsFileUrl = fourPsFileUrl
+      if (fourPsFileStorageId && portalReviewData.fourPsFile) {
+        applicantSubmission.fourPsFileStorageId = fourPsFileStorageId
         applicantSubmission.fourPsFileName = portalReviewData.fourPsFile.name
       }
 
@@ -805,6 +955,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         pwdIdFile: null,
         fourPsFile: null,
       })
+      setPortalUploadProgress({})
+      setPortalStep(0)
+      setHasAcknowledgedPortalApplication(false)
       setPortalReviewData(null)
       setPortalSuccess('')
       setIsPortalPrivacyOpen(false)
@@ -1366,10 +1519,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         </div>
 
         <div className="header-actions">
-          <button className="button button--compact" onClick={openQuickActions} type="button">
-            SUPPORT
-          </button>
-
           <button
             className="button button--compact button--admin"
             onClick={openAdminLogin}
@@ -1588,7 +1737,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             </section>
           )}
 
-          <section className="portal-cta" aria-labelledby="portal-cta-title">
+          {isApplicantPortalOpen && <section className="portal-cta" aria-labelledby="portal-cta-title">
             <div className="portal-cta__icon" aria-hidden="true">
               <span className="material-symbols-outlined">assignment</span>
             </div>
@@ -1628,7 +1777,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   ? 'PORTAL OPEN'
                   : 'PORTAL IS CLOSED'}
             </button>
-          </section>
+          </section>}
         </div>
       </main>
 
@@ -1641,6 +1790,38 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
           | Developed By CINIFIX Technology
         </p>
       </footer>
+
+      {isGranteeQuestionOpen && (
+        <div
+          aria-labelledby="grantee-question-title"
+          aria-modal="true"
+          className="modal-overlay portal-confirmation-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close grantee question"
+            className="modal-backdrop-button"
+            onClick={() => setIsGranteeQuestionOpen(false)}
+            type="button"
+          />
+          <section className="modal-card portal-grantee-modal">
+            <div className="portal-grantee-icon" aria-hidden="true">
+              <span className="material-symbols-outlined">school</span>
+            </div>
+            <p className="modal-kicker">UNIFAST APPLICATION</p>
+            <h3 id="grantee-question-title">Grantee ka?</h3>
+            <p className="portal-grantee-copy">Are you an existing UniFAST grantee?</p>
+            <div className="portal-grantee-actions">
+              <button className="button button--secondary" onClick={openStudentLoginFromPortal} type="button">
+                Yes
+              </button>
+              <button className="button" onClick={openStudentInformationForm} type="button">
+                No
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {isUnifastPortalOpen && (
         <div
@@ -1658,7 +1839,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
 
           <form
             className="modal-card portal-modal-card"
+            noValidate
             ref={portalFormRef}
+            onInput={handlePortalTextInput}
             onSubmit={handleUnifastPortalSubmit}
           >
             <div className="modal-header portal-modal-header">
@@ -1685,11 +1868,27 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </div>
             </div>
 
+            <nav className="portal-stepper" aria-label="Application form progress">
+              {portalFormSteps.map((step, index) => <button key={step} type="button" disabled={index >= 5 || index >= portalStep} className={`portal-stepper__step${portalStep === index ? ' is-active' : ''}${portalStep > index ? ' is-complete' : ''}`} aria-current={portalStep === index ? 'step' : undefined} onClick={() => {
+                if (index >= 5) return
+                if (portalReviewData) {
+                  setPortalReviewData(null)
+                  setHasAcknowledgedPortalApplication(false)
+                  setPortalStep(index)
+                  return
+                }
+                if (index < portalStep) movePortalStep(index)
+              }}>
+                <span>{portalStep > index ? '✓' : index + 1}</span><small>{step}</small>
+              </button>)}
+            </nav>
+
             <div
               className={`modal-body portal-form${
                 portalReviewData ? ' portal-form--hidden' : ''
               }`}
             >
+              <div className={`portal-step-panel${portalStep === 0 ? ' is-active' : ''}`} data-portal-step="0">
               <section className="portal-section" aria-labelledby="portal-student-heading">
                 <h4 id="portal-student-heading">Student Information</h4>
 
@@ -1699,29 +1898,31 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       <span>{field.label}</span>
                       <input
                         autoComplete={field.autoComplete}
+                        maxLength={field.name === 'studentId' ? 30 : field.name === 'lrn' ? 12 : undefined}
                         name={field.name}
+                        pattern={field.name === 'studentId' ? '[A-Za-z0-9-]{4,30}' : field.pattern}
                         placeholder={`Enter ${field.label.toLowerCase()}`}
                         required={field.required}
                         type="text"
                       />
+                      {field.helper && <small className="portal-field-helper">{field.helper}</small>}
                     </label>
                   ))}
 
                   <label className="form-field">
-                    <span>Gender</span>
-                    <select name="gender" defaultValue="" required>
+                    <span>Sex</span>
+                    <select name="sexCode" defaultValue="" required>
                       <option value="" disabled>
-                        Select gender
+                        Select sex
                       </option>
-                      <option value="Female">Female</option>
-                      <option value="Male">Male</option>
-                      <option value="Prefer not to say">Prefer not to say</option>
+                      <option value="0">Male</option>
+                      <option value="1">Female</option>
                     </select>
                   </label>
 
                   <label className="form-field">
                     <span>Birth Date</span>
-                    <input name="birthDate" required type="date" />
+                    <input name="birthDate" max={new Date().toISOString().slice(0, 10)} required type="date" />
                   </label>
 
                   <label className="form-field">
@@ -1735,6 +1936,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       <option value="3rd Year">3rd Year</option>
                       <option value="4th Year">4th Year</option>
                       <option value="5th Year">5th Year</option>
+                      <option value="6th Year">6th Year</option>
                     </select>
                   </label>
 
@@ -1749,12 +1951,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   </fieldset>
                 </div>
               </section>
+              </div>
 
+              <div className={`portal-step-panel${portalStep === 1 ? ' is-active' : ''}`} data-portal-step="1">
               <section className="portal-section" aria-labelledby="portal-parents-heading">
-                <h4 id="portal-parents-heading">Parents Information</h4>
+                <h4 id="portal-parents-heading">Parent Information</h4>
 
                 <div className="portal-parent-group">
-                  <p>Father Information</p>
+                  <p>Father&apos;s Name</p>
+                  <label className="portal-unavailable"><input type="checkbox" name="fatherInformationUnavailable" /> Information unavailable</label>
                   <div className="portal-grid portal-grid--three">
                     {fatherPortalFields.map((field) => (
                       <label className="form-field" key={field.name}>
@@ -1771,7 +1976,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 </div>
 
                 <div className="portal-parent-group">
-                  <p>Mother Information</p>
+                  <p>Mother&apos;s Maiden Name</p>
+                  <label className="portal-unavailable"><input type="checkbox" name="motherInformationUnavailable" /> Information unavailable</label>
                   <div className="portal-grid portal-grid--three">
                     {motherPortalFields.map((field) => (
                       <label className="form-field" key={field.name}>
@@ -1787,9 +1993,11 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   </div>
                 </div>
               </section>
+              </div>
 
+              <div className={`portal-step-panel${portalStep === 2 ? ' is-active' : ''}`} data-portal-step="2">
               <section className="portal-section" aria-labelledby="portal-contact-heading">
-                <h4 id="portal-contact-heading">Address and Contact Information</h4>
+                <h4 id="portal-contact-heading">Permanent Address & Contact</h4>
 
                 <div className="portal-grid">
                   {contactPortalFields.map((field) => (
@@ -1812,12 +2020,29 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   ))}
                 </div>
               </section>
+              </div>
 
+              <div className={`portal-step-panel${portalStep === 3 ? ' is-active' : ''}`} data-portal-step="3">
+                <section className="portal-section" aria-labelledby="portal-additional-heading">
+                  <h4 id="portal-additional-heading">Additional Student Information</h4>
+                  <div className="portal-grid">
+                    <label className="form-field"><span>Do you have a disability?</span><select name="hasDisability" defaultValue="" required><option value="" disabled>Select one</option><option value="no">No</option><option value="yes">Yes</option></select></label>
+                    <label className="form-field"><span>Please specify your disability type <small>(if applicable)</small></span><input name="disabilityType" maxLength={120} placeholder="Optional" /></label>
+                    <fieldset className="portal-choice-field"><legend>Are you a dependent or child of a solo parent?</legend><label><input type="radio" name="soloParentDependent" value="1" required /> Yes</label><label><input type="radio" name="soloParentDependent" value="0" /> No</label></fieldset>
+                    <fieldset className="portal-choice-field"><legend>Are you a first-generation college student?</legend><p>Neither of your parents or legal guardians attended college or completed a college degree.</p><label><input type="radio" name="firstGeneration" value="1" required /> Yes</label><label><input type="radio" name="firstGeneration" value="0" /> No</label></fieldset>
+                    <label className="form-field"><span>Do you belong to an Indigenous Peoples (IP) group?</span><select name="isIndigenous" defaultValue="" required><option value="" disabled>Select one</option><option value="no">No</option><option value="yes">Yes</option></select></label>
+                    <label className="form-field"><span>Please specify your IP group <small>(if applicable)</small></span><input name="indigenousGroup" maxLength={120} placeholder="Optional" /></label>
+                    <div className="portal-classification"><span>Applicant Classification</span><strong>TES Applicant</strong><small>This classification is assigned by the Scholarship Office.</small></div>
+                  </div>
+                </section>
+              </div>
+
+              <div className={`portal-step-panel${portalStep === 4 ? ' is-active' : ''}`} data-portal-step="4">
               <section className="portal-section" aria-labelledby="portal-documents-heading">
                 <div className="portal-section-heading">
                   <h4 id="portal-documents-heading">Document Requirements</h4>
                   <p>
-                    Upload clear PDF copies up to 5MB each. Required and optional documents are
+                    Upload clear PDF copies up to 10MB each. Required and optional documents are
                     labeled below.
                   </p>
                 </div>
@@ -1852,6 +2077,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                             )})`
                           : 'Select PSA PDF file'}
                       </span>
+                      {renderPortalPdfControls('psaFile')}
                     </span>
                   </label>
 
@@ -1872,7 +2098,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                     </span>
                     <span className="portal-document-upload__copy">
                       <span className="portal-document-upload__title">
-                        <strong>Colored School ID Photocopy</strong>
+                        <strong>School ID / Valid ID with Three Signatures</strong>
                         <span className="portal-document-badge portal-document-badge--required">
                           Required
                         </span>
@@ -1882,8 +2108,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                           ? `${portalDocumentFiles.schoolIdFile.name} (${formatFileSize(
                               portalDocumentFiles.schoolIdFile.size,
                             )})`
-                          : 'Select colored School ID photocopy PDF'}
+                          : 'Upload a clear School ID or valid ID showing three specimen signatures.'}
                       </span>
+                      {renderPortalPdfControls('schoolIdFile')}
                     </span>
                   </label>
 
@@ -1896,7 +2123,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       accept="application/pdf,.pdf"
                       name="corFile"
                       onChange={handlePortalDocumentChange}
-                      required
                       type="file"
                     />
                     <span className="portal-document-upload__icon">
@@ -1905,8 +2131,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                     <span className="portal-document-upload__copy">
                       <span className="portal-document-upload__title">
                         <strong>COR / Study Load</strong>
-                        <span className="portal-document-badge portal-document-badge--required">
-                          Required
+                        <span className="portal-document-badge">
+                          Optional
                         </span>
                       </span>
                       <span>
@@ -1914,8 +2140,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                           ? `${portalDocumentFiles.corFile.name} (${formatFileSize(
                               portalDocumentFiles.corFile.size,
                             )})`
-                          : 'Select COR or Study Load PDF file'}
+                          : 'Attach a COR or Study Load PDF, if available.'}
                       </span>
+                      {renderPortalPdfControls('corFile')}
                     </span>
                   </label>
 
@@ -1945,6 +2172,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                             )})`
                           : 'Attach a clear PWD ID PDF, if applicable'}
                       </span>
+                      {renderPortalPdfControls('pwdIdFile')}
                     </span>
                   </label>
 
@@ -1974,10 +2202,12 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                             )})`
                           : 'Attach a clear 4Ps ID PDF, if applicable'}
                       </span>
+                      {renderPortalPdfControls('fourPsFile')}
                     </span>
                   </label>
                 </div>
               </section>
+              </div>
             </div>
 
             {portalReviewData && (
@@ -1996,6 +2226,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                           <dt>Student ID</dt>
                           <dd>{portalReviewData.studentId}</dd>
                         </div>
+                        <div><dt>LRN</dt><dd>{portalReviewData.lrn || 'Not assigned / not provided'}</dd></div>
+                        <div><dt>PhilSys ID</dt><dd>{portalReviewData.philSysIdNumber || 'Not provided'}</dd></div>
+                        <div><dt>4Ps ID Number</dt><dd>{portalReviewData.fourPsIdNumber || 'Not provided'}</dd></div>
                         <div>
                           <dt>Full Name</dt>
                           <dd>
@@ -2040,7 +2273,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                               portalReviewData.fatherLastName,
                             ]
                               .filter(Boolean)
-                              .join(' ') || 'Not provided'}
+                              .join(' ') || (portalReviewData.fatherInformationUnavailable ? 'Information unavailable' : 'Not provided')}
                           </dd>
                         </div>
                         <div>
@@ -2052,7 +2285,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                               portalReviewData.motherLastName,
                             ]
                               .filter(Boolean)
-                              .join(' ') || 'Not provided'}
+                              .join(' ') || (portalReviewData.motherInformationUnavailable ? 'Information unavailable' : 'Not provided')}
                           </dd>
                         </div>
                       </dl>
@@ -2062,7 +2295,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       <h5>Address and Contact</h5>
                       <dl>
                         <div>
-                          <dt>Address</dt>
+                          <dt>Permanent Address</dt>
                           <dd>{portalReviewData.address}</dd>
                         </div>
                         <div>
@@ -2081,6 +2314,17 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                           <dt>Email Address</dt>
                           <dd>{portalReviewData.emailAddress}</dd>
                         </div>
+                      </dl>
+                    </div>
+
+                    <div className="portal-review-group">
+                      <h5>Additional Information</h5>
+                      <dl>
+                        <div><dt>Disability</dt><dd>{portalReviewData.hasDisability ? (portalReviewData.disabilityType || 'Yes — details not specified') : 'No'}</dd></div>
+                        <div><dt>Solo Parent Dependent</dt><dd>{portalReviewData.soloParentDependent ? 'Yes (1)' : 'No (0)'}</dd></div>
+                        <div><dt>First Generation</dt><dd>{portalReviewData.firstGeneration ? 'Yes (1)' : 'No (0)'}</dd></div>
+                        <div><dt>Indigenous Peoples Group</dt><dd>{portalReviewData.isIndigenous ? (portalReviewData.indigenousGroup || 'Yes — group not specified') : 'No'}</dd></div>
+                        <div><dt>Classification</dt><dd>TES Applicant</dd></div>
                       </dl>
                     </div>
 
@@ -2104,8 +2348,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                         <div>
                           <dt>COR / Study Load</dt>
                           <dd>
-                            {portalReviewData.corFile.name} (
-                            {formatFileSize(portalReviewData.corFile.size)})
+                            {portalReviewData.corFile ? `${portalReviewData.corFile.name} (${formatFileSize(portalReviewData.corFile.size)})` : 'Not provided (optional)'}
                           </dd>
                         </div>
                         <div>
@@ -2131,6 +2374,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                       </dl>
                     </div>
                   </div>
+                  <label className="portal-acknowledgment"><input type="checkbox" checked={hasAcknowledgedPortalApplication} onChange={(event) => setHasAcknowledgedPortalApplication(event.target.checked)} /> I certify that the information and documents I have submitted are true and accurate to the best of my knowledge.</label>
+                  <p className="portal-review-privacy">Your information and supporting documents will be used by the Scholarship Office for TES application processing, eligibility verification, and related scholarship administration.</p>
                 </section>
               </div>
             )}
@@ -2148,6 +2393,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   <button
                     className="button button--secondary"
                     disabled={isSubmittingPortal}
+                    onClick={() => { setPortalReviewData(null); setPortalStep(4); setHasAcknowledgedPortalApplication(false) }}
+                    type="button"
+                  >
+                    Previous
+                  </button>
+
+                  <button
+                    className="button button--secondary"
+                    disabled={isSubmittingPortal}
                     onClick={handleEditPortalInformation}
                     type="button"
                   >
@@ -2160,7 +2414,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                     onClick={handleOpenPortalPrivacy}
                     type="button"
                   >
-                    Submit Information
+                    Submit Application
                   </button>
                 </>
               ) : (
@@ -2173,10 +2427,10 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                   >
                     Cancel
                   </button>
-
-                  <button className="button" disabled={isSubmittingPortal} type="submit">
-                    Review Information
-                  </button>
+                  {portalStep > 0 && <button className="button button--secondary" disabled={isSubmittingPortal} onClick={() => movePortalStep(portalStep - 1)} type="button">Previous</button>}
+                  {portalStep < 4
+                    ? <button className="button" disabled={isSubmittingPortal} onClick={() => movePortalStep(portalStep + 1)} type="button">Continue</button>
+                    : <button className="button" disabled={isSubmittingPortal} onClick={() => handleUnifastPortalSubmit({ preventDefault() {}, currentTarget: portalFormRef.current })} type="button">Review & Submit</button>}
                 </>
               )}
             </div>
@@ -2990,6 +3244,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       )}
 
       <div className="scroll-progress" style={{ '--scroll-progress': progress }} />
+      <VisitorSupport onRequest={openQuickActions} />
     </div>
   )
 }
@@ -3198,9 +3453,13 @@ const authResponsiveStyles = `
 }
 
 .portal-modal-card {
-  width: min(100%, 960px);
-  max-height: min(860px, calc(100vh - 32px));
-  overflow-y: auto;
+  width: min(100%, 1200px);
+  height: min(94dvh, 920px);
+  max-height: 94dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
 }
 
 .portal-status-card {
@@ -3208,10 +3467,21 @@ const authResponsiveStyles = `
 }
 
 .portal-modal-header {
+  flex: 0 0 auto;
   background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
 }
 
+.portal-stepper{flex:0 0 auto;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;padding:12px 24px;border-bottom:1px solid #f2e5dc;background:#fff}
+.portal-stepper__step{min-width:0;display:flex;align-items:center;gap:8px;border:0;background:transparent;color:#8d7b70;text-align:left;cursor:pointer}
+.portal-stepper__step>span{width:27px;height:27px;flex:0 0 27px;display:grid;place-items:center;border:1px solid #e4d6ca;border-radius:50%;font-size:11px;font-weight:800}
+.portal-stepper__step small{font-size:10px;line-height:1.25;font-weight:700}
+.portal-stepper__step.is-active{color:#a4480b}.portal-stepper__step.is-active>span,.portal-stepper__step.is-complete>span{border-color:#d86b1d;background:#e87919;color:white}
+.portal-step-panel{display:none}.portal-step-panel.is-active{display:block}
+
 .portal-form {
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
   gap: 18px;
 }
 
@@ -3233,6 +3503,12 @@ const authResponsiveStyles = `
   margin: 0;
   color: #431407;
 }
+
+.portal-unavailable{display:flex;align-items:center;gap:8px;color:#71594b;font-size:12px;font-weight:700}.portal-unavailable input{accent-color:#d66b1b}
+.portal-choice-field{display:flex;grid-column:span 2;flex-wrap:wrap;align-items:center;gap:10px 18px;min-width:0;margin:0;padding:13px;border:1px solid #ead9cc;border-radius:12px;background:#fff}
+.portal-choice-field legend{padding:0 5px;color:#4e382c;font-size:12px;font-weight:800}.portal-choice-field p{flex-basis:100%;margin:0;color:#86756a;font-size:11px}.portal-choice-field label{display:flex;align-items:center;gap:6px;color:#614a3c;font-size:12px}.portal-choice-field input{accent-color:#d66b1b}
+.portal-classification{grid-column:span 2;display:grid;gap:5px;padding:14px;border:1px solid #f1d6bf;border-radius:12px;background:#fff6ee}.portal-classification span,.portal-classification small{color:#826d5f;font-size:11px}.portal-classification strong{color:#9f470b;font-size:15px}
+.portal-field-helper{color:#8c7b70;font-size:10px}
 
 .portal-section h4 {
   font-size: 15px;
@@ -3447,6 +3723,9 @@ const authResponsiveStyles = `
 }
 
 .portal-review {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding-top: 18px;
 }
 
@@ -3531,10 +3810,14 @@ const authResponsiveStyles = `
 }
 
 .portal-actions {
+  flex:0 0 auto;
   display: flex;
   flex-direction: row;
   justify-content: flex-end;
 }
+
+.portal-acknowledgment{display:flex;align-items:flex-start;gap:10px;margin-top:16px;padding:14px;border:1px solid #f0d4bc;border-radius:12px;background:#fff7ef;color:#4f3b2e;font-size:12px;line-height:1.5;font-weight:700}.portal-acknowledgment input{flex:0 0 auto;margin-top:2px;accent-color:#d66b1b}.portal-review-privacy{margin:10px 0 0;color:#85766b;font-size:11px;line-height:1.5}
+.portal-document-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px}.portal-document-controls button{border:1px solid #efd1b7;border-radius:8px;padding:5px 9px;background:#fff;color:#a14c13;font-size:10px;font-weight:800;cursor:pointer}.portal-document-controls progress{width:100%;height:6px;accent-color:#d66b1b}
 
 .portal-message-row {
   display: grid;
@@ -3576,8 +3859,9 @@ const authResponsiveStyles = `
   .auth-modal-card--large,
   .portal-modal-card {
     width: 100%;
-    max-height: calc(100vh - 20px);
-    border-radius: 18px 18px 10px 10px;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
   }
 
   .button--portal {
@@ -3602,6 +3886,10 @@ const authResponsiveStyles = `
   .portal-grid--three {
     grid-template-columns: 1fr;
   }
+
+  .portal-stepper{grid-template-columns:repeat(6,minmax(74px,1fr));overflow-x:auto;padding:10px 12px;gap:5px}
+  .portal-stepper__step{align-items:flex-start;flex-direction:column;gap:4px}
+  .portal-choice-field,.portal-classification{grid-column:1/-1}
 
   .portal-section {
     gap: 12px;
@@ -3649,6 +3937,9 @@ const authResponsiveStyles = `
   .portal-actions .button {
     width: 100%;
   }
+
+  .portal-actions{grid-template-columns:repeat(2,minmax(0,1fr));padding-bottom:max(14px,env(safe-area-inset-bottom))}
+  .portal-actions .button:last-child{grid-column:1/-1}
 
   .admin-login-hero {
     padding: 24px 18px;

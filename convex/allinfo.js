@@ -12,7 +12,9 @@ async function logActivity(ctx, log) {
 }
 
 export const list = query({
-  args: {},
+  args: {
+    refreshVersion: v.optional(v.number()),
+  },
   handler: async (ctx) => {
     const records = await ctx.db.query('allinfo').collect()
 
