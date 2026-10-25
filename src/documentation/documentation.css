@@ -1,0 +1,38 @@
+.documentation-gallery { margin:28px 0 36px; padding:32px 16px 22px; border:1px solid #e8dcd4; border-radius:24px; background:radial-gradient(ellipse at 50% 55%,#fff0e2,transparent 65%),#f6f7f9; color:#1f2937; overflow:hidden; box-shadow:6px 6px 22px #5d341009,-6px -6px 22px #fff; }
+.documentation-gallery-heading { text-align:center; max-width:720px; margin:0 auto 12px; }
+.documentation-gallery-heading > span { color:#881337; font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+.documentation-gallery-heading h2 { margin:10px 0; color:#1f2937; font-size:clamp(23px,3vw,34px); letter-spacing:-.035em; }
+.documentation-gallery-heading p { color:#64748b; font-size:13px; line-height:1.7; }
+.documentation-stage { position:relative; height:clamp(270px,34vw,450px); perspective:1200px; overflow:hidden; touch-action:pan-y; isolation:isolate; }
+.documentation-card { position:absolute; top:50%; left:50%; width:54%; height:84%; padding:0; border:5px solid #fff; border-radius:22px; overflow:hidden; color:#fff; background:#e8e8e9; cursor:pointer; box-shadow:0 16px 38px #4e291c2b,0 3px 6px #4e291c14; transform-style:preserve-3d; backface-visibility:hidden; will-change:transform; }
+.documentation-card:focus-visible { outline:3px solid #881337; outline-offset:3px; }
+.documentation-card-caption { position:absolute; inset:auto 0 0; padding:30px 20px 16px; background:linear-gradient(transparent,#1c1424b8); text-align:left; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+.documentation-single-card { position:relative; display:block; top:auto; left:auto; margin:24px auto; width:min(680px,90%); height:calc(100% - 48px); transform:none; }
+.documentation-image { position:relative; display:block; width:100%; height:100%; min-height:60px; background:#e9eaed; overflow:hidden; }
+.documentation-image > img { display:block; width:100%; height:100%; object-fit:cover; user-select:none; -webkit-user-drag:none; }
+.documentation-skeleton { position:absolute; inset:0; z-index:1; background:linear-gradient(100deg,#e9eaed 25%,#f8f8fa 50%,#e9eaed 75%); background-size:200% 100%; animation:documentation-skeleton 1.5s ease-in-out infinite; pointer-events:none; }
+.documentation-image-error { display:grid; place-items:center; height:100%; min-height:100px; padding:20px; color:#64748b; background:#eef0f3; font-size:12px; }
+.documentation-controls { display:flex; align-items:center; justify-content:center; gap:14px; padding:10px 0 2px; color:#64748b; font-size:12px; }
+.documentation-icon-button { display:grid; place-items:center; flex-shrink:0; width:44px; height:44px; padding:0; border:1px solid #dfdce1; border-radius:14px; background:#fbfbfc; color:#881337; font:inherit; font-size:22px; cursor:pointer; box-shadow:3px 3px 8px #38201709,-3px -3px 8px #fff; }
+.documentation-pause { padding:9px 13px; min-height:44px; border:1px solid #dfdce1; border-radius:12px; background:#fbfbfc; color:#881337; font:inherit; font-size:12px; cursor:pointer; }
+.documentation-icon-button:hover,.documentation-pause:hover { background:#fff1e6; }
+.documentation-icon-button:focus-visible,.documentation-pause:focus-visible { outline:2px solid #881337; outline-offset:3px; }
+.documentation-sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+.documentation-viewer { width:min(96vw,1200px); height:min(94dvh,950px); max-width:96vw; max-height:94dvh; padding:0; margin:auto; border:1px solid #fff; border-radius:22px; background:#f6f7f9; color:#1f2937; font-family:'Hanken Grotesk',system-ui,sans-serif; box-shadow:0 24px 90px #1f14254d; overflow:hidden; box-sizing:border-box; }
+.documentation-viewer[open] { display:flex; flex-direction:column; }
+.documentation-viewer::backdrop { background:#17101ad9; backdrop-filter:blur(8px); }
+.documentation-viewer > header { display:flex; align-items:center; justify-content:space-between; flex-shrink:0; gap:12px; padding:12px 20px; border-bottom:1px solid #e5e7eb; font-size:12px; font-weight:700; color:#881337; }
+.documentation-viewer-stage { flex:1; min-height:0; padding:12px; overflow:hidden; background:#22202a; touch-action:pan-y; }
+.documentation-viewer-stage .documentation-image { background:transparent; }
+.documentation-viewer-stage img { object-fit:contain; }
+.documentation-viewer > footer { display:flex; align-items:center; justify-content:space-between; flex-shrink:0; gap:20px; padding:18px 22px; max-height:28%; overflow:auto; }
+.documentation-viewer-caption { min-width:0; }
+.documentation-viewer-caption h2 { margin:0 0 8px; font-size:20px; overflow-wrap:anywhere; }
+.documentation-viewer-caption p { margin:0 0 8px; white-space:pre-wrap; color:#64748b; font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+.documentation-viewer-caption time { color:#881337; font-size:11px; }
+.documentation-viewer footer nav { display:flex; align-items:center; gap:12px; font-size:12px; white-space:nowrap; }
+@keyframes documentation-skeleton { to { background-position:-200% 0; } }
+@media(max-width:900px) { .documentation-card { width:64%; height:82%; } .documentation-stage { perspective:900px; } }
+@media(max-width:600px) { .documentation-gallery { padding:26px 6px 16px; border-radius:18px; } .documentation-gallery-heading { padding:0 12px; } .documentation-stage { height:290px; perspective:800px; } .documentation-card { width:82%; height:80%; border-width:4px; border-radius:18px; } .documentation-card-caption { font-size:12px; padding:30px 14px 13px; } .documentation-viewer { width:98vw; max-width:98vw; height:96dvh; max-height:96dvh; border-radius:16px; } .documentation-viewer > footer { flex-direction:column; align-items:stretch; gap:10px; padding:14px; max-height:34%; } .documentation-viewer footer nav { justify-content:center; } .documentation-viewer-caption h2 { font-size:17px; } }
+@media(prefers-reduced-motion:reduce) { .documentation-skeleton { animation:none; } .documentation-card { will-change:auto; } }
+@media(max-width:600px) { .documentation-controls { padding-inline:8px 72px; gap:10px; } }

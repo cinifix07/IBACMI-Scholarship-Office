@@ -1,7 +1,30 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
+import { configFields, profileFields } from './billingRules'
+import { documentationFields } from './documentationRules'
 
 export default defineSchema({
+  documentation: defineTable({...documentationFields,storageId:v.id('_storage'),mimeType:v.string(),fileSize:v.number(),width:v.number(),height:v.number(),uploadedBy:v.id('admins'),createdAt:v.number(),updatedAt:v.number()})
+    .index('by_status_order',['status','displayOrder']).index('by_created',['createdAt']).index('by_status_created',['status','createdAt']).index('by_storage',['storageId']),
+  documentationUploads: defineTable({...documentationFields,adminId:v.id('admins'),mimeType:v.string(),fileSize:v.number(),createdAt:v.number(),expiresAt:v.number(),state:v.union(v.literal('pending'),v.literal('uploading'),v.literal('completed'),v.literal('failed')),storageId:v.optional(v.id('_storage'))})
+    .index('by_admin_created',['adminId','createdAt']),
+  billingConfigs: defineTable({ ...configFields, form2Mapping: v.optional(v.object({ applicationNumberVerified: v.boolean(), batchColumnMode: v.union(v.literal('databaseBatch'), v.literal('designation')), designation: v.string(), authority: v.string() })), periodKey: v.string(), updatedAt: v.number(), updatedBy: v.id('admins') })
+    .index('by_period', ['periodKey']),
+  billingProfiles: defineTable({ ...profileFields, form2ContinuingVerified: v.optional(v.boolean()), form2Evidence: v.optional(v.string()), form2ReviewedBy: v.optional(v.id('admins')), form2ReviewedAt: v.optional(v.number()), periodKey: v.string(), normalizedStudentId: v.string(), sourceVersion: v.optional(v.string()), updatedAt: v.number(), reviewedBy: v.id('admins') })
+    .index('by_period', ['periodKey'])
+    .index('by_period_student', ['periodKey', 'normalizedStudentId']),
+  billingReports: defineTable({
+    periodKey: v.string(), reference: v.string(), billingDate: v.string(), tranche: v.number(),
+    schoolYear: v.string(), semester: v.string(), batches: v.array(v.string()),
+    totals: v.any(), authority: v.string(), granteeCount: v.number(),
+    ascBasisPoints: v.number(), createdBy: v.id('admins'), createdAt: v.number(),
+  }).index('by_reference', ['reference']).index('by_period', ['periodKey']),
+  billingReportRows: defineTable({ reportId: v.id('billingReports'), sequence: v.number(), data: v.any() })
+    .index('by_report', ['reportId', 'sequence']),
+  form2Reports: defineTable({ billingReportId: v.id('billingReports'), periodKey: v.string(), mapping: v.object({ applicationNumberVerified: v.boolean(), batchColumnMode: v.union(v.literal('databaseBatch'), v.literal('designation')), designation: v.string(), authority: v.string() }), createdBy: v.id('admins'), createdAt: v.number() })
+    .index('by_period', ['periodKey']).index('by_billing_report', ['billingReportId']),
+  billingLedger: defineTable({ periodKey: v.string(), studentId: v.string(), tesAwardNumber: v.string(), reportId: v.id('billingReports') })
+    .index('by_period', ['periodKey']).index('by_period_student', ['periodKey', 'studentId']),
   admins: defineTable({
     email: v.string(),
     schoolId: v.optional(v.string()),

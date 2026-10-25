@@ -13,5 +13,7 @@ export default defineConfig({
   // which can produce a white flash when the UI reloads. Restart dev server after this change.
   server: {
     hmr: false,
+    // Browser export tests write files that Windows may temporarily lock.
+    watch: { ignored: ['**/tmp/**', '**/backups/**'] },
   },
 })

@@ -254,40 +254,27 @@ export const register = mutation({
       }
     }
 
-    const matchingStudentRecord = await ctx.db
-      .query('allinfo')
-      .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', schoolId))
-      .first()
+    // Perform all identity checks in this mutation so duplicate checks and insertion
+    // share a transaction. Never disclose which identity check failed publicly.
+    const [matchingStudentRecord, existingEmail, existingSchoolId] = await Promise.all([
+      ctx.db
+        .query('allinfo')
+        .withIndex('by_student_id', (queryBuilder) => queryBuilder.eq('studentId', schoolId))
+        .first(),
+      ctx.db
+        .query('admins')
+        .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', email))
+        .first(),
+      ctx.db
+        .query('admins')
+        .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
+        .first(),
+    ])
 
-    if (!matchingStudentRecord) {
+    if (!matchingStudentRecord || existingEmail || existingSchoolId) {
       return {
         success: false,
-        reason: 'schoolIdNotFound',
-        message: 'School ID was not found in the official records.',
-      }
-    }
-
-    const existingEmail = await ctx.db
-      .query('admins')
-      .withIndex('by_email', (queryBuilder) => queryBuilder.eq('email', email))
-      .first()
-
-    if (existingEmail) {
-      return {
-        success: false,
-        message: 'An account with this email already exists.',
-      }
-    }
-
-    const existingSchoolId = await ctx.db
-      .query('admins')
-      .withIndex('by_school_id', (queryBuilder) => queryBuilder.eq('schoolId', schoolId))
-      .first()
-
-    if (existingSchoolId) {
-      return {
-        success: false,
-        message: 'An account with this School ID already exists.',
+        message: 'Dili makompleto ang pagrehistro gamit niini nga mga detalye. Palihog i-check ang imong impormasyon, pag-login o gamita ang Forgot Password kung naa na kay account, o kontaka ang Scholarship Office.',
       }
     }
 

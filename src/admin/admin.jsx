@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
-import ibacmiLogo from '../assets/IBACMI.png'
+import AdminSidebar from './AdminSidebar.jsx'
+import BillingManagement from './BillingManagement.jsx'
+import Form2Management from './Form2Management.jsx'
+import DocumentationManagement from './DocumentationManagement.jsx'
 import StudentSupport from './StudentSupport.jsx'
 
 const granteesPerPage = 5
@@ -466,6 +469,10 @@ function parseGranteeUpload(text) {
 }
 
 function Admin({ adminSession, onLogout }) {
+  const [isBillingOpen, setIsBillingOpen] = useState(false)
+  const [isForm2Open, setIsForm2Open] = useState(false)
+  const [isDocumentationOpen, setIsDocumentationOpen] = useState(false)
+  const [activeSection, setActiveSection] = useState('dashboard')
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
@@ -1936,6 +1943,36 @@ function Admin({ adminSession, onLogout }) {
     setIsUserManagementOpen(true)
   }
 
+  const handleSidebarNavigate = (item) => {
+    if (item === 'dashboard' || item === 'records') {
+      setActiveSection(item)
+      requestAnimationFrame(() => {
+        const section = document.getElementById(item === 'records' ? 'admin-records' : 'admin-dashboard')
+        section?.focus({ preventScroll: true })
+        section?.scrollIntoView({ block: 'start', behavior: 'instant' })
+      })
+    } else if (item === 'portal') {
+      setIsUnifastPortalConfirmOpen(true)
+    } else if (item === 'archive') {
+      setArchiveMessage('')
+      setCurrentArchivePage(1)
+      setIsArchiveOpen(true)
+    } else if (item === 'logs') {
+      setCurrentLogPage(1)
+      setIsLogsOpen(true)
+    } else if (item === 'users') {
+      openUserManagement()
+    } else if (item === 'support') {
+      openQuickActions()
+    } else if (item === 'billing') {
+      setIsBillingOpen(true)
+    } else if (item === 'form2') {
+      setIsForm2Open(true)
+    } else if (item === 'documentation') {
+      setIsDocumentationOpen(true)
+    }
+  }
+
   const openEditUser = (user) => {
     setSelectedUser(user)
     setUserForm({ email: user.email ?? '', phoneNumber: user.phoneNumber ?? '' })
@@ -2061,73 +2098,15 @@ function Admin({ adminSession, onLogout }) {
     <div className="admin-page">
       <style>{adminStyles}</style>
 
-      <header className="admin-topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark">
-            <img alt="IBACMI" className="brand-mark__image" src={ibacmiLogo} />
-          </div>
-
-          <div className="brand-copy">
-            <p className="brand-title">IBACMI</p>
-            <p className="brand-subtitle">Scholarship Office</p>
-          </div>
-        </div>
-
-        <div className="header-actions">
-          <button
-            className="admin-button admin-button--ghost"
-            onClick={() => {
-              setCurrentLogPage(1)
-              setIsLogsOpen(true)
-            }}
-            type="button"
-          >
-            <span className="material-symbols-outlined">history</span>
-            Logs
-          </button>
-
-          <button
-            className="admin-button admin-button--ghost"
-            onClick={() => {
-              setArchiveMessage('')
-              setCurrentArchivePage(1)
-              setIsArchiveOpen(true)
-            }}
-            type="button"
-          >
-            <span className="material-symbols-outlined">archive</span>
-            Archive
-          </button>
-
-          <button
-            className="admin-button admin-button--ghost"
-            onClick={() => setIsUnifastPortalConfirmOpen(true)}
-            type="button"
-          >
-            <span className="material-symbols-outlined">folder_open</span>
-            UNIFAST PORTAL
-          </button>
-
-          <button className="admin-button admin-button--ghost" onClick={openUserManagement} type="button">
-            <span className="material-symbols-outlined">manage_accounts</span>
-            User Management
-          </button>
-
-          <button className="admin-button admin-button--ghost" onClick={openQuickActions} type="button">
-            <span className="material-symbols-outlined">task_alt</span>
-            Quick Actions
-          </button>
-
-          <button className="admin-button admin-button--admin" onClick={handleAdminLogout} type="button">
-            <span className="material-symbols-outlined">logout</span>
-            Logout
-          </button>
-        </div>
-      </header>
+      <AdminSidebar
+        activeItem={isDocumentationOpen ? 'documentation' : isForm2Open ? 'form2' : isBillingOpen ? 'billing' : isQuickActionsOpen ? 'support' : isUserManagementOpen ? 'users' : isArchiveOpen ? 'archive' : isLogsOpen ? 'logs' : (isUnifastPortalConfirmOpen || isUnifastPortalCoursesOpen || isApplicantYearOpen || selectedUnifastCourse || isApplicantDownloadOpen) ? 'portal' : activeSection}
+        onNavigate={handleSidebarNavigate}
+        onLogout={handleAdminLogout}
+      />
 
       <main className="admin-main">
         <div className="admin-container">
-          <section className="admin-heading">
+          <section id="admin-dashboard" className="admin-heading" tabIndex={-1}>
             <div className="admin-heading__copy">
               <span className="admin-eyebrow">Tertiary Education Subsidy and Tulong Dunong Program</span>
               <h1>Grantee Management</h1>
@@ -2261,7 +2240,7 @@ function Admin({ adminSession, onLogout }) {
             </button>
           </section>
 
-          <section className="admin-table-card" aria-label="TDP grantee records">
+          <section id="admin-records" className="admin-table-card" aria-label="TDP grantee records" tabIndex={-1}>
             <div className="admin-table-header">
               <div>
                 <h2>Grantee Records</h2>
@@ -2457,6 +2436,9 @@ function Admin({ adminSession, onLogout }) {
           </section>
         </div>
       </main>
+      {isBillingOpen && <BillingManagement sessionToken={adminSession?.sessionToken} onClose={() => setIsBillingOpen(false)} />}
+      {isForm2Open && <Form2Management sessionToken={adminSession?.sessionToken} onClose={() => setIsForm2Open(false)} onOpenBilling={() => { setIsForm2Open(false); setIsBillingOpen(true) }} />}
+      {isDocumentationOpen && <DocumentationManagement sessionToken={adminSession?.sessionToken} onClose={() => setIsDocumentationOpen(false)} />}
 
       {isLogsOpen && (
         <div

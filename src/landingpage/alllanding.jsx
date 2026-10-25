@@ -5,6 +5,8 @@ import quickActionsData from '../../data.json'
 import ibacmiLogo from '../assets/IBACMI.png'
 import scholarshipOfficeBanner from '../assets/desktop.png'
 import VisitorSupport from './VisitorSupport'
+import AccountVerification from './AccountVerification'
+import DocumentationGallery from '../documentation/DocumentationGallery'
 import './lan.css'
 
 function StatusBadge({ status, tone }) {
@@ -199,6 +201,9 @@ const contactPortalFields = [
 ]
 
 function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
+  const granteeSearchRef = useRef(null)
+  const [isAccountVerificationOpen, setIsAccountVerificationOpen] = useState(false)
+  const [granteeSearchGuidance, setGranteeSearchGuidance] = useState('')
   const portalFormRef = useRef(null)
   const installPromptRef = useRef(null)
   const [progress, setProgress] = useState(0)
@@ -215,7 +220,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false)
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
   const [isSignUpOpen, setIsSignUpOpen] = useState(false)
-  const [isSignUpDeniedOpen, setIsSignUpDeniedOpen] = useState(false)
   const [isPortalPrivacyOpen, setIsPortalPrivacyOpen] = useState(false)
   const [isPortalSubmissionSuccessOpen, setIsPortalSubmissionSuccessOpen] = useState(false)
 
@@ -395,7 +399,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       !isAdminLoginOpen &&
       !isForgotPasswordOpen &&
       !isSignUpOpen &&
-      !isSignUpDeniedOpen &&
       !isPortalPrivacyOpen &&
       !isPortalSubmissionSuccessOpen &&
       !portalStatusMessage &&
@@ -436,7 +439,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         setIsSubmittingAdminLogin(false)
         setIsForgotPasswordOpen(false)
         setIsSignUpOpen(false)
-        setIsSignUpDeniedOpen(false)
         setPortalStatusMessage('')
         if (signUpSuccess) {
           continueToStudentFromRegistration()
@@ -459,7 +461,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     isAdminLoginOpen,
     isForgotPasswordOpen,
     isSignUpOpen,
-    isSignUpDeniedOpen,
     isPortalPrivacyOpen,
     isPortalSubmissionSuccessOpen,
     isSubmittingPortal,
@@ -980,6 +981,25 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setIsAdminLoginOpen(true)
   }
 
+  const continueAccountVerification = (destination) => {
+    setIsAccountVerificationOpen(false)
+    if (destination === 'login') openAdminLogin()
+    else openSignUp()
+    requestAnimationFrame(() => {
+      document.querySelector(destination === 'login' ? '#admin-login-title' : '#sign-up-title')
+        ?.closest('.modal-card')?.querySelector('input')?.focus()
+    })
+  }
+
+  const returnToGranteeSearch = () => {
+    setIsAccountVerificationOpen(false)
+    setGranteeSearchGuidance('Palihog pangitaa una imong pangalan sa official grantee list sa dili pa mag-create og account.')
+    requestAnimationFrame(() => {
+      granteeSearchRef.current?.focus({ preventScroll: true })
+      granteeSearchRef.current?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+    })
+  }
+
   const closeAdminLogin = () => {
     setIsAdminLoginOpen(false)
     setIsSubmittingAdminLogin(false)
@@ -1021,11 +1041,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     setAdminLoginIdentifier(signUpEmail || signUpSchoolId)
     setAdminLoginPassword('')
     setIsAdminLoginOpen(true)
-  }
-
-  const closeSignUpDenied = () => {
-    setIsSignUpDeniedOpen(false)
-    setIsSignUpOpen(true)
   }
 
   const openForgotPassword = () => {
@@ -1411,13 +1426,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       })
 
       if (!result.success) {
-        if (result.reason === 'schoolIdNotFound') {
-          setIsSignUpOpen(false)
-          setIsSignUpDeniedOpen(true)
-          return
-        }
-
-        setSignUpError(result.message || 'Unable to register account.')
+        setSignUpError('Dili makompleto ang pagrehistro gamit niini nga mga detalye. Palihog i-check ang imong impormasyon, pag-login o gamita ang Forgot Password kung naa na kay account, o kontaka ang Scholarship Office.')
         return
       }
 
@@ -1429,8 +1438,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setSignUpPhoneNumber('')
       setSignUpPassword('')
       setSignUpConfirmPassword('')
-    } catch (error) {
-      setSignUpError(error instanceof Error ? error.message : 'Unable to register account.')
+    } catch {
+      setSignUpError('Dili makompleto ang pagrehistro karon. Palihog sulayi pag-usab o kontaka ang Scholarship Office.')
     } finally {
       setIsRegisteringAccount(false)
     }
@@ -1521,7 +1530,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         <div className="header-actions">
           <button
             className="button button--compact button--admin"
-            onClick={openAdminLogin}
+            onClick={() => { setGranteeSearchGuidance(''); setIsAccountVerificationOpen(true) }}
             type="button"
           >
             SIGN IN
@@ -1545,10 +1554,16 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             </div>
           </section>
 
+          <div role="status" aria-live="polite" lang="ceb">
+            {granteeSearchGuidance && <p id="grantee-verification-guidance" className="grantee-verification-guidance">{granteeSearchGuidance}</p>}
+          </div>
           <section className="filter-panel" aria-label="Grantee filters">
             <div className="search-field">
               <span className="material-symbols-outlined">search</span>
               <input
+                ref={granteeSearchRef}
+                aria-label="Search official grantee records"
+                aria-describedby={granteeSearchGuidance ? 'grantee-verification-guidance' : undefined}
                 placeholder="Enter School ID, Either Batch No., or Last Name..."
                 type="text"
                 value={studentIdSearch}
@@ -1606,6 +1621,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </a>
             </section>
           )}
+
+          {!hasStudentIdSearch && <DocumentationGallery />}
 
           {hasStudentIdSearch && (
             <section className="table-card" aria-label="Filtered grantee records">
@@ -2700,6 +2717,15 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         </div>
       )}
 
+      {isAccountVerificationOpen && (
+        <AccountVerification
+          onDismiss={() => setIsAccountVerificationOpen(false)}
+          onLogin={() => continueAccountVerification('login')}
+          onRegister={() => continueAccountVerification('register')}
+          onSearch={returnToGranteeSearch}
+        />
+      )}
+
       {isAdminLoginOpen && (
         <div
           aria-labelledby="admin-login-title"
@@ -2938,7 +2964,14 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 </p>
               </div>
 
-              {signUpError && <p className="form-error auth-full-field">{signUpError}</p>}
+              {signUpError && <>
+                <p className="form-error auth-full-field" role="alert" lang="ceb">{signUpError}</p>
+                <div className="registration-help auth-full-field" lang="ceb">
+                  <strong>Giya sa pagrehistro — mga posibleng hinungdan:</strong>
+                  <p>Kung wala sa list: Wala makita ang imong Student ID sa official grantee list. Palihog i-check pag-usab o kontaka ang Scholarship Office.</p>
+                  <p>Kung nakarehistro na: Naa na kay account nga nakarehistro niini nga Student ID. Palihog pag-login o gamita ang Forgot Password.</p>
+                </div>
+              </>}
               {signUpSuccess && <p className="form-success auth-full-field">{signUpSuccess}</p>}
             </div>
 
@@ -2957,42 +2990,6 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </button>
             </div>
           </form>
-        </div>
-      )}
-
-      {isSignUpDeniedOpen && (
-        <div
-          aria-labelledby="sign-up-denied-title"
-          aria-modal="true"
-          className="modal-overlay"
-          role="dialog"
-        >
-          <button
-            aria-label="Close sign up denied modal"
-            className="modal-backdrop-button"
-            onClick={closeSignUpDenied}
-            type="button"
-          />
-
-          <section className="modal-card modal-card--success auth-modal-card auth-denied-card">
-            <div className="success-modal-body auth-denied-body">
-              <div className="auth-denied-icon">
-                <span className="material-symbols-outlined">error</span>
-              </div>
-
-              <h3 id="sign-up-denied-title">Account Registration Not Approved</h3>
-              <p>
-                Sorry, you cannot proceed. Your School ID was not found in the official records.
-                Please contact the IBACMI | Scholarship Office for assistance.
-              </p>
-            </div>
-
-            <div className="modal-actions modal-actions--single">
-              <button className="button" onClick={closeSignUpDenied} type="button">
-                Back to Sign Up
-              </button>
-            </div>
-          </section>
         </div>
       )}
 

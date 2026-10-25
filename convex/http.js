@@ -1,8 +1,13 @@
 import { httpRouter } from 'convex/server'
 import { api } from './_generated/api'
 import { httpAction } from './_generated/server'
+import { documentationOptions,readDocumentation,uploadDocumentation } from './documentationHttp'
 
 const http = httpRouter()
+http.route({method:'OPTIONS',path:'/documentation/upload',handler:documentationOptions})
+http.route({method:'POST',path:'/documentation/upload',handler:uploadDocumentation})
+http.route({method:'OPTIONS',path:'/documentation/image',handler:documentationOptions})
+http.route({method:'GET',path:'/documentation/image',handler:readDocumentation})
 const maxPdfSize = 5 * 1024 * 1024
 
 function corsHeaders(contentType = 'application/json') {

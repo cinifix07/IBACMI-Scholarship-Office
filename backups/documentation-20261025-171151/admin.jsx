@@ -1,0 +1,8903 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useAction, useMutation, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+import AdminSidebar from './AdminSidebar.jsx'
+import BillingManagement from './BillingManagement.jsx'
+import Form2Management from './Form2Management.jsx'
+import StudentSupport from './StudentSupport.jsx'
+
+const granteesPerPage = 5
+const usersPerPage = 5
+const logsPerPage = 5
+const archiveItemsPerPage = 7
+const batchExportsPerPage = 5
+const schoolIdDownloadsPerPage = 5
+const schoolIdBatchDownloadsPerPage = 5
+const courseApplicantsPerPage = 10
+const receivingApplicantsPerPage = 10
+const applicantYearsPerPage = 5
+const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
+const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
+const convexSiteUrl = (
+  import.meta.env.VITE_CONVEX_SITE_URL ||
+  activeConvexUrl.replace(/\.convex\.cloud\/?$/i, '.convex.site')
+).replace(/\/+$/, '')
+
+const unifastPortalCourses = [
+  'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
+  'BACHELOR OF SCIENCE IN ENTREPRENEURSHIP',
+  'BACHELOR OF SCIENCE IN CRIMINOLOGY',
+  'BACHELOR OF ELEMENTARY EDUCATION',
+  'BACHELOR OF EARLY CHILDHOOD EDUCATION',
+  'BACHELOR OF SCIENCE IN HOSPITALITY MANAGEMENT',
+  'BACHELOR OF PUBLIC ADMINISTRATION',
+]
+
+function formatLogDate(timestamp) {
+  if (!timestamp) return '—'
+
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestamp))
+}
+
+const granteeTemplateHeaders = [
+  'No.',
+  'TES Award Number',
+  'Student ID',
+  'Last Name',
+  'First Name',
+  'MI.',
+  'batch No.',
+  'Status',
+  'Semester',
+  'School Year',
+]
+
+function AdminStatusBadge({ status, tone }) {
+  return (
+    <span className={`admin-status admin-status--${tone}`}>
+      <span className="admin-status__dot" />
+      {status || '—'}
+    </span>
+  )
+}
+
+function getQuickActionStatusTone(status = '') {
+  const normalizedStatus = status.toLowerCase()
+
+  if (normalizedStatus.includes('grantee')) return 'grantee'
+  if (normalizedStatus.includes('applicant')) return 'applicant'
+
+  if (
+    normalizedStatus.includes('complete') ||
+    normalizedStatus.includes('resolved') ||
+    normalizedStatus.includes('valid') ||
+    normalizedStatus.includes('approved')
+  ) {
+    return 'validated'
+  }
+
+  if (normalizedStatus.includes('reject') || normalizedStatus.includes('decline')) {
+    return 'rejected'
+  }
+
+  return 'pending'
+}
+
+function formatSubmittedAt(timestamp) {
+  if (!timestamp) return '—'
+
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestamp))
+}
+
+function escapeCsvValue(value) {
+  return `"${String(value ?? '').replaceAll('"', '""')}"`
+}
+
+function downloadCsvFile(filename, rows) {
+  if (!Array.isArray(rows) || rows.length < 2) throw new Error('No applicant rows are available to download.')
+  const csvMarkup = rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n')
+  const blob = new Blob([csvMarkup], { type: 'text/csv;charset=utf-8' })
+  if (!blob.size) throw new Error('The applicant CSV file could not be generated.')
+  const downloadUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = downloadUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(downloadUrl)
+  return true
+}
+
+function downloadGranteeTemplate() {
+  const templateRows = [
+    granteeTemplateHeaders,
+    [
+      '1',
+      'TES-2024-0001',
+      '2024-UNI-0001',
+      'Dela Cruz',
+      'Juan',
+      'P',
+      '2024-01',
+      'Pending',
+      '1st Semester',
+      '2024-2025',
+    ],
+  ]
+
+  const templateMarkup = templateRows
+    .map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(','))
+    .join('\n')
+
+  const blob = new Blob([templateMarkup], { type: 'text/csv;charset=utf-8' })
+  const downloadUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = downloadUrl
+  link.download = 'tdp-grantee-template.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(downloadUrl)
+}
+
+function sanitizeDownloadPart(value, fallback) {
+  const sanitizedValue = String(value ?? '')
+    .trim()
+    .replace(/[^a-z0-9-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return sanitizedValue || fallback
+}
+
+function compareSchoolIdGranteesByName(firstGrantee, secondGrantee) {
+  const nameFields = ['lastName', 'firstName', 'middleInitial', 'studentId']
+
+  for (const fieldName of nameFields) {
+    const comparison = String(firstGrantee?.[fieldName] ?? '').localeCompare(
+      String(secondGrantee?.[fieldName] ?? ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    )
+
+    if (comparison !== 0) return comparison
+  }
+
+  return 0
+}
+
+function getApplicantCourse(record) {
+  return String(record?.course ?? record?.program ?? record?.degreeProgram ?? '').trim()
+}
+
+function getApplicantApplicationYear(applicant) {
+  const savedYear = String(applicant?.applicationYear ?? '').trim()
+  if (savedYear) return savedYear
+
+  const submittedAt = applicant?.submittedAt
+  return submittedAt ? String(new Date(submittedAt).getFullYear()) : ''
+}
+
+function createUnifastApplicantCsvRows(records, fallbackCourse = '') {
+  return [
+    [
+      'Application Year', 'Course', 'Student ID', 'LRN', 'PhilSys ID Number', '4Ps ID Number',
+      'Last Name', 'First Name', 'Ext Name', 'Middle Name', 'Gender', 'Sex Code', 'Birth Date',
+      'Year', 'Year Level Code', 'Father Last Name', 'Father First Name', 'Father Middle Name',
+      'Mother Last Name', 'Mother First Name', 'Mother Middle Name', 'Address', 'Street / Barangay',
+      'City / Municipality', 'Province', 'Region', 'Zip Code', 'PWD ID', 'Has Disability',
+      'Disability Type', 'Solo Parent Dependent Code', 'First Generation Code',
+      'Indigenous Peoples Member', 'Indigenous Group', 'Applicant Classification', 'PWD ID PDF',
+      '4Ps ID PDF', 'COR / Study Load PDF', 'Mobile No.', 'Email Address', 'Status', 'Submitted At',
+    ],
+    ...records.map((applicant) => [
+      getApplicantApplicationYear(applicant), getApplicantCourse(applicant) || fallbackCourse,
+      applicant.studentId ?? '', applicant.lrn ?? '', applicant.philSysIdNumber ?? '',
+      applicant.fourPsIdNumber ?? '', applicant.lastName ?? '', applicant.firstName ?? '',
+      applicant.extensionName ?? '', applicant.middleName ?? '', applicant.gender ?? '',
+      applicant.sexCode ?? '', applicant.birthDate ?? '', applicant.year ?? '',
+      applicant.yearLevelCode ?? '', applicant.fatherLastName ?? '', applicant.fatherFirstName ?? '',
+      applicant.fatherMiddleName ?? '', applicant.motherLastName ?? '', applicant.motherFirstName ?? '',
+      applicant.motherMiddleName ?? '', applicant.address ?? '', applicant.streetBarangay ?? '',
+      applicant.cityMunicipality ?? '', applicant.province ?? '', applicant.region ?? '',
+      applicant.zipCode ?? '', applicant.pwdId ?? '',
+      applicant.hasDisability === undefined ? '' : applicant.hasDisability ? 'Yes' : 'No',
+      applicant.disabilityType ?? '', applicant.soloParentDependent ?? '',
+      applicant.firstGeneration ?? '',
+      applicant.isIndigenous === undefined ? '' : applicant.isIndigenous ? 'Yes' : 'No',
+      applicant.indigenousGroup ?? '', applicant.applicantClassification ?? '',
+      applicant.pwdIdFileName ?? '', applicant.fourPsFileName ?? '', applicant.corFileName ?? '',
+      applicant.mobileNumber ?? '', applicant.emailAddress ?? '', applicant.status ?? '',
+      formatSubmittedAt(applicant.submittedAt),
+    ]),
+  ]
+}
+
+function getPaginationItems(currentPage, totalPages) {
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  const items = [1]
+  const startPage = Math.max(2, currentPage - 1)
+  const endPage = Math.min(totalPages - 1, currentPage + 1)
+
+  if (startPage > 2) {
+    items.push('left-ellipsis')
+  }
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    items.push(page)
+  }
+
+  if (endPage < totalPages - 1) {
+    items.push('right-ellipsis')
+  }
+
+  items.push(totalPages)
+
+  return items
+}
+
+function getFileExtension(contentType, url) {
+  if (contentType === 'application/pdf') return '.pdf'
+  if (contentType === 'image/png') return '.png'
+  if (contentType === 'image/jpeg') return '.jpg'
+
+  try {
+    const extensionMatch = new URL(url).pathname.match(/\.(pdf|png|jpe?g)$/i)
+    return extensionMatch ? `.${extensionMatch[1].toLowerCase().replace('jpeg', 'jpg')}` : ''
+  } catch {
+    return ''
+  }
+}
+
+async function getZipFileFromGrantee(grantee, index) {
+  const downloadUrl = `${convexSiteUrl}/google-drive/file?url=${encodeURIComponent(
+    grantee.frontIdUrl,
+  )}`
+  const response = await fetch(downloadUrl)
+
+  if (!response.ok) {
+    throw new Error(`Unable to download School ID file for ${grantee.studentId || 'student'}.`)
+  }
+
+  const blob = await response.blob()
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  const studentId = sanitizeDownloadPart(grantee.studentId, `student-${index + 1}`)
+  const lastName = sanitizeDownloadPart(grantee.lastName, 'no-last-name')
+  const firstName = sanitizeDownloadPart(grantee.firstName, 'no-first-name')
+  const middleName = sanitizeDownloadPart(grantee.middleInitial, 'no-middle-name')
+  const batchId = sanitizeDownloadPart(grantee.batchId, 'no-batch')
+  const extension = getFileExtension(blob.type, grantee.frontIdUrl)
+
+  return {
+    bytes,
+    name: `${lastName}-${firstName}-${middleName}-student-id-${studentId}-batch-${batchId}-${index + 1}${extension}`,
+  }
+}
+
+function createCrc32Table() {
+  return Array.from({ length: 256 }, (_, index) => {
+    let value = index
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+    }
+
+    return value >>> 0
+  })
+}
+
+const crc32Table = createCrc32Table()
+const zipTextEncoder = new TextEncoder()
+
+function calculateCrc32(bytes) {
+  let crc = 0xffffffff
+
+  for (const byte of bytes) {
+    crc = crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  }
+
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function getZipTimestamp() {
+  const now = new Date()
+  const time =
+    (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2)
+  const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()
+
+  return { date, time }
+}
+
+function writeZipValue(view, offset, byteLength, value) {
+  if (byteLength === 2) {
+    view.setUint16(offset, value, true)
+    return
+  }
+
+  view.setUint32(offset, value >>> 0, true)
+}
+
+function createStoredZipBlob(files) {
+  const { date, time } = getZipTimestamp()
+  const chunks = []
+  const centralDirectoryChunks = []
+  let offset = 0
+
+  files.forEach((file) => {
+    const fileNameBytes = zipTextEncoder.encode(file.name)
+    const crc = calculateCrc32(file.bytes)
+    const localHeader = new Uint8Array(30 + fileNameBytes.length)
+    const localView = new DataView(localHeader.buffer)
+
+    writeZipValue(localView, 0, 4, 0x04034b50)
+    writeZipValue(localView, 4, 2, 20)
+    writeZipValue(localView, 8, 2, 0)
+    writeZipValue(localView, 10, 2, time)
+    writeZipValue(localView, 12, 2, date)
+    writeZipValue(localView, 14, 4, crc)
+    writeZipValue(localView, 18, 4, file.bytes.length)
+    writeZipValue(localView, 22, 4, file.bytes.length)
+    writeZipValue(localView, 26, 2, fileNameBytes.length)
+    localHeader.set(fileNameBytes, 30)
+
+    chunks.push(localHeader, file.bytes)
+
+    const centralHeader = new Uint8Array(46 + fileNameBytes.length)
+    const centralView = new DataView(centralHeader.buffer)
+
+    writeZipValue(centralView, 0, 4, 0x02014b50)
+    writeZipValue(centralView, 4, 2, 20)
+    writeZipValue(centralView, 6, 2, 20)
+    writeZipValue(centralView, 10, 2, 0)
+    writeZipValue(centralView, 12, 2, time)
+    writeZipValue(centralView, 14, 2, date)
+    writeZipValue(centralView, 16, 4, crc)
+    writeZipValue(centralView, 20, 4, file.bytes.length)
+    writeZipValue(centralView, 24, 4, file.bytes.length)
+    writeZipValue(centralView, 28, 2, fileNameBytes.length)
+    writeZipValue(centralView, 42, 4, offset)
+    centralHeader.set(fileNameBytes, 46)
+    centralDirectoryChunks.push(centralHeader)
+
+    offset += localHeader.length + file.bytes.length
+  })
+
+  const centralDirectorySize = centralDirectoryChunks.reduce((total, chunk) => total + chunk.length, 0)
+  const endHeader = new Uint8Array(22)
+  const endView = new DataView(endHeader.buffer)
+
+  writeZipValue(endView, 0, 4, 0x06054b50)
+  writeZipValue(endView, 8, 2, files.length)
+  writeZipValue(endView, 10, 2, files.length)
+  writeZipValue(endView, 12, 4, centralDirectorySize)
+  writeZipValue(endView, 16, 4, offset)
+
+  return new Blob([...chunks, ...centralDirectoryChunks, endHeader], { type: 'application/zip' })
+}
+
+function normalizeSpreadsheetValue(value) {
+  return value.replaceAll('\u00a0', ' ').trim()
+}
+
+function parseDelimitedRows(text) {
+  const rows = []
+  let row = []
+  let cell = ''
+  let isQuoted = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]
+    const nextCharacter = text[index + 1]
+
+    if (character === '"' && isQuoted && nextCharacter === '"') {
+      cell += '"'
+      index += 1
+    } else if (character === '"') {
+      isQuoted = !isQuoted
+    } else if (character === ',' && !isQuoted) {
+      row.push(normalizeSpreadsheetValue(cell))
+      cell = ''
+    } else if ((character === '\n' || character === '\r') && !isQuoted) {
+      if (character === '\r' && nextCharacter === '\n') {
+        index += 1
+      }
+
+      row.push(normalizeSpreadsheetValue(cell))
+
+      if (row.some(Boolean)) {
+        rows.push(row)
+      }
+
+      row = []
+      cell = ''
+    } else {
+      cell += character
+    }
+  }
+
+  row.push(normalizeSpreadsheetValue(cell))
+
+  if (row.some(Boolean)) {
+    rows.push(row)
+  }
+
+  return rows
+}
+
+function parseGranteeUpload(text) {
+  const rows = parseDelimitedRows(text)
+
+  return rows
+    .filter((row) => row.some(Boolean))
+    .filter((row) => !row.join(' ').toLowerCase().includes('tes award number'))
+    .map((row) => ({
+      no: row[0] ?? '',
+      tesAwardNumber: row[1] ?? '',
+      studentId: row[2] ?? '',
+      lastName: row[3] ?? '',
+      firstName: row[4] ?? '',
+      middleInitial: row[5] ?? '',
+      batchId: row[6] ?? '',
+      status: row[7] ?? '',
+      semester: row[8] ?? '',
+      schoolYear: row[9] ?? '',
+    }))
+    .filter(
+      (record) =>
+        record.no &&
+        record.tesAwardNumber &&
+        record.studentId &&
+        record.lastName &&
+        record.firstName &&
+        record.batchId &&
+        record.status &&
+        record.semester &&
+        record.schoolYear,
+    )
+}
+
+function Admin({ adminSession, onLogout }) {
+  const [isBillingOpen, setIsBillingOpen] = useState(false)
+  const [isForm2Open, setIsForm2Open] = useState(false)
+  const [activeSection, setActiveSection] = useState('dashboard')
+  const [scrollProgress, setScrollProgress] = useState(0)
+  const [isLogsOpen, setIsLogsOpen] = useState(false)
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false)
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState('')
+  const [archiveTableFilter, setArchiveTableFilter] = useState('')
+  const [currentArchivePage, setCurrentArchivePage] = useState(1)
+  const [processingArchiveId, setProcessingArchiveId] = useState(null)
+  const [archiveMessage, setArchiveMessage] = useState('')
+  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState(false)
+  const [selectedUser, setSelectedUser] = useState(null)
+  const [userToDelete, setUserToDelete] = useState(null)
+  const [userForm, setUserForm] = useState({ email: '', phoneNumber: '' })
+  const [userMessage, setUserMessage] = useState('')
+  const [isSavingUser, setIsSavingUser] = useState(false)
+  const [isDeletingUser, setIsDeletingUser] = useState(false)
+  const [currentUserPage, setCurrentUserPage] = useState(1)
+  const [userSearchQuery, setUserSearchQuery] = useState('')
+  const [isUnifastPortalConfirmOpen, setIsUnifastPortalConfirmOpen] = useState(false)
+  const [isUnifastPortalCoursesOpen, setIsUnifastPortalCoursesOpen] = useState(false)
+  const [isApplicantDownloadOpen, setIsApplicantDownloadOpen] = useState(false)
+  const [receivingApplicantSearch, setReceivingApplicantSearch] = useState('')
+  const [receivingApplicantCourseFilter, setReceivingApplicantCourseFilter] = useState('')
+  const [receivingApplicantYearFilter, setReceivingApplicantYearFilter] = useState('')
+  const [receivingApplicantStatusFilter, setReceivingApplicantStatusFilter] = useState('')
+  const [receivingApplicantPage, setReceivingApplicantPage] = useState(1)
+  const [viewReceivingApplicant, setViewReceivingApplicant] = useState(null)
+  const [applicantDownloadMode, setApplicantDownloadMode] = useState('all')
+  const [selectedApplicantCourses, setSelectedApplicantCourses] = useState([])
+  const [applicantCourseSearch, setApplicantCourseSearch] = useState('')
+  const [applicantDownloadError, setApplicantDownloadError] = useState('')
+  const [isApplicantYearOpen, setIsApplicantYearOpen] = useState(false)
+  const [selectedUnifastCourse, setSelectedUnifastCourse] = useState('')
+  const [isAddRecordOpen, setIsAddRecordOpen] = useState(false)
+  const [isBatchExportOpen, setIsBatchExportOpen] = useState(false)
+  const [selectedBatchExport, setSelectedBatchExport] = useState('')
+  const [selectedBatchExportYear, setSelectedBatchExportYear] = useState('')
+  const [selectedBatchExportSemester, setSelectedBatchExportSemester] = useState('')
+  const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false)
+  const [isSchoolIdDownloadOpen, setIsSchoolIdDownloadOpen] = useState(false)
+  const [selectedSchoolIdDownloadYear, setSelectedSchoolIdDownloadYear] = useState('')
+  const [selectedSchoolIdBatchAction, setSelectedSchoolIdBatchAction] = useState(null)
+  const [isSchoolIdDeleteConfirmOpen, setIsSchoolIdDeleteConfirmOpen] = useState(false)
+  const [isDownloadingSchoolIdFiles, setIsDownloadingSchoolIdFiles] = useState(false)
+  const [isDeletingSchoolIdFiles, setIsDeletingSchoolIdFiles] = useState(false)
+  const [schoolIdDownloadProgress, setSchoolIdDownloadProgress] = useState(0)
+  const [schoolIdFileSuccess, setSchoolIdFileSuccess] = useState(null)
+  const [selectedDeleteBatch, setSelectedDeleteBatch] = useState(null)
+  const [selectedUploadFile, setSelectedUploadFile] = useState(null)
+  const [uploadMessage, setUploadMessage] = useState('')
+  const [deleteMessage, setDeleteMessage] = useState('')
+  const [isUploadingRecords, setIsUploadingRecords] = useState(false)
+  const [isDeletingRecords, setIsDeletingRecords] = useState(false)
+  const [isClearingActivityLogs, setIsClearingActivityLogs] = useState(false)
+  const [currentGranteePage, setCurrentGranteePage] = useState(1)
+  const [selectedGranteeIds, setSelectedGranteeIds] = useState([])
+  const [selectedGranteeRecord, setSelectedGranteeRecord] = useState(null)
+  const [editGranteeForm, setEditGranteeForm] = useState(null)
+  const [editMessage, setEditMessage] = useState('')
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedBatch, setSelectedBatch] = useState('')
+  const [selectedSemester, setSelectedSemester] = useState('')
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState('')
+  const [granteeRefreshVersion, setGranteeRefreshVersion] = useState(0)
+  const [currentLogPage, setCurrentLogPage] = useState(1)
+  const [currentBatchExportPage, setCurrentBatchExportPage] = useState(1)
+  const [currentSchoolIdDownloadPage, setCurrentSchoolIdDownloadPage] = useState(1)
+  const [currentSchoolIdBatchDownloadPage, setCurrentSchoolIdBatchDownloadPage] = useState(1)
+  const [courseApplicantSearch, setCourseApplicantSearch] = useState('')
+  const [isCourseApplicantDeleteConfirmOpen, setIsCourseApplicantDeleteConfirmOpen] =
+    useState(false)
+  const [isDeletingCourseApplicants, setIsDeletingCourseApplicants] = useState(false)
+  const [isDownloadingCourseApplicants, setIsDownloadingCourseApplicants] = useState(false)
+  const [courseApplicantDownloadProgress, setCourseApplicantDownloadProgress] = useState(0)
+  const [courseApplicantSuccess, setCourseApplicantSuccess] = useState(null)
+  const [currentCourseApplicantPage, setCurrentCourseApplicantPage] = useState(1)
+  const [currentApplicantYearPage, setCurrentApplicantYearPage] = useState(1)
+
+  const quickActions = useQuery(
+    api.quickActions.list,
+    adminSession?.sessionToken ? { sessionToken: adminSession.sessionToken } : 'skip',
+  )
+  const logoutSupportSession = useMutation(api.support.logout)
+  const activityLogs = useQuery(api.activityLogs.list)
+  const archivedItems = useQuery(api.archive.list, isArchiveOpen ? {} : 'skip')
+  const allInfoRecords = useQuery(api.allinfo.list, { refreshVersion: granteeRefreshVersion })
+  const applicants = useQuery(
+    api.applicants.list,
+    adminSession?.sessionToken ? { sessionToken: adminSession.sessionToken } : 'skip',
+  )
+  const applicantPortal = useQuery(api.applicantPortal.get)
+  const studentAccounts = useQuery(api.adminAuth.listStudentAccounts)
+  const setReceivingApplicants = useMutation(api.applicantPortal.setReceivingApplicants)
+  const createAllInfoRecords = useMutation(api.allinfo.bulkCreate)
+  const updateAllInfoRecord = useMutation(api.allinfo.update)
+  const deleteAllInfoRecords = useMutation(api.allinfo.deleteMany)
+  const clearAllActivityLogs = useMutation(api.activityLogs.clearAll)
+  const restoreArchivedItem = useMutation(api.archive.restore)
+  const removeArchivedItem = useAction(api.archive.remove)
+  const deleteSchoolIdFilesByBatch = useAction(api.allinfo.deleteSchoolIdFilesByBatch)
+  const deleteAllApplicantsByCourse = useAction(api.applicants.deleteAllByCourse)
+  const exportCourseApplicants = useAction(api.applicants.exportCourseApplicants)
+  const updateStudentAccount = useMutation(api.adminAuth.updateStudentAccount)
+  const deleteStudentAccount = useMutation(api.adminAuth.deleteStudentAccount)
+
+  const isAnyModalOpen =
+    isLogsOpen ||
+    isArchiveOpen ||
+    isQuickActionsOpen ||
+    isUserManagementOpen ||
+    Boolean(selectedUser) ||
+    Boolean(userToDelete) ||
+    isUnifastPortalConfirmOpen ||
+    isUnifastPortalCoursesOpen ||
+    isApplicantDownloadOpen ||
+    isApplicantYearOpen ||
+    Boolean(selectedUnifastCourse) ||
+    isCourseApplicantDeleteConfirmOpen ||
+    isDownloadingCourseApplicants ||
+    isDeletingCourseApplicants ||
+    Boolean(courseApplicantSuccess) ||
+    isAddRecordOpen ||
+    isBatchExportOpen ||
+    isBatchDeleteOpen ||
+    Boolean(selectedDeleteBatch) ||
+    isSchoolIdDownloadOpen ||
+    Boolean(selectedSchoolIdDownloadYear) ||
+    Boolean(selectedSchoolIdBatchAction) ||
+    isSchoolIdDeleteConfirmOpen ||
+    isDownloadingSchoolIdFiles ||
+    isDeletingSchoolIdFiles ||
+    Boolean(schoolIdFileSuccess) ||
+    Boolean(selectedGranteeRecord)
+
+  const handleAdminLogout = async () => {
+    try {
+      if (adminSession?.sessionToken) await logoutSupportSession({ sessionToken: adminSession.sessionToken })
+    } catch {
+      // Clear the browser session even when revocation cannot reach Convex.
+    } finally {
+      onLogout?.()
+    }
+  }
+
+  const granteeRows = useMemo(() => allInfoRecords ?? [], [allInfoRecords])
+  const quickActionRows = quickActions ?? []
+  const activityLogRows = activityLogs ?? []
+  const archiveRows = useMemo(() => archivedItems ?? [], [archivedItems])
+  const applicantRows = useMemo(() => applicants ?? [], [applicants])
+  const studentAccountRows = useMemo(() => studentAccounts ?? [], [studentAccounts])
+  const portalApplicationYear = applicantPortal?.applicationYear
+  const activeApplicantYear = String(portalApplicationYear ?? new Date().getFullYear())
+  const applicantCourseCounts = useQuery(
+    api.applicants.getCourseCounts,
+    isApplicantDownloadOpen && adminSession?.sessionToken
+      ? { sessionToken: adminSession.sessionToken, applicationYear: activeApplicantYear }
+      : 'skip',
+  )
+  const visibleApplicantCourses = unifastPortalCourses.filter((course) =>
+    course.toLowerCase().includes(applicantCourseSearch.trim().toLowerCase()),
+  )
+  const applicantDownloadCount = applicantCourseCounts
+    ? applicantDownloadMode === 'all'
+      ? applicantCourseCounts.totalCount
+      : selectedApplicantCourses.reduce((total, course) => total + (applicantCourseCounts.counts?.[course] ?? 0), 0)
+    : 0
+
+  const receivingApplicantCourseOptions = useMemo(() => Array.from(
+    new Set(applicantRows.map((applicant) => getApplicantCourse(applicant)).filter(Boolean)),
+  ).sort((first, second) => first.localeCompare(second)), [applicantRows])
+  const receivingApplicantYearOptions = useMemo(() => Array.from(
+    new Set(applicantRows.map((applicant) => getApplicantApplicationYear(applicant)).filter(Boolean)),
+  ).sort((first, second) => second.localeCompare(first, undefined, { numeric: true })), [applicantRows])
+  const receivingApplicantStatusOptions = useMemo(() => Array.from(
+    new Set(applicantRows.map((applicant) => String(applicant.status ?? '').trim()).filter(Boolean)),
+  ).sort((first, second) => first.localeCompare(second)), [applicantRows])
+  const filteredReceivingApplicants = useMemo(() => {
+    const search = receivingApplicantSearch.trim().toLowerCase()
+    return applicantRows.filter((applicant) => {
+      const applicantName = [applicant.firstName, applicant.middleName, applicant.lastName, applicant.extensionName].filter(Boolean).join(' ')
+      const searchText = [
+        applicant.studentId, applicantName, applicant.course, applicant.year,
+        applicant.applicationYear, applicant.emailAddress, applicant.mobileNumber, applicant.status,
+      ].map((value) => String(value ?? '').toLowerCase()).join(' ')
+      return (!search || searchText.includes(search)) &&
+        (!receivingApplicantCourseFilter || getApplicantCourse(applicant) === receivingApplicantCourseFilter) &&
+        (!receivingApplicantYearFilter || getApplicantApplicationYear(applicant) === receivingApplicantYearFilter) &&
+        (!receivingApplicantStatusFilter || String(applicant.status ?? '').trim() === receivingApplicantStatusFilter)
+    })
+  }, [applicantRows, receivingApplicantSearch, receivingApplicantCourseFilter, receivingApplicantYearFilter, receivingApplicantStatusFilter])
+  const totalReceivingApplicantPages = Math.max(1, Math.ceil(filteredReceivingApplicants.length / receivingApplicantsPerPage))
+  const activeReceivingApplicantPage = Math.min(receivingApplicantPage, totalReceivingApplicantPages)
+  const firstReceivingApplicantIndex = (activeReceivingApplicantPage - 1) * receivingApplicantsPerPage
+  const currentReceivingApplicants = filteredReceivingApplicants.slice(
+    firstReceivingApplicantIndex,
+    firstReceivingApplicantIndex + receivingApplicantsPerPage,
+  )
+  const receivingApplicantPaginationItems = getPaginationItems(activeReceivingApplicantPage, totalReceivingApplicantPages)
+  const receivingApplicantShowingStart = filteredReceivingApplicants.length ? firstReceivingApplicantIndex + 1 : 0
+  const receivingApplicantShowingEnd = firstReceivingApplicantIndex + currentReceivingApplicants.length
+
+  const applicantYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear()
+    const years = new Set([
+      String(currentYear - 1),
+      String(currentYear),
+      String(currentYear + 1),
+      String(currentYear + 2),
+      String(currentYear + 3),
+      String(currentYear + 4),
+      String(currentYear + 5),
+    ])
+
+    if (portalApplicationYear) years.add(String(portalApplicationYear))
+    applicantRows.forEach((applicant) => {
+      const applicationYear = getApplicantApplicationYear(applicant)
+      if (applicationYear) years.add(applicationYear)
+    })
+
+    return Array.from(years).sort()
+  }, [applicantRows, portalApplicationYear])
+
+  const totalApplicantYearPages = Math.max(
+    1,
+    Math.ceil(applicantYearOptions.length / applicantYearsPerPage),
+  )
+  const activeApplicantYearPage = Math.min(currentApplicantYearPage, totalApplicantYearPages)
+  const firstApplicantYearIndex = (activeApplicantYearPage - 1) * applicantYearsPerPage
+  const currentApplicantYearOptions = applicantYearOptions.slice(
+    firstApplicantYearIndex,
+    firstApplicantYearIndex + applicantYearsPerPage,
+  )
+  const applicantYearPaginationItems = getPaginationItems(
+    activeApplicantYearPage,
+    totalApplicantYearPages,
+  )
+  const applicantYearShowingStart =
+    applicantYearOptions.length === 0 ? 0 : firstApplicantYearIndex + 1
+  const applicantYearShowingEnd = firstApplicantYearIndex + currentApplicantYearOptions.length
+
+  const availableBatches = useMemo(() => {
+    return Array.from(
+      new Set(
+        granteeRows
+          .map((record) => String(record.batchId ?? '').trim())
+          .filter(Boolean),
+      ),
+    ).sort()
+  }, [granteeRows])
+
+  const availableSchoolYears = useMemo(() => {
+    return Array.from(
+      new Set(granteeRows.map((record) => String(record.schoolYear ?? '').trim()).filter(Boolean)),
+    ).sort((firstYear, secondYear) => {
+      const firstStart = Number(firstYear.match(/\d{4}/)?.[0] ?? 0)
+      const secondStart = Number(secondYear.match(/\d{4}/)?.[0] ?? 0)
+      return secondStart - firstStart || secondYear.localeCompare(firstYear)
+    })
+  }, [granteeRows])
+
+  const batchExportRows = useMemo(() => {
+    return availableBatches.map((batchId) => {
+      const batchRecords = granteeRows.filter((record) => {
+        return String(record.batchId ?? '').trim() === batchId
+      })
+      const batchStudentIds = new Set(
+        batchRecords.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
+      )
+      const accountCount = studentAccountRows.filter((account) => {
+        return batchStudentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
+      }).length
+
+      return {
+        accountCount,
+        batchId,
+        recordCount: batchRecords.length,
+      }
+    })
+  }, [availableBatches, granteeRows, studentAccountRows])
+
+  const selectedBatchExportRecords = useMemo(() => {
+    if (!selectedBatchExport) return []
+
+    return granteeRows.filter((record) => {
+      return String(record.batchId ?? '').trim() === selectedBatchExport
+    })
+  }, [granteeRows, selectedBatchExport])
+
+  const batchExportSchoolYearRows = useMemo(() => {
+    const yearMap = new Map()
+
+    selectedBatchExportRecords.forEach((record) => {
+      const schoolYear = String(record.schoolYear ?? '').trim()
+      if (!schoolYear) return
+
+      const yearRecords = yearMap.get(schoolYear) ?? []
+      yearRecords.push(record)
+      yearMap.set(schoolYear, yearRecords)
+    })
+
+    return Array.from(yearMap, ([schoolYear, records]) => {
+      const studentIds = new Set(
+        records.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
+      )
+      const accountCount = studentAccountRows.filter((account) => {
+        return studentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
+      }).length
+
+      return { accountCount, recordCount: records.length, schoolYear }
+    }).sort((firstRow, secondRow) => secondRow.schoolYear.localeCompare(firstRow.schoolYear))
+  }, [selectedBatchExportRecords, studentAccountRows])
+
+  const selectedBatchExportYearRecords = useMemo(() => {
+    if (!selectedBatchExportYear) return []
+
+    return selectedBatchExportRecords.filter((record) => {
+      return String(record.schoolYear ?? '').trim() === selectedBatchExportYear
+    })
+  }, [selectedBatchExportRecords, selectedBatchExportYear])
+
+  const batchExportSemesterRows = useMemo(() => {
+    const semesterMap = new Map()
+
+    selectedBatchExportYearRecords.forEach((record) => {
+      const semester = String(record.semester ?? '').trim()
+      if (!semester) return
+
+      const semesterRecords = semesterMap.get(semester) ?? []
+      semesterRecords.push(record)
+      semesterMap.set(semester, semesterRecords)
+    })
+
+    return Array.from(semesterMap, ([semester, records]) => {
+      const studentIds = new Set(
+        records.map((record) => String(record.studentId ?? '').trim().toLowerCase()),
+      )
+      const accountCount = studentAccountRows.filter((account) => {
+        return studentIds.has(String(account.schoolId ?? '').trim().toLowerCase())
+      }).length
+
+      return { accountCount, recordCount: records.length, semester }
+    }).sort((firstRow, secondRow) => firstRow.semester.localeCompare(secondRow.semester))
+  }, [selectedBatchExportYearRecords, studentAccountRows])
+
+  const selectedBatchExportSummary = batchExportSemesterRows.find(
+    (row) => row.semester === selectedBatchExportSemester,
+  )
+
+  const selectedCourseApplicants = useMemo(() => {
+    const selectedCourse = selectedUnifastCourse.trim().toLowerCase()
+    if (!selectedCourse) return []
+
+    return applicantRows.filter((applicant) => {
+      return (
+        getApplicantApplicationYear(applicant) === activeApplicantYear &&
+        getApplicantCourse(applicant).toLowerCase() === selectedCourse
+      )
+    })
+  }, [activeApplicantYear, applicantRows, selectedUnifastCourse])
+
+  const filteredCourseApplicants = useMemo(() => {
+    const query = courseApplicantSearch.trim().toLowerCase()
+    if (!query) return selectedCourseApplicants
+
+    return selectedCourseApplicants.filter((applicant) => {
+      const fullName = [
+        applicant.firstName,
+        applicant.middleName,
+        applicant.lastName,
+        applicant.extensionName,
+      ]
+        .filter(Boolean)
+        .join(' ')
+
+      return [
+        applicant.studentId,
+        fullName,
+        applicant.gender,
+        applicant.birthDate,
+        applicant.year,
+        applicant.address,
+        applicant.mobileNumber,
+        applicant.emailAddress,
+        applicant.status,
+        applicant.psaFileName,
+        applicant.schoolIdFileName,
+        applicant.corFileName,
+        applicant.pwdIdFileName,
+        applicant.fourPsFileName,
+        formatSubmittedAt(applicant.submittedAt),
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+        .includes(query)
+    })
+  }, [courseApplicantSearch, selectedCourseApplicants])
+
+  const totalCourseApplicantPages = Math.max(
+    1,
+    Math.ceil(filteredCourseApplicants.length / courseApplicantsPerPage),
+  )
+  const activeCourseApplicantPage = Math.min(
+    currentCourseApplicantPage,
+    totalCourseApplicantPages,
+  )
+  const firstCourseApplicantIndex =
+    (activeCourseApplicantPage - 1) * courseApplicantsPerPage
+  const currentCourseApplicants = filteredCourseApplicants.slice(
+    firstCourseApplicantIndex,
+    firstCourseApplicantIndex + courseApplicantsPerPage,
+  )
+  const courseApplicantPaginationItems = getPaginationItems(
+    activeCourseApplicantPage,
+    totalCourseApplicantPages,
+  )
+  const courseApplicantShowingStart =
+    filteredCourseApplicants.length === 0 ? 0 : firstCourseApplicantIndex + 1
+  const courseApplicantShowingEnd = firstCourseApplicantIndex + currentCourseApplicants.length
+
+  const filteredGranteeRows = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const batch = selectedBatch.trim().toLowerCase()
+    const semester = selectedSemester.trim().toLowerCase()
+    const schoolYear = selectedSchoolYear.trim().toLowerCase()
+
+    return granteeRows.filter((record) => {
+      const searchableText = [
+        record.no,
+        record.tesAwardNumber,
+        record.studentId,
+        record.lastName,
+        record.firstName,
+        record.middleInitial,
+        record.batchId,
+        record.status,
+        record.semester,
+        record.schoolYear,
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+
+      const matchesSearch = query ? searchableText.includes(query) : true
+      const matchesBatch = batch
+        ? String(record.batchId ?? '').trim().toLowerCase() === batch
+        : true
+      const matchesSemester = semester
+        ? String(record.semester ?? '').trim().toLowerCase() === semester
+        : true
+      const matchesSchoolYear = schoolYear
+        ? String(record.schoolYear ?? '').trim().toLowerCase() === schoolYear
+        : true
+
+      return matchesSearch && matchesBatch && matchesSemester && matchesSchoolYear
+    })
+  }, [granteeRows, searchQuery, selectedBatch, selectedSemester, selectedSchoolYear])
+
+  const totalGranteePages = Math.max(1, Math.ceil(filteredGranteeRows.length / granteesPerPage))
+  const activeGranteePage = Math.min(currentGranteePage, totalGranteePages)
+  const firstGranteeIndex = (activeGranteePage - 1) * granteesPerPage
+  const granteePaginationItems = getPaginationItems(activeGranteePage, totalGranteePages)
+
+  const currentGrantees = filteredGranteeRows.slice(
+    firstGranteeIndex,
+    firstGranteeIndex + granteesPerPage,
+  )
+  const granteesWithSchoolIdFiles = filteredGranteeRows.filter((grantee) => grantee.frontIdUrl)
+  const schoolIdFileYears = useMemo(() => {
+    return Array.from(
+      new Set(
+        granteesWithSchoolIdFiles
+          .map((grantee) => String(grantee.schoolYear ?? '').trim())
+          .filter(Boolean),
+      ),
+    ).sort((firstYear, secondYear) => secondYear.localeCompare(firstYear))
+  }, [granteesWithSchoolIdFiles])
+
+  const schoolIdDownloadRows = useMemo(() => {
+    return schoolIdFileYears.map((schoolYear) => {
+      const fileCount = granteesWithSchoolIdFiles.filter((grantee) => {
+        return String(grantee.schoolYear ?? '').trim() === schoolYear
+      }).length
+
+      return {
+        fileCount,
+        schoolYear,
+      }
+    })
+  }, [granteesWithSchoolIdFiles, schoolIdFileYears])
+
+  const schoolIdBatchDownloadRows = useMemo(() => {
+    if (!selectedSchoolIdDownloadYear) return []
+
+    const batchMap = new Map()
+
+    granteesWithSchoolIdFiles.forEach((grantee) => {
+      const schoolYear = String(grantee.schoolYear ?? '').trim()
+      if (schoolYear !== selectedSchoolIdDownloadYear) return
+
+      const batchId = String(grantee.batchId ?? '').trim()
+      if (!batchId) return
+
+      const currentBatch = batchMap.get(batchId) ?? {
+        batchId,
+        fileCount: 0,
+      }
+
+      currentBatch.fileCount += 1
+      batchMap.set(batchId, currentBatch)
+    })
+
+    return Array.from(batchMap.values()).sort((firstBatch, secondBatch) => {
+      return firstBatch.batchId.localeCompare(secondBatch.batchId)
+    })
+  }, [granteesWithSchoolIdFiles, selectedSchoolIdDownloadYear])
+
+  const showingStart = filteredGranteeRows.length === 0 ? 0 : firstGranteeIndex + 1
+  const showingEnd = firstGranteeIndex + currentGrantees.length
+
+  const filteredStudentAccountRows = useMemo(() => {
+    const query = userSearchQuery.trim().toLowerCase()
+    if (!query) return studentAccountRows
+
+    return studentAccountRows.filter((account) => {
+      return [
+        account.schoolId,
+        account.email,
+        account.phoneNumber,
+        account.facebookProfileUrl,
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+        .includes(query)
+    })
+  }, [studentAccountRows, userSearchQuery])
+
+  const totalUserPages = Math.max(1, Math.ceil(filteredStudentAccountRows.length / usersPerPage))
+  const activeUserPage = Math.min(currentUserPage, totalUserPages)
+  const firstUserIndex = (activeUserPage - 1) * usersPerPage
+  const currentUsers = filteredStudentAccountRows.slice(firstUserIndex, firstUserIndex + usersPerPage)
+  const userPaginationItems = getPaginationItems(activeUserPage, totalUserPages)
+  const userShowingStart = filteredStudentAccountRows.length === 0 ? 0 : firstUserIndex + 1
+  const userShowingEnd = firstUserIndex + currentUsers.length
+
+  const totalLogPages = Math.max(1, Math.ceil(activityLogRows.length / logsPerPage))
+  const activeLogPage = Math.min(currentLogPage, totalLogPages)
+  const firstLogIndex = (activeLogPage - 1) * logsPerPage
+  const currentActivityLogs = activityLogRows.slice(firstLogIndex, firstLogIndex + logsPerPage)
+  const logShowingStart = activityLogRows.length === 0 ? 0 : firstLogIndex + 1
+  const logShowingEnd = firstLogIndex + currentActivityLogs.length
+
+  const archiveTableOptions = useMemo(
+    () => Array.from(new Set(archiveRows.map((item) => item.sourceTable))).sort(),
+    [archiveRows],
+  )
+  const filteredArchiveRows = useMemo(() => {
+    const query = archiveSearchQuery.trim().toLowerCase()
+
+    return archiveRows.filter((item) => {
+      const matchesTable = archiveTableFilter ? item.sourceTable === archiveTableFilter : true
+      const searchableText = [
+        item.sourceTable,
+        item.sourceLabel,
+        item.sourceId,
+        item.deletionKind,
+        formatLogDate(item.deletedAt),
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ')
+
+      return matchesTable && (!query || searchableText.includes(query))
+    })
+  }, [archiveRows, archiveSearchQuery, archiveTableFilter])
+  const totalArchivePages = Math.max(
+    1,
+    Math.ceil(filteredArchiveRows.length / archiveItemsPerPage),
+  )
+  const activeArchivePage = Math.min(currentArchivePage, totalArchivePages)
+  const firstArchiveIndex = (activeArchivePage - 1) * archiveItemsPerPage
+  const currentArchivedItems = filteredArchiveRows.slice(
+    firstArchiveIndex,
+    firstArchiveIndex + archiveItemsPerPage,
+  )
+  const archiveShowingStart =
+    filteredArchiveRows.length === 0 ? 0 : firstArchiveIndex + 1
+  const archiveShowingEnd = firstArchiveIndex + currentArchivedItems.length
+
+  const totalBatchExportPages = Math.max(1, Math.ceil(batchExportRows.length / batchExportsPerPage))
+  const activeBatchExportPage = Math.min(currentBatchExportPage, totalBatchExportPages)
+  const firstBatchExportIndex = (activeBatchExportPage - 1) * batchExportsPerPage
+
+  const currentBatchExports = batchExportRows.slice(
+    firstBatchExportIndex,
+    firstBatchExportIndex + batchExportsPerPage,
+  )
+
+  const batchExportShowingStart = batchExportRows.length === 0 ? 0 : firstBatchExportIndex + 1
+  const batchExportShowingEnd = firstBatchExportIndex + currentBatchExports.length
+
+  const totalSchoolIdDownloadPages = Math.max(
+    1,
+    Math.ceil(schoolIdDownloadRows.length / schoolIdDownloadsPerPage),
+  )
+  const activeSchoolIdDownloadPage = Math.min(
+    currentSchoolIdDownloadPage,
+    totalSchoolIdDownloadPages,
+  )
+  const firstSchoolIdDownloadIndex =
+    (activeSchoolIdDownloadPage - 1) * schoolIdDownloadsPerPage
+
+  const currentSchoolIdDownloads = schoolIdDownloadRows.slice(
+    firstSchoolIdDownloadIndex,
+    firstSchoolIdDownloadIndex + schoolIdDownloadsPerPage,
+  )
+
+  const schoolIdDownloadShowingStart =
+    schoolIdDownloadRows.length === 0 ? 0 : firstSchoolIdDownloadIndex + 1
+  const schoolIdDownloadShowingEnd = firstSchoolIdDownloadIndex + currentSchoolIdDownloads.length
+
+  const totalSchoolIdBatchDownloadPages = Math.max(
+    1,
+    Math.ceil(schoolIdBatchDownloadRows.length / schoolIdBatchDownloadsPerPage),
+  )
+  const activeSchoolIdBatchDownloadPage = Math.min(
+    currentSchoolIdBatchDownloadPage,
+    totalSchoolIdBatchDownloadPages,
+  )
+  const firstSchoolIdBatchDownloadIndex =
+    (activeSchoolIdBatchDownloadPage - 1) * schoolIdBatchDownloadsPerPage
+
+  const currentSchoolIdBatchDownloads = schoolIdBatchDownloadRows.slice(
+    firstSchoolIdBatchDownloadIndex,
+    firstSchoolIdBatchDownloadIndex + schoolIdBatchDownloadsPerPage,
+  )
+
+  const schoolIdBatchDownloadShowingStart =
+    schoolIdBatchDownloadRows.length === 0 ? 0 : firstSchoolIdBatchDownloadIndex + 1
+  const schoolIdBatchDownloadShowingEnd =
+    firstSchoolIdBatchDownloadIndex + currentSchoolIdBatchDownloads.length
+
+  const goToGranteePage = (pageNumber) => {
+    setCurrentGranteePage(Math.min(Math.max(pageNumber, 1), totalGranteePages))
+  }
+
+  const goToLogPage = (pageNumber) => {
+    setCurrentLogPage(Math.min(Math.max(pageNumber, 1), totalLogPages))
+  }
+
+  const goToArchivePage = (pageNumber) => {
+    setCurrentArchivePage(Math.min(Math.max(pageNumber, 1), totalArchivePages))
+  }
+
+  const goToBatchExportPage = (pageNumber) => {
+    setCurrentBatchExportPage(Math.min(Math.max(pageNumber, 1), totalBatchExportPages))
+  }
+
+  const goToSchoolIdDownloadPage = (pageNumber) => {
+    setCurrentSchoolIdDownloadPage(Math.min(Math.max(pageNumber, 1), totalSchoolIdDownloadPages))
+  }
+
+  const goToSchoolIdBatchDownloadPage = (pageNumber) => {
+    setCurrentSchoolIdBatchDownloadPage(
+      Math.min(Math.max(pageNumber, 1), totalSchoolIdBatchDownloadPages),
+    )
+  }
+
+  const goToCourseApplicantPage = (pageNumber) => {
+    setCurrentCourseApplicantPage(Math.min(Math.max(pageNumber, 1), totalCourseApplicantPages))
+  }
+
+  const goToApplicantYearPage = (pageNumber) => {
+    setCurrentApplicantYearPage(Math.min(Math.max(pageNumber, 1), totalApplicantYearPages))
+  }
+
+  const closeCourseApplicantModal = () => {
+    if (isDeletingCourseApplicants || isDownloadingCourseApplicants) return
+    setSelectedUnifastCourse('')
+    setCourseApplicantSearch('')
+    setCurrentCourseApplicantPage(1)
+    setIsCourseApplicantDeleteConfirmOpen(false)
+  }
+
+  const handleCourseApplicantSearchChange = (event) => {
+    setCourseApplicantSearch(event.target.value)
+    setCurrentCourseApplicantPage(1)
+  }
+
+  const openSchoolIdBatchDownloadModal = (schoolYear) => {
+    setSelectedSchoolIdDownloadYear(schoolYear)
+    setCurrentSchoolIdBatchDownloadPage(1)
+  }
+
+  const closeSchoolIdDownloadModal = () => {
+    if (isDownloadingSchoolIdFiles || isDeletingSchoolIdFiles) return
+
+    setIsSchoolIdDownloadOpen(false)
+    setSelectedSchoolIdDownloadYear('')
+    setSelectedSchoolIdBatchAction(null)
+    setIsSchoolIdDeleteConfirmOpen(false)
+    setCurrentSchoolIdBatchDownloadPage(1)
+  }
+
+  const openSchoolIdBatchActionModal = (batchId, fileCount) => {
+    setSelectedSchoolIdBatchAction({
+      batchId,
+      fileCount,
+      schoolYear: selectedSchoolIdDownloadYear,
+    })
+  }
+
+  const closeSchoolIdBatchActionModal = () => {
+    if (isDownloadingSchoolIdFiles || isDeletingSchoolIdFiles) return
+    setSelectedSchoolIdBatchAction(null)
+    setIsSchoolIdDeleteConfirmOpen(false)
+  }
+
+  const handleSearchQueryChange = (event) => {
+    setSearchQuery(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const handleSelectedBatchChange = (event) => {
+    setSelectedBatch(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const handleSelectedSemesterChange = (event) => {
+    setSelectedSemester(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const handleSelectedSchoolYearChange = (event) => {
+    setSelectedSchoolYear(event.target.value)
+    setCurrentGranteePage(1)
+  }
+
+  const downloadSchoolIdFiles = async (schoolYear, batchId) => {
+    const selectedYear = String(schoolYear ?? '').trim()
+    const selectedBatchId = String(batchId ?? '').trim()
+    const matchingFiles = granteesWithSchoolIdFiles
+      .filter((grantee) => {
+        return (
+          String(grantee.schoolYear ?? '').trim() === selectedYear &&
+          String(grantee.batchId ?? '').trim() === selectedBatchId
+        )
+      })
+      .sort(compareSchoolIdGranteesByName)
+
+    if (matchingFiles.length === 0) return
+
+    setIsDownloadingSchoolIdFiles(true)
+    setSchoolIdDownloadProgress(0)
+
+    try {
+      const zipFiles = []
+
+      for (const [index, grantee] of matchingFiles.entries()) {
+        try {
+          const zipFile = await getZipFileFromGrantee(grantee, index)
+          zipFiles.push(zipFile)
+        } catch (error) {
+          console.warn(error)
+        }
+
+        setSchoolIdDownloadProgress(
+          Math.min(90, Math.round(((index + 1) / matchingFiles.length) * 90)),
+        )
+      }
+
+      if (zipFiles.length === 0) {
+        throw new Error('No School ID files could be downloaded for this batch.')
+      }
+
+      const zipBlob = createStoredZipBlob(zipFiles)
+      setSchoolIdDownloadProgress(96)
+      const zipUrl = URL.createObjectURL(zipBlob)
+      const link = document.createElement('a')
+      const safeYear = sanitizeDownloadPart(selectedYear, 'school-year')
+      const safeBatch = sanitizeDownloadPart(selectedBatchId, 'batch')
+
+      link.href = zipUrl
+      link.download = `school-id-files-${safeYear}-batch-${safeBatch}.zip`
+      link.rel = 'noreferrer'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(zipUrl)
+
+      setSchoolIdDownloadProgress(100)
+      await new Promise((resolve) => window.setTimeout(resolve, 350))
+      setIsSchoolIdDownloadOpen(false)
+      setSelectedSchoolIdDownloadYear('')
+      setSelectedSchoolIdBatchAction(null)
+      setCurrentSchoolIdBatchDownloadPage(1)
+      setSchoolIdFileSuccess({
+        batchId: selectedBatchId,
+        count: zipFiles.length,
+        schoolYear: selectedYear,
+        type: 'download',
+      })
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to download School ID files.')
+    } finally {
+      setIsDownloadingSchoolIdFiles(false)
+      setSchoolIdDownloadProgress(0)
+    }
+  }
+
+  const handleDeleteSchoolIdBatch = async () => {
+    if (!selectedSchoolIdBatchAction) return
+
+    setIsDeletingSchoolIdFiles(true)
+
+    try {
+      const result = await deleteSchoolIdFilesByBatch({
+        batchId: selectedSchoolIdBatchAction.batchId,
+        schoolYear: selectedSchoolIdBatchAction.schoolYear,
+      })
+
+      setIsSchoolIdDeleteConfirmOpen(false)
+      setSelectedSchoolIdBatchAction(null)
+      setSelectedSchoolIdDownloadYear('')
+      setIsSchoolIdDownloadOpen(false)
+      setCurrentSchoolIdBatchDownloadPage(1)
+      setSchoolIdFileSuccess({
+        batchId: selectedSchoolIdBatchAction.batchId,
+        count: result.deleted,
+        schoolYear: selectedSchoolIdBatchAction.schoolYear,
+        type: 'delete',
+      })
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to delete School ID files.')
+    } finally {
+      setIsDeletingSchoolIdFiles(false)
+    }
+  }
+
+  const exportBatchInfoCsv = (batchId, schoolYear, semester) => {
+    if (studentAccounts === undefined) {
+      window.alert('Please wait while student account data is loading.')
+      return
+    }
+
+    const selectedBatch = String(batchId ?? '').trim()
+    const selectedSchoolYear = String(schoolYear ?? '').trim()
+    const selectedSemester = String(semester ?? '').trim()
+    const batchRecords = granteeRows.filter((record) => {
+      return (
+        String(record.batchId ?? '').trim() === selectedBatch &&
+        String(record.schoolYear ?? '').trim() === selectedSchoolYear &&
+        String(record.semester ?? '').trim() === selectedSemester
+      )
+    })
+
+    if (batchRecords.length === 0) {
+      window.alert('No records found for this batch, School Year, and semester.')
+      return
+    }
+
+    const accountBySchoolId = new Map(
+      studentAccountRows.map((account) => [
+        String(account.schoolId ?? '').trim().toLowerCase(),
+        account,
+      ]),
+    )
+
+    const csvRows = [
+      [
+        'Batch No.',
+        'Student ID',
+        'TES Award Number',
+        'Last Name',
+        'First Name',
+        'MI.',
+        'School Year',
+        'Semester',
+        'Status',
+        'Email Account',
+        'Phone No.',
+        'Current Address',
+        'Account Status',
+      ],
+      ...batchRecords.map((record) => {
+        const account = accountBySchoolId.get(String(record.studentId ?? '').trim().toLowerCase())
+
+        return [
+          record.batchId ?? '',
+          record.studentId ?? '',
+          record.tesAwardNumber ?? '',
+          record.lastName ?? '',
+          record.firstName ?? '',
+          record.middleInitial ?? '',
+          record.schoolYear ?? '',
+          record.semester ?? '',
+          record.status ?? '',
+          account?.email ?? '',
+          account?.phoneNumber ?? '',
+          account?.currentAddress ?? '',
+          account?.status ?? 'No student account',
+        ]
+      }),
+    ]
+
+    const safeBatch = sanitizeDownloadPart(selectedBatch, 'batch')
+    const safeSchoolYear = sanitizeDownloadPart(selectedSchoolYear, 'school-year')
+    const safeSemester = sanitizeDownloadPart(selectedSemester, 'semester')
+    downloadCsvFile(`batch-info-${safeBatch}-${safeSchoolYear}-${safeSemester}.csv`, csvRows)
+    closeBatchExportModal()
+  }
+
+  const exportUnifastCourseCsv = async (course) => {
+    if (applicants === undefined) {
+      window.alert('Please wait while applicant information is loading.')
+      return
+    }
+
+    const selectedCourse = String(course ?? '').trim()
+    const courseRecords = applicantRows.filter((applicant) => {
+      return (
+        getApplicantApplicationYear(applicant) === activeApplicantYear &&
+        getApplicantCourse(applicant).toLowerCase() === selectedCourse.toLowerCase()
+      )
+    })
+
+    if (courseRecords.length === 0) {
+      window.alert('No applicants are available for this course.')
+      return
+    }
+
+    setIsDownloadingCourseApplicants(true)
+    setCourseApplicantDownloadProgress(8)
+
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    const csvRows = createUnifastApplicantCsvRows(courseRecords, selectedCourse)
+
+    setCourseApplicantDownloadProgress(72)
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    const safeCourse = sanitizeDownloadPart(selectedCourse, 'course')
+    const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
+    downloadCsvFile(`unifast-applicants-${safeYear}-${safeCourse}.csv`, csvRows)
+    setCourseApplicantDownloadProgress(100)
+    await new Promise((resolve) => window.setTimeout(resolve, 350))
+    setIsDownloadingCourseApplicants(false)
+    setCourseApplicantDownloadProgress(0)
+    setCourseApplicantSuccess({
+      count: courseRecords.length,
+      course: selectedCourse,
+      type: 'download',
+      year: activeApplicantYear,
+    })
+  }
+
+  const handleDeleteCourseApplicants = async () => {
+    if (!selectedUnifastCourse) return
+
+    setIsDeletingCourseApplicants(true)
+
+    try {
+      const result = await deleteAllApplicantsByCourse({
+        applicationYear: activeApplicantYear,
+        course: selectedUnifastCourse,
+      })
+
+      setIsCourseApplicantDeleteConfirmOpen(false)
+      setCourseApplicantSuccess({
+        count: result.deleted,
+        course: selectedUnifastCourse,
+        filesDeleted: result.filesDeleted,
+        type: 'delete',
+        year: activeApplicantYear,
+      })
+      setSelectedUnifastCourse('')
+      setCourseApplicantSearch('')
+      setCurrentCourseApplicantPage(1)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to delete course applicants.')
+    } finally {
+      setIsDeletingCourseApplicants(false)
+    }
+  }
+
+  const exportQuickActionResponsesCsv = () => {
+    if (quickActions === undefined) {
+      window.alert('Please wait while student requests are loading.')
+      return
+    }
+
+    if (quickActionRows.length === 0) {
+      window.alert('No student requests are available to export.')
+      return
+    }
+
+    const exportedAt = formatSubmittedAt(Date.now())
+    const csvRows = [
+      [
+        'No.',
+        'Student ID',
+        'Last Name',
+        'First Name',
+        'MI',
+        'Email Account',
+        'Question / Request',
+        'Source',
+        'Status',
+        'Submitted At',
+        'Exported At',
+      ],
+      ...quickActionRows.map((request, index) => [
+        index + 1,
+        request.studentId ?? '',
+        request.lastName ?? '',
+        request.firstName ?? '',
+        request.middleInitial ?? '',
+        request.email ?? '',
+        request.question ?? '',
+        request.source ?? '',
+        request.status ?? '',
+        formatSubmittedAt(request.submittedAt),
+        exportedAt,
+      ]),
+    ]
+
+    const exportedDate = new Date().toISOString().slice(0, 10)
+    downloadCsvFile(`student-requests-responses-${exportedDate}.csv`, csvRows)
+  }
+
+  const handleClearAllActivityLogs = async () => {
+    if (isClearingActivityLogs || activityLogRows.length === 0) return
+
+    const confirmed = window.confirm(
+      `Move all ${activityLogRows.length} visible activity logs to the archive?`,
+    )
+
+    if (!confirmed) return
+
+    setIsClearingActivityLogs(true)
+
+    try {
+      await clearAllActivityLogs({})
+      setCurrentLogPage(1)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to clear activity logs.')
+    } finally {
+      setIsClearingActivityLogs(false)
+    }
+  }
+
+  const handleRestoreArchivedItem = async (item) => {
+    if (processingArchiveId) return
+
+    const confirmed = window.confirm(
+      `Restore ${item.sourceLabel || item.sourceTable} to ${item.sourceTable}?`,
+    )
+    if (!confirmed) return
+
+    setProcessingArchiveId(item._id)
+    setArchiveMessage('')
+
+    try {
+      await restoreArchivedItem({ id: item._id })
+      setArchiveMessage(`${item.sourceLabel || 'Item'} restored successfully.`)
+    } catch (error) {
+      setArchiveMessage(error instanceof Error ? error.message : 'Unable to restore this item.')
+    } finally {
+      setProcessingArchiveId(null)
+    }
+  }
+
+  const handleRemoveArchivedItem = async (item) => {
+    if (processingArchiveId) return
+
+    const confirmed = window.confirm(
+      `Permanently delete ${item.sourceLabel || item.sourceTable} from the archive? This cannot be undone.`,
+    )
+    if (!confirmed) return
+
+    setProcessingArchiveId(item._id)
+    setArchiveMessage('')
+
+    try {
+      await removeArchivedItem({ id: item._id })
+      setArchiveMessage(`${item.sourceLabel || 'Item'} permanently deleted.`)
+    } catch (error) {
+      setArchiveMessage(
+        error instanceof Error ? error.message : 'Unable to permanently delete this item.',
+      )
+    } finally {
+      setProcessingArchiveId(null)
+    }
+  }
+
+  const updateApplicantPortalStatus = async (isReceivingApplicants, applicationYear) => {
+    try {
+      const result = await setReceivingApplicants({
+        sessionToken: adminSession?.sessionToken,
+        isReceivingApplicants,
+        ...(applicationYear ? { applicationYear } : {}),
+      })
+
+      if (!result.success) {
+        window.alert(result.message || 'Unable to update applicant portal status.')
+      }
+    } catch (error) {
+      window.alert(
+        error instanceof Error ? error.message : 'Unable to update applicant portal status.',
+      )
+    }
+  }
+
+  const receiveApplicantsForYear = async (applicationYear) => {
+    await updateApplicantPortalStatus(true, applicationYear)
+    setIsApplicantYearOpen(false)
+    setCurrentApplicantYearPage(1)
+  }
+
+  const closeUnifastPortalModals = () => {
+    setIsUnifastPortalConfirmOpen(false)
+    setIsUnifastPortalCoursesOpen(false)
+    setIsApplicantDownloadOpen(false)
+    setIsApplicantYearOpen(false)
+    setCurrentApplicantYearPage(1)
+    setSelectedUnifastCourse('')
+    setCourseApplicantSearch('')
+    setCurrentCourseApplicantPage(1)
+    setViewReceivingApplicant(null)
+  }
+
+  const openApplicantDownloadModal = () => {
+    setApplicantDownloadMode('all')
+    setSelectedApplicantCourses([])
+    setApplicantCourseSearch('')
+    setApplicantDownloadError('')
+    setIsApplicantDownloadOpen(true)
+  }
+
+  const closeApplicantDownloadModal = () => {
+    if (isDownloadingCourseApplicants) return
+    setIsApplicantDownloadOpen(false)
+    setApplicantDownloadError('')
+  }
+
+  const toggleApplicantCourse = (course) => {
+    setSelectedApplicantCourses((current) => current.includes(course)
+      ? current.filter((selectedCourse) => selectedCourse !== course)
+      : [...current, course])
+    setApplicantDownloadError('')
+  }
+
+  const downloadSelectedApplicantRecords = async () => {
+    if (isDownloadingCourseApplicants) return
+    if (applicantCourseCounts === undefined) {
+      setApplicantDownloadError('Applicant counts are still loading. Please try again in a moment.')
+      return
+    }
+    const courses = applicantDownloadMode === 'all'
+      ? unifastPortalCourses
+      : unifastPortalCourses.filter((course) => selectedApplicantCourses.includes(course))
+    if (!courses.length) {
+      setApplicantDownloadError('Select at least one course to download applicant records.')
+      return
+    }
+    if (applicantDownloadCount === 0) {
+      setApplicantDownloadError('No applicant records match the selected courses and application year.')
+      return
+    }
+
+    setApplicantDownloadError('')
+    setIsDownloadingCourseApplicants(true)
+    setCourseApplicantDownloadProgress(12)
+    try {
+      const records = await exportCourseApplicants({
+        sessionToken: adminSession?.sessionToken,
+        applicationYear: activeApplicantYear,
+        courses,
+      })
+      if (!Array.isArray(records) || records.length === 0) {
+        throw new Error('No applicant records matched the selected courses and application year.')
+      }
+      setCourseApplicantDownloadProgress(76)
+      const csvRows = createUnifastApplicantCsvRows(records)
+      const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
+      const courseLabel = applicantDownloadMode === 'all' ? 'all-courses' : 'selected-courses'
+      if (!downloadCsvFile(`unifast-applicants-${safeYear}-${courseLabel}.csv`, csvRows)) {
+        throw new Error('The applicant CSV file could not be generated.')
+      }
+      setCourseApplicantDownloadProgress(100)
+      await new Promise((resolve) => window.setTimeout(resolve, 220))
+      setIsApplicantDownloadOpen(false)
+      setCourseApplicantSuccess({
+        count: records.length,
+        course: applicantDownloadMode === 'all' ? 'All courses' : `${courses.length} selected courses`,
+        type: 'download',
+        year: activeApplicantYear,
+      })
+    } catch (error) {
+      setApplicantDownloadError(error instanceof Error ? error.message : 'Unable to download applicant records. Please try again.')
+    } finally {
+      setIsDownloadingCourseApplicants(false)
+      setCourseApplicantDownloadProgress(0)
+    }
+  }
+
+  const openBatchExportModal = () => {
+    setCurrentBatchExportPage(1)
+    setSelectedBatchExport('')
+    setSelectedBatchExportYear('')
+    setSelectedBatchExportSemester('')
+    setIsBatchExportOpen(true)
+  }
+
+  const closeBatchExportModal = () => {
+    setIsBatchExportOpen(false)
+    setSelectedBatchExport('')
+    setSelectedBatchExportYear('')
+    setSelectedBatchExportSemester('')
+  }
+
+  const openBatchDeleteModal = () => {
+    setCurrentBatchExportPage(1)
+    setDeleteMessage('')
+    setIsBatchDeleteOpen(true)
+  }
+
+  const closeBatchDeleteModal = () => {
+    if (isDeletingRecords) return
+
+    setIsBatchDeleteOpen(false)
+    setSelectedDeleteBatch(null)
+  }
+
+  const openQuickActions = () => {
+    setIsQuickActionsOpen(true)
+  }
+
+  const openAddRecordModal = () => {
+    setSelectedUploadFile(null)
+    setUploadMessage('')
+    setDeleteMessage('')
+    setIsUploadingRecords(false)
+    setIsAddRecordOpen(true)
+  }
+
+  const closeAddRecordModal = () => {
+    if (isUploadingRecords) return
+
+    setIsAddRecordOpen(false)
+    setSelectedUploadFile(null)
+    setUploadMessage('')
+    setIsUploadingRecords(false)
+  }
+
+  const closeEditModal = () => {
+    if (isSavingEdit) return
+    setSelectedGranteeRecord(null)
+    setEditGranteeForm(null)
+    setEditMessage('')
+  }
+
+  const handleEditGrantee = (grantee) => {
+    setSelectedGranteeRecord(grantee)
+    setEditGranteeForm({
+      no: grantee.no ?? '',
+      tesAwardNumber: grantee.tesAwardNumber ?? '',
+      studentId: grantee.studentId ?? '',
+      lastName: grantee.lastName ?? '',
+      firstName: grantee.firstName ?? '',
+      middleInitial: grantee.middleInitial ?? '',
+      batchId: grantee.batchId ?? '',
+      status: grantee.status ?? '',
+      semester: grantee.semester ?? '',
+      schoolYear: grantee.schoolYear ?? '',
+    })
+    setEditMessage('')
+  }
+
+  const handleEditFieldChange = (fieldName) => (event) => {
+    setEditMessage('')
+    setEditGranteeForm((currentForm) => ({
+      ...currentForm,
+      [fieldName]: event.target.value,
+    }))
+  }
+
+  const handleSaveEdit = async (event) => {
+    event.preventDefault()
+
+    if (!selectedGranteeRecord || !editGranteeForm) return
+
+    const requiredFields = [
+      'no',
+      'tesAwardNumber',
+      'studentId',
+      'lastName',
+      'firstName',
+      'batchId',
+      'status',
+      'semester',
+      'schoolYear',
+    ]
+    const hasMissingRequiredField = requiredFields.some((fieldName) => {
+      return !String(editGranteeForm[fieldName] ?? '').trim()
+    })
+
+    if (hasMissingRequiredField) {
+      setEditMessage('Please complete all required fields before saving.')
+      return
+    }
+
+    setIsSavingEdit(true)
+    setEditMessage('Saving changes...')
+
+    try {
+      await updateAllInfoRecord({
+        id: selectedGranteeRecord._id,
+        ...editGranteeForm,
+      })
+
+      setEditMessage('Record updated successfully.')
+      setSelectedGranteeRecord(null)
+      setEditGranteeForm(null)
+    } catch (error) {
+      setEditMessage(error instanceof Error ? error.message : 'Unable to update record.')
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
+  const handleSelectGrantee = (granteeId) => {
+    setDeleteMessage('')
+
+    setSelectedGranteeIds((currentIds) => {
+      if (currentIds.includes(granteeId)) {
+        return currentIds.filter((id) => id !== granteeId)
+      }
+
+      return [...currentIds, granteeId]
+    })
+  }
+
+  const handleDeleteCheckedGrantees = async () => {
+    if (selectedGranteeIds.length === 0) {
+      setDeleteMessage('Please check at least one record before deleting.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedGranteeIds.length} checked record${
+        selectedGranteeIds.length === 1 ? '' : 's'
+      }?`,
+    )
+
+    if (!confirmed) return
+
+    setIsDeletingRecords(true)
+    setDeleteMessage('Deleting checked record...')
+
+    try {
+      const result = await deleteAllInfoRecords({
+        ids: selectedGranteeIds,
+      })
+
+      setSelectedGranteeIds([])
+      setDeleteMessage(
+        `${result?.deleted ?? selectedGranteeIds.length} record${
+          (result?.deleted ?? selectedGranteeIds.length) === 1 ? '' : 's'
+        } deleted successfully.`,
+      )
+    } catch (error) {
+      setDeleteMessage(error instanceof Error ? error.message : 'Unable to delete records.')
+    } finally {
+      setIsDeletingRecords(false)
+    }
+  }
+
+  const handleDeleteBatch = async () => {
+    if (!selectedDeleteBatch) return
+
+    const batchId = selectedDeleteBatch.batchId
+    const batchRecordIds = granteeRows
+      .filter((record) => String(record.batchId ?? '').trim() === batchId)
+      .map((record) => record._id)
+
+    if (batchRecordIds.length === 0) {
+      setDeleteMessage('No records found for this batch.')
+      setSelectedDeleteBatch(null)
+      return
+    }
+
+    setIsDeletingRecords(true)
+    setDeleteMessage(`Deleting batch ${batchId}...`)
+
+    try {
+      const result = await deleteAllInfoRecords({
+        ids: batchRecordIds,
+      })
+
+      setSelectedGranteeIds((currentIds) => {
+        return currentIds.filter((id) => !batchRecordIds.includes(id))
+      })
+      setDeleteMessage(
+        `${result?.deleted ?? batchRecordIds.length} record${
+          (result?.deleted ?? batchRecordIds.length) === 1 ? '' : 's'
+        } deleted from batch ${batchId}.`,
+      )
+      setSelectedDeleteBatch(null)
+      setIsBatchDeleteOpen(false)
+      setCurrentGranteePage(1)
+    } catch (error) {
+      setDeleteMessage(error instanceof Error ? error.message : 'Unable to delete batch records.')
+    } finally {
+      setIsDeletingRecords(false)
+    }
+  }
+
+  const handleUploadFileChange = (event) => {
+    const file = event.target.files?.[0] ?? null
+
+    setSelectedUploadFile(file)
+    setUploadMessage(file ? `${file.name} is ready to upload.` : '')
+  }
+
+  const handleUploadSubmit = async (event) => {
+    event.preventDefault()
+
+    if (!selectedUploadFile) {
+      setUploadMessage('Select a CSV file before uploading.')
+      return
+    }
+
+    if (!selectedUploadFile.name.toLowerCase().endsWith('.csv')) {
+      setUploadMessage('Please upload the downloaded CSV template file.')
+      return
+    }
+
+    setIsUploadingRecords(true)
+    setUploadMessage('Reading file...')
+
+    try {
+      const fileText = await selectedUploadFile.text()
+      const records = parseGranteeUpload(fileText)
+
+      if (records.length === 0) {
+        setUploadMessage(
+          'No valid rows found. Use the CSV template headers and add record values.',
+        )
+        return
+      }
+
+      const result = await createAllInfoRecords({ records })
+
+      setUploadMessage(
+        `${result.inserted} record${result.inserted === 1 ? '' : 's'} saved to allinfo.`,
+      )
+
+      setSelectedUploadFile(null)
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : 'Unable to upload records.')
+    } finally {
+      setIsUploadingRecords(false)
+    }
+  }
+
+  const openUserManagement = () => {
+    setCurrentUserPage(1)
+    setUserMessage('')
+    setIsUserManagementOpen(true)
+  }
+
+  const handleSidebarNavigate = (item) => {
+    if (item === 'dashboard' || item === 'records') {
+      setActiveSection(item)
+      requestAnimationFrame(() => {
+        const section = document.getElementById(item === 'records' ? 'admin-records' : 'admin-dashboard')
+        section?.focus({ preventScroll: true })
+        section?.scrollIntoView({ block: 'start', behavior: 'instant' })
+      })
+    } else if (item === 'portal') {
+      setIsUnifastPortalConfirmOpen(true)
+    } else if (item === 'archive') {
+      setArchiveMessage('')
+      setCurrentArchivePage(1)
+      setIsArchiveOpen(true)
+    } else if (item === 'logs') {
+      setCurrentLogPage(1)
+      setIsLogsOpen(true)
+    } else if (item === 'users') {
+      openUserManagement()
+    } else if (item === 'support') {
+      openQuickActions()
+    } else if (item === 'billing') {
+      setIsBillingOpen(true)
+    } else if (item === 'form2') {
+      setIsForm2Open(true)
+    }
+  }
+
+  const openEditUser = (user) => {
+    setSelectedUser(user)
+    setUserForm({ email: user.email ?? '', phoneNumber: user.phoneNumber ?? '' })
+    setUserMessage('')
+  }
+
+  const handleUserFormChange = (event) => {
+    const { name, value } = event.target
+    setUserForm((currentForm) => ({ ...currentForm, [name]: value }))
+  }
+
+  const handleUpdateUser = async (event) => {
+    event.preventDefault()
+    if (!selectedUser || isSavingUser) return
+
+    setIsSavingUser(true)
+    setUserMessage('')
+
+    try {
+      const result = await updateStudentAccount({
+        id: selectedUser.id,
+        email: userForm.email,
+        phoneNumber: userForm.phoneNumber,
+      })
+
+      if (!result.success) {
+        setUserMessage(result.message)
+        return
+      }
+
+      setSelectedUser(null)
+      setUserMessage(result.message)
+    } catch (error) {
+      setUserMessage(error instanceof Error ? error.message : 'Unable to update the user account.')
+    } finally {
+      setIsSavingUser(false)
+    }
+  }
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete || isDeletingUser) return
+
+    setIsDeletingUser(true)
+    setUserMessage('')
+
+    try {
+      const result = await deleteStudentAccount({ id: userToDelete.id })
+
+      if (!result.success) {
+        setUserMessage(result.message)
+        return
+      }
+
+      setUserToDelete(null)
+      setUserMessage(result.message)
+    } catch (error) {
+      setUserMessage(error instanceof Error ? error.message : 'Unable to delete the user account.')
+    } finally {
+      setIsDeletingUser(false)
+    }
+  }
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollTop = document.documentElement.scrollTop || document.body.scrollTop
+      const scrollable =
+        document.documentElement.scrollHeight - document.documentElement.clientHeight
+
+      setScrollProgress(scrollable > 0 ? scrollTop / scrollable : 0)
+    }
+
+    handleScroll()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  useEffect(() => {
+    if (!isAnyModalOpen) return undefined
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsLogsOpen(false)
+        setIsArchiveOpen(false)
+        setIsQuickActionsOpen(false)
+        setIsUserManagementOpen(false)
+        setSelectedUser(null)
+        setUserToDelete(null)
+        setIsUnifastPortalConfirmOpen(false)
+        setIsUnifastPortalCoursesOpen(false)
+        setIsApplicantYearOpen(false)
+        setCurrentApplicantYearPage(1)
+        setSelectedUnifastCourse('')
+        setCourseApplicantSearch('')
+        setCurrentCourseApplicantPage(1)
+        setIsAddRecordOpen(false)
+        setIsBatchExportOpen(false)
+        setSelectedBatchExport('')
+        setSelectedBatchExportYear('')
+        setSelectedBatchExportSemester('')
+        setIsBatchDeleteOpen(false)
+        setSelectedDeleteBatch(null)
+        setIsSchoolIdDownloadOpen(false)
+        setSelectedSchoolIdDownloadYear('')
+        setCurrentSchoolIdBatchDownloadPage(1)
+        setSelectedUploadFile(null)
+        setUploadMessage('')
+        setIsUploadingRecords(false)
+        setSelectedGranteeRecord(null)
+      }
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = ''
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isAnyModalOpen])
+
+  return (
+    <div className="admin-page">
+      <style>{adminStyles}</style>
+
+      <AdminSidebar
+        activeItem={isForm2Open ? 'form2' : isBillingOpen ? 'billing' : isQuickActionsOpen ? 'support' : isUserManagementOpen ? 'users' : isArchiveOpen ? 'archive' : isLogsOpen ? 'logs' : (isUnifastPortalConfirmOpen || isUnifastPortalCoursesOpen || isApplicantYearOpen || selectedUnifastCourse || isApplicantDownloadOpen) ? 'portal' : activeSection}
+        onNavigate={handleSidebarNavigate}
+        onLogout={handleAdminLogout}
+      />
+
+      <main className="admin-main">
+        <div className="admin-container">
+          <section id="admin-dashboard" className="admin-heading" tabIndex={-1}>
+            <div className="admin-heading__copy">
+              <span className="admin-eyebrow">Tertiary Education Subsidy and Tulong Dunong Program</span>
+              <h1>Grantee Management</h1>
+
+            </div>
+
+            <div className="admin-heading__actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={availableBatches.length === 0}
+                onClick={openBatchExportModal}
+                title={
+                  availableBatches.length === 0
+                    ? 'No batches available to export'
+                    : 'Choose a batch to export student account info'
+                }
+                type="button"
+              >
+                <span className="material-symbols-outlined">table_view</span>
+                Export to CSV Batch Info
+              </button>
+
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={granteesWithSchoolIdFiles.length === 0}
+                onClick={() => {
+                  setCurrentSchoolIdDownloadPage(1)
+                  setIsSchoolIdDownloadOpen(true)
+                }}
+                title={
+                  granteesWithSchoolIdFiles.length === 0
+                    ? 'No School ID files available to download'
+                    : 'Choose a School Year to download School ID files'
+                }
+                type="button"
+              >
+                <span className="material-symbols-outlined">download</span>
+                Download School ID File
+              </button>
+
+              <button
+                className="admin-button admin-button--primary"
+                onClick={openAddRecordModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">add</span>
+                Add New Record
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={availableBatches.length === 0}
+                onClick={openBatchDeleteModal}
+                title={
+                  availableBatches.length === 0
+                    ? 'No batches available to delete'
+                    : 'Choose a batch to delete'
+                }
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete</span>
+                Delete Batch
+              </button>
+            </div>
+          </section>
+
+          <section className="admin-stats-grid" aria-label="Grantee summary">
+            <div className="admin-stat-card">
+              <span>Total Records</span>
+              <strong>{granteeRows.length}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Filtered Results</span>
+              <strong>{filteredGranteeRows.length}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Checked Records</span>
+              <strong>{selectedGranteeIds.length}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Student Requests</span>
+              <strong>{quickActionRows.length}</strong>
+            </div>
+          </section>
+
+          <section className="admin-filter-panel" aria-label="Grantee filters">
+            <div className="admin-search-field">
+              <span className="material-symbols-outlined">search</span>
+              <input
+                aria-label="Search grantee records"
+                placeholder="Search by Student ID, award number, status, or semester..."
+                type="text"
+                value={searchQuery}
+                onChange={handleSearchQueryChange}
+              />
+            </div>
+
+            <select aria-label="Filter by batch" value={selectedBatch} onChange={handleSelectedBatchChange}>
+              <option value="">All Batches</option>
+              {availableBatches.map((batch) => (
+                <option key={batch} value={batch}>
+                  {batch}
+                </option>
+              ))}
+            </select>
+
+            <select aria-label="Filter by semester" value={selectedSemester} onChange={handleSelectedSemesterChange}>
+              <option value="">All Semesters</option>
+              <option value="1st Semester">1st Semester</option>
+              <option value="2nd Semester">2nd Semester</option>
+            </select>
+
+            <select aria-label="Filter by school year" value={selectedSchoolYear} onChange={handleSelectedSchoolYearChange}>
+              <option value="">All School Years</option>
+              {availableSchoolYears.map((schoolYear) => (
+                <option key={schoolYear} value={schoolYear}>{schoolYear}</option>
+              ))}
+            </select>
+
+            <button
+              className="admin-filter-button"
+              type="button"
+              aria-label="Refresh records"
+              title="Refresh records"
+              onClick={() => setGranteeRefreshVersion((version) => version + 1)}
+            >
+              <span className="material-symbols-outlined">refresh</span>
+            </button>
+          </section>
+
+          <section id="admin-records" className="admin-table-card" aria-label="TDP grantee records" tabIndex={-1}>
+            <div className="admin-table-header">
+              <div>
+                <h2>Grantee Records</h2>
+                <p>Review, check, edit, or delete selected records.</p>
+              </div>
+            </div>
+
+            <div className="admin-table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>No.</th>
+                    <th>TES Award Number</th>
+                    <th>Student ID</th>
+                    <th>TES Details</th>
+                    <th>Last Name</th>
+                    <th>First Name</th>
+                    <th>MI.</th>
+                    <th>Batch No.</th>
+                    <th>Status</th>
+                    <th>Semester</th>
+                    <th>School Year</th>
+                    <th>School ID File</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {allInfoRecords === undefined && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={12}>
+                        Loading grantee records...
+                      </td>
+                    </tr>
+                  )}
+
+                  {allInfoRecords?.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={12}>
+                        No grantee records yet. Upload a CSV file to add records.
+                      </td>
+                    </tr>
+                  )}
+
+                  {allInfoRecords && allInfoRecords.length > 0 && filteredGranteeRows.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={12}>
+                        No matching record found.
+                      </td>
+                    </tr>
+                  )}
+
+                  {currentGrantees.map((grantee, index) => (
+                    <tr key={grantee._id}>
+                      <td data-label="No.">{firstGranteeIndex + index + 1}</td>
+
+                      <td className="admin-award-cell" data-label="TES Award Number">
+                        {grantee.tesAwardNumber}
+                      </td>
+
+                      <td data-label="Student ID">{grantee.studentId}</td>
+
+                      <td data-label="Last Name">{grantee.lastName || '—'}</td>
+
+                      <td data-label="First Name">{grantee.firstName || '—'}</td>
+
+                      <td data-label="MI.">{grantee.middleInitial || '—'}</td>
+
+                      <td className="admin-batch-cell" data-label="Batch No.">
+                        {grantee.batchId}
+                      </td>
+
+                      <td data-label="Status">
+                        <AdminStatusBadge
+                          status={grantee.status}
+                          tone={getQuickActionStatusTone(grantee.status)}
+                        />
+                      </td>
+
+                      <td data-label="Semester">{grantee.semester || '—'}</td>
+
+                      <td data-label="School Year">{grantee.schoolYear || '—'}</td>
+
+                      <td data-label="School ID File">
+                        {grantee.frontIdUrl ? (
+                          <a
+                            className="admin-file-link"
+                            href={grantee.frontIdUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            View file
+                          </a>
+                        ) : (
+                          <span className="admin-file-empty">No file</span>
+                        )}
+                      </td>
+
+                      <td data-label="Actions">
+                        <div className="admin-row-actions">
+                          <button
+                            className="admin-edit-button"
+                            type="button"
+                            onClick={() => handleEditGrantee(grantee)}
+                          >
+                            Edit
+                          </button>
+
+                          <label className="admin-checkbox-control">
+                            <input
+                              type="checkbox"
+                              checked={selectedGranteeIds.includes(grantee._id)}
+                              onChange={() => handleSelectGrantee(grantee._id)}
+                            />
+                            <span>Check</span>
+                          </label>
+
+                          <button
+                            className="admin-delete-button"
+                            type="button"
+                            disabled={isDeletingRecords || !selectedGranteeIds.includes(grantee._id)}
+                            onClick={handleDeleteCheckedGrantees}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination">
+              <div>
+                <p>
+                  Showing <strong>{showingStart}</strong> to <strong>{showingEnd}</strong> of{' '}
+                  <strong>{filteredGranteeRows.length}</strong> results
+                </p>
+
+                {deleteMessage && <p className="admin-delete-message">{deleteMessage}</p>}
+              </div>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  type="button"
+                  disabled={activeGranteePage === 1 || filteredGranteeRows.length === 0}
+                  aria-label="Previous page"
+                  onClick={() => goToGranteePage(activeGranteePage - 1)}
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {granteePaginationItems.map((pageItem) => {
+                  if (typeof pageItem === 'string') {
+                    return (
+                      <span className="admin-pagination__ellipsis" key={pageItem}>
+                        ...
+                      </span>
+                    )
+                  }
+
+                  const pageNumber = pageItem
+
+                  return (
+                    <button
+                      aria-current={activeGranteePage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeGranteePage === pageNumber ? 'admin-page-button--active' : undefined
+                      }
+                      disabled={filteredGranteeRows.length === 0}
+                      key={pageNumber}
+                      onClick={() => goToGranteePage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  type="button"
+                  disabled={
+                    activeGranteePage === totalGranteePages || filteredGranteeRows.length === 0
+                  }
+                  aria-label="Next page"
+                  onClick={() => goToGranteePage(activeGranteePage + 1)}
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+      {isBillingOpen && <BillingManagement sessionToken={adminSession?.sessionToken} onClose={() => setIsBillingOpen(false)} />}
+      {isForm2Open && <Form2Management sessionToken={adminSession?.sessionToken} onClose={() => setIsForm2Open(false)} onOpenBilling={() => { setIsForm2Open(false); setIsBillingOpen(true) }} />}
+
+      {isLogsOpen && (
+        <div
+          aria-labelledby="admin-logs-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close logs modal"
+            className="admin-modal-backdrop"
+            onClick={() => setIsLogsOpen(false)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--wide">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Activity Logs</p>
+                <h2 id="admin-logs-title">System Activity Records</h2>
+                <p>Review recent uploads, edits, deletes, student updates, and page actions.</p>
+              </div>
+
+              <button
+                aria-label="Close logs"
+                className="admin-modal-close"
+                onClick={() => setIsLogsOpen(false)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-logs-toolbar">
+              <div>
+                <span>Log Management</span>
+                <strong>Move all system activity records to the archive.</strong>
+              </div>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={
+                  activityLogs === undefined ||
+                  activityLogRows.length === 0 ||
+                  isClearingActivityLogs
+                }
+                onClick={handleClearAllActivityLogs}
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete_sweep</span>
+                {isClearingActivityLogs ? 'Clearing...' : 'Clear All Logs'}
+              </button>
+            </div>
+
+            <div className="admin-logs-table-wrap">
+              <table className="admin-logs-table">
+                <thead>
+                  <tr>
+                    <th>Date & Time</th>
+                    <th>Action</th>
+                    <th>Actor</th>
+                    <th>Target</th>
+                    <th>Summary</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {activityLogs === undefined && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={5}>
+                        Loading activity logs...
+                      </td>
+                    </tr>
+                  )}
+
+                  {activityLogs && activityLogRows.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={5}>
+                        No activity logs recorded yet.
+                      </td>
+                    </tr>
+                  )}
+
+                  {currentActivityLogs.map((log) => (
+                    <tr key={log._id}>
+                      <td data-label="Date & Time">{formatLogDate(log.createdAt)}</td>
+                      <td data-label="Action">
+                        <span className="admin-log-action">{log.action}</span>
+                      </td>
+                      <td data-label="Actor">
+                        <strong>{log.actorName || log.actorId || log.actorRole}</strong>
+                        <span>{log.actorRole}</span>
+                      </td>
+                      <td data-label="Target">
+                        <strong>{log.targetLabel || log.targetType}</strong>
+                        <span>{log.targetType}</span>
+                      </td>
+                      <td data-label="Summary">{log.summary}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-logs-pagination">
+              <p>
+                Showing <strong>{logShowingStart}</strong> to <strong>{logShowingEnd}</strong> of{' '}
+                <strong>{activityLogRows.length}</strong> logs
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  type="button"
+                  disabled={activeLogPage === 1 || activityLogRows.length === 0}
+                  aria-label="Previous logs page"
+                  onClick={() => goToLogPage(activeLogPage - 1)}
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalLogPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      className={
+                        activeLogPage === pageNumber ? 'admin-page-button--active' : undefined
+                      }
+                      disabled={activityLogRows.length === 0}
+                      key={pageNumber}
+                      onClick={() => goToLogPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  type="button"
+                  disabled={activeLogPage === totalLogPages || activityLogRows.length === 0}
+                  aria-label="Next logs page"
+                  onClick={() => goToLogPage(activeLogPage + 1)}
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isArchiveOpen && (
+        <div
+          aria-labelledby="admin-archive-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close archive modal"
+            className="admin-modal-backdrop"
+            onClick={() => setIsArchiveOpen(false)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--wide admin-modal-card--archive">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Archive</p>
+                <h2 id="admin-archive-title">Deleted Records</h2>
+                <p>Search deleted data, restore it to its original table, or delete it permanently.</p>
+              </div>
+
+              <button
+                aria-label="Close archive"
+                className="admin-modal-close"
+                disabled={Boolean(processingArchiveId)}
+                onClick={() => setIsArchiveOpen(false)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-archive-toolbar">
+              <label className="admin-archive-search">
+                <span className="material-symbols-outlined">search</span>
+                <input
+                  onChange={(event) => {
+                    setArchiveSearchQuery(event.target.value)
+                    setCurrentArchivePage(1)
+                  }}
+                  placeholder="Search table, deleted item, ID, or date..."
+                  type="search"
+                  value={archiveSearchQuery}
+                />
+              </label>
+
+              <select
+                aria-label="Filter archive by table"
+                onChange={(event) => {
+                  setArchiveTableFilter(event.target.value)
+                  setCurrentArchivePage(1)
+                }}
+                value={archiveTableFilter}
+              >
+                <option value="">All tables</option>
+                {archiveTableOptions.map((tableName) => (
+                  <option key={tableName} value={tableName}>
+                    {tableName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {archiveMessage && <p className="admin-archive-message">{archiveMessage}</p>}
+
+            <div className="admin-logs-table-wrap admin-archive-table-wrap">
+              <table className="admin-logs-table admin-archive-table">
+                <thead>
+                  <tr>
+                    <th>Table</th>
+                    <th>Deleted Item</th>
+                    <th>Deletion Type</th>
+                    <th>Date &amp; Time Deleted</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {archivedItems === undefined && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={5}>Loading archive...</td>
+                    </tr>
+                  )}
+
+                  {archivedItems && filteredArchiveRows.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={5}>
+                        {archiveRows.length === 0
+                          ? 'No deleted records in the archive.'
+                          : 'No archived records match your filters.'}
+                      </td>
+                    </tr>
+                  )}
+
+                  {currentArchivedItems.map((item) => (
+                    <tr key={item._id}>
+                      <td data-label="Table">
+                        <span className="admin-archive-table-name">{item.sourceTable}</span>
+                      </td>
+                      <td data-label="Deleted Item">
+                        <strong>{item.sourceLabel || item.sourceId}</strong>
+                        <span>{item.sourceId}</span>
+                      </td>
+                      <td data-label="Deletion Type">
+                        {item.deletionKind === 'fields' ? 'File data' : 'Full record'}
+                      </td>
+                      <td data-label="Date & Time Deleted">{formatLogDate(item.deletedAt)}</td>
+                      <td data-label="Actions">
+                        <div className="admin-archive-actions">
+                          <button
+                            className="admin-archive-action admin-archive-action--restore"
+                            disabled={Boolean(processingArchiveId)}
+                            onClick={() => handleRestoreArchivedItem(item)}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined">restore</span>
+                            {processingArchiveId === item._id ? 'Working...' : 'Restore'}
+                          </button>
+                          <button
+                            className="admin-archive-action admin-archive-action--delete"
+                            disabled={Boolean(processingArchiveId)}
+                            onClick={() => handleRemoveArchivedItem(item)}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined">delete_forever</span>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-logs-pagination">
+              <p>
+                Showing <strong>{archiveShowingStart}</strong> to{' '}
+                <strong>{archiveShowingEnd}</strong> of{' '}
+                <strong>{filteredArchiveRows.length}</strong> archived items
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous archive page"
+                  disabled={activeArchivePage === 1 || filteredArchiveRows.length === 0}
+                  onClick={() => goToArchivePage(activeArchivePage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+                {Array.from({ length: totalArchivePages }, (_, index) => index + 1).map(
+                  (pageNumber) => (
+                    <button
+                      className={
+                        activeArchivePage === pageNumber
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={filteredArchiveRows.length === 0}
+                      key={pageNumber}
+                      onClick={() => goToArchivePage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  ),
+                )}
+                <button
+                  aria-label="Next archive page"
+                  disabled={
+                    activeArchivePage === totalArchivePages || filteredArchiveRows.length === 0
+                  }
+                  onClick={() => goToArchivePage(activeArchivePage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isBatchExportOpen && !selectedBatchExport && (
+        <div
+          aria-labelledby="admin-batch-export-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close batch export modal"
+            className="admin-modal-backdrop"
+            onClick={closeBatchExportModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Batch CSV Export</p>
+                <h2 id="admin-batch-export-title">Choose Batch</h2>
+                <p>Export student account information for a specific batch using allinfo Student IDs.</p>
+              </div>
+
+              <button
+                aria-label="Close batch export"
+                className="admin-modal-close"
+                onClick={closeBatchExportModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {currentBatchExports.map(({ accountCount, batchId, recordCount }) => {
+                return (
+                  <button
+                    className="admin-school-year-button"
+                    disabled={studentAccounts === undefined}
+                    key={batchId}
+                    onClick={() => setSelectedBatchExport(batchId)}
+                    type="button"
+                  >
+                    <span>{batchId}</span>
+                    <strong>
+                      {studentAccounts === undefined
+                        ? 'Loading accounts...'
+                        : `${recordCount} records / ${accountCount} accounts`}
+                    </strong>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="admin-pagination admin-batch-export-pagination">
+              <p>
+                Showing <strong>{batchExportShowingStart}</strong>-<strong>{batchExportShowingEnd}</strong>{' '}
+                of <strong>{batchExportRows.length}</strong> batches
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  disabled={activeBatchExportPage === 1}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage - 1)}
+                  type="button"
+                  aria-label="Previous batch export page"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalBatchExportPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={activeBatchExportPage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeBatchExportPage === pageNumber ? 'admin-page-button--active' : undefined
+                      }
+                      key={pageNumber}
+                      onClick={() => goToBatchExportPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  disabled={activeBatchExportPage === totalBatchExportPages}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage + 1)}
+                  type="button"
+                  aria-label="Next batch export page"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeBatchExportModal}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isBatchExportOpen && selectedBatchExport && !selectedBatchExportYear && (
+        <div
+          aria-labelledby="admin-batch-export-year-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School Year selection"
+            className="admin-modal-backdrop"
+            onClick={closeBatchExportModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Batch {selectedBatchExport}</p>
+                <h2 id="admin-batch-export-year-title">Choose School Year</h2>
+                <p>Select the School Year to include in this batch information CSV.</p>
+              </div>
+
+              <button
+                aria-label="Close School Year selection"
+                className="admin-modal-close"
+                onClick={closeBatchExportModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {batchExportSchoolYearRows.map(({ accountCount, recordCount, schoolYear }) => (
+                <button
+                  className="admin-school-year-button"
+                  key={schoolYear}
+                  onClick={() => setSelectedBatchExportYear(schoolYear)}
+                  type="button"
+                >
+                  <span>{schoolYear}</span>
+                  <strong>{recordCount} records / {accountCount} accounts</strong>
+                </button>
+              ))}
+
+              {batchExportSchoolYearRows.length === 0 && (
+                <div className="admin-modal-empty-state">
+                  No School Year information was found for this batch.
+                </div>
+              )}
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={() => setSelectedBatchExport('')}
+                type="button"
+              >
+                Back
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isBatchExportOpen &&
+        selectedBatchExport &&
+        selectedBatchExportYear &&
+        !selectedBatchExportSemester && (
+          <div
+            aria-labelledby="admin-batch-export-semester-title"
+            aria-modal="true"
+            className="admin-modal-overlay"
+            role="dialog"
+          >
+            <button
+              aria-label="Close semester selection"
+              className="admin-modal-backdrop"
+              onClick={closeBatchExportModal}
+              type="button"
+            />
+
+            <section className="admin-modal-card admin-modal-card--compact">
+              <div className="admin-modal-header">
+                <div>
+                  <p className="admin-modal-kicker">
+                    Batch {selectedBatchExport} · {selectedBatchExportYear}
+                  </p>
+                  <h2 id="admin-batch-export-semester-title">Choose Semester</h2>
+                  <p>Select the semester to include in the downloaded batch information.</p>
+                </div>
+
+                <button
+                  aria-label="Close semester selection"
+                  className="admin-modal-close"
+                  onClick={closeBatchExportModal}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              <div className="admin-school-year-downloads">
+                {batchExportSemesterRows.map(({ accountCount, recordCount, semester }) => (
+                  <button
+                    className="admin-school-year-button"
+                    key={semester}
+                    onClick={() => setSelectedBatchExportSemester(semester)}
+                    type="button"
+                  >
+                    <span>{semester}</span>
+                    <strong>{recordCount} records / {accountCount} accounts</strong>
+                  </button>
+                ))}
+
+                {batchExportSemesterRows.length === 0 && (
+                  <div className="admin-modal-empty-state">
+                    No semester information was found for this School Year.
+                  </div>
+                )}
+              </div>
+
+              <div className="admin-upload-actions">
+                <button
+                  className="admin-button admin-button--secondary"
+                  onClick={() => setSelectedBatchExportYear('')}
+                  type="button"
+                >
+                  Back
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+      {isBatchExportOpen &&
+        selectedBatchExport &&
+        selectedBatchExportYear &&
+        selectedBatchExportSemester && (
+          <div
+            aria-labelledby="admin-batch-export-confirm-title"
+            aria-modal="true"
+            className="admin-modal-overlay admin-confirm-overlay"
+            role="alertdialog"
+          >
+            <button
+              aria-label="Cancel batch information download"
+              className="admin-modal-backdrop"
+              onClick={() => setSelectedBatchExportSemester('')}
+              type="button"
+            />
+
+            <section className="admin-modal-card admin-confirm-card">
+              <div className="admin-confirm-card__icon" aria-hidden="true">
+                <span className="material-symbols-outlined">download</span>
+              </div>
+
+              <div className="admin-confirm-card__copy">
+                <p className="admin-modal-kicker">Batch CSV Export</p>
+                <h2 id="admin-batch-export-confirm-title">Download this batch information?</h2>
+                <p>
+                  Are you sure you want to download Batch <strong>{selectedBatchExport}</strong>,
+                  School Year <strong>{selectedBatchExportYear}</strong>,{' '}
+                  <strong>{selectedBatchExportSemester}</strong>?
+                </p>
+              </div>
+
+              <div className="admin-confirm-card__notice">
+                <span className="material-symbols-outlined">description</span>
+                The CSV will contain {selectedBatchExportSummary?.recordCount ?? 0} records and{' '}
+                {selectedBatchExportSummary?.accountCount ?? 0} matched student accounts.
+              </div>
+
+              <div className="admin-confirm-card__actions">
+                <button
+                  className="admin-button admin-button--secondary"
+                  onClick={() => setSelectedBatchExportSemester('')}
+                  type="button"
+                >
+                  No, Go Back
+                </button>
+
+                <button
+                  className="admin-button admin-button--primary"
+                  onClick={() =>
+                    exportBatchInfoCsv(
+                      selectedBatchExport,
+                      selectedBatchExportYear,
+                      selectedBatchExportSemester,
+                    )
+                  }
+                  type="button"
+                >
+                  Yes, Download CSV
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+      {isBatchDeleteOpen && (
+        <div
+          aria-labelledby="admin-batch-delete-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close batch delete modal"
+            className="admin-modal-backdrop"
+            onClick={closeBatchDeleteModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Delete Batch</p>
+                <h2 id="admin-batch-delete-title">Choose Batch</h2>
+                <p>Select a batch to delete all information records under that batch.</p>
+              </div>
+
+              <button
+                aria-label="Close batch delete"
+                className="admin-modal-close"
+                disabled={isDeletingRecords}
+                onClick={closeBatchDeleteModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {currentBatchExports.map(({ batchId, recordCount }) => (
+                <button
+                  className="admin-school-year-button admin-school-year-button--danger"
+                  disabled={isDeletingRecords}
+                  key={batchId}
+                  onClick={() => setSelectedDeleteBatch({ batchId, recordCount })}
+                  type="button"
+                >
+                  <span>{batchId}</span>
+                  <strong>{recordCount} {recordCount === 1 ? 'record' : 'records'}</strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="admin-pagination admin-batch-export-pagination">
+              <p>
+                Showing <strong>{batchExportShowingStart}</strong>-<strong>{batchExportShowingEnd}</strong>{' '}
+                of <strong>{batchExportRows.length}</strong> batches
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous batch delete page"
+                  disabled={activeBatchExportPage === 1 || isDeletingRecords}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalBatchExportPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={activeBatchExportPage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeBatchExportPage === pageNumber ? 'admin-page-button--active' : undefined
+                      }
+                      disabled={isDeletingRecords}
+                      key={pageNumber}
+                      onClick={() => goToBatchExportPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  aria-label="Next batch delete page"
+                  disabled={activeBatchExportPage === totalBatchExportPages || isDeletingRecords}
+                  onClick={() => goToBatchExportPage(activeBatchExportPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingRecords}
+                onClick={closeBatchDeleteModal}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedDeleteBatch && (
+        <div
+          aria-labelledby="admin-batch-delete-confirm-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close batch delete confirmation"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDeletingRecords) setSelectedDeleteBatch(null)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact admin-modal-card--applicant-years">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Confirm Delete</p>
+                <h2 id="admin-batch-delete-confirm-title">Delete this batch information?</h2>
+                <p>Are you sure you want to delete this batch information?</p>
+              </div>
+
+              <button
+                aria-label="Close batch delete confirmation"
+                className="admin-modal-close"
+                disabled={isDeletingRecords}
+                onClick={() => setSelectedDeleteBatch(null)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-confirm-body">
+              <strong>{selectedDeleteBatch.batchId}</strong>
+              <p>
+                This will move {selectedDeleteBatch.recordCount}{' '}
+                {selectedDeleteBatch.recordCount === 1 ? 'record' : 'records'} from this batch to
+                the archive, where they can be restored.
+              </p>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingRecords}
+                onClick={() => setSelectedDeleteBatch(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isDeletingRecords}
+                onClick={handleDeleteBatch}
+                type="button"
+              >
+                {isDeletingRecords ? 'Deleting...' : 'Delete Batch'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isUnifastPortalConfirmOpen && (
+        <div
+          aria-labelledby="admin-unifast-open-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close UNIFAST portal confirmation"
+            className="admin-modal-backdrop"
+            onClick={closeUnifastPortalModals}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">UNIFAST Portal</p>
+                <h2 id="admin-unifast-open-title">Open the portal?</h2>
+                <p>Do you want to open the portal for receiving applicants information?</p>
+              </div>
+
+              <button
+                aria-label="Close UNIFAST portal confirmation"
+                className="admin-modal-close"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-confirm-body">
+              <p>Select Yes to view applicants by course and prepare a course download.</p>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                No
+              </button>
+
+              <button
+                className="admin-button admin-button--primary"
+                onClick={() => {
+                  setIsUnifastPortalConfirmOpen(false)
+                  setReceivingApplicantPage(1)
+                  setIsUnifastPortalCoursesOpen(true)
+                }}
+                type="button"
+              >
+                Yes
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isUnifastPortalCoursesOpen && (
+        <div
+          aria-labelledby="admin-unifast-courses-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-receiving-applicants-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close UNIFAST portal courses"
+            className="admin-modal-backdrop"
+            onClick={closeUnifastPortalModals}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-receiving-applicants-modal">
+            <div className="admin-modal-header admin-receiving-applicants-header">
+              <div>
+                <p className="admin-modal-kicker">Receiving Applicants Information</p>
+                <h2 id="admin-unifast-courses-title">Receiving Applicants Management</h2>
+                <p>Manage applicant records, application availability, and downloads.</p>
+              </div>
+
+              <button
+                aria-label="Close UNIFAST portal courses"
+                className="admin-modal-close"
+                onClick={closeUnifastPortalModals}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-receiving-applicants-controls">
+              <div className="admin-receiving-status">
+                <span className={`admin-receiving-status__indicator${applicantPortal?.isReceivingApplicants ? ' is-open' : ' is-closed'}`} />
+                <div>
+                <span>Landing Portal Status</span>
+                  <strong>{applicantPortal === undefined ? 'Checking status' : applicantPortal.isReceivingApplicants ? 'OPEN' : 'CLOSED'}</strong>
+                  <small>{applicantPortal?.isReceivingApplicants ? `Receiving ${activeApplicantYear} applicants` : `Not receiving ${activeApplicantYear} applicants`}</small>
+                </div>
+              </div>
+
+              <div className="admin-receiving-applicants-actions">
+                <button
+                  className="admin-button admin-button--primary"
+                  disabled={applicantPortal === undefined || applicantPortal?.isReceivingApplicants}
+                  onClick={() => {
+                    setCurrentApplicantYearPage(1)
+                    setIsApplicantYearOpen(true)
+                  }}
+                  type="button"
+                >
+                  Receive Applicants
+                </button>
+
+                <button
+                  className="admin-button admin-button--secondary"
+                  disabled={applicantPortal === undefined || !applicantPortal?.isReceivingApplicants}
+                  onClick={() => updateApplicantPortalStatus(false)}
+                  type="button"
+                >
+                  Close Applicants
+                </button>
+                <button
+                  className="admin-button admin-button--primary admin-download-applicants-button"
+                  onClick={openApplicantDownloadModal}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">download</span>
+                  Download Applicants
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-receiving-applicants-body">
+              <div className="admin-receiving-grantee-toolbar">
+                <label className="admin-receiving-grantee-search">
+                  <span className="material-symbols-outlined" aria-hidden="true">search</span>
+                  <input
+                    aria-label="Search applicants"
+                    onChange={(event) => { setReceivingApplicantSearch(event.target.value); setReceivingApplicantPage(1) }}
+                    placeholder="Search student ID, applicant name, email, or course"
+                    type="search"
+                    value={receivingApplicantSearch}
+                  />
+                </label>
+                <select aria-label="Filter applicants by course" onChange={(event) => { setReceivingApplicantCourseFilter(event.target.value); setReceivingApplicantPage(1) }} value={receivingApplicantCourseFilter}>
+                  <option value="">All Courses</option>
+                  {receivingApplicantCourseOptions.map((course) => <option key={course} value={course}>{course}</option>)}
+                </select>
+                <select aria-label="Filter applicants by application year" onChange={(event) => { setReceivingApplicantYearFilter(event.target.value); setReceivingApplicantPage(1) }} value={receivingApplicantYearFilter}>
+                  <option value="">All Application Years</option>
+                  {receivingApplicantYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                </select>
+                <select aria-label="Filter applicants by status" onChange={(event) => { setReceivingApplicantStatusFilter(event.target.value); setReceivingApplicantPage(1) }} value={receivingApplicantStatusFilter}>
+                  <option value="">All Statuses</option>
+                  {receivingApplicantStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+                <button className="admin-button admin-button--secondary admin-receiving-reset" onClick={() => { setReceivingApplicantSearch(''); setReceivingApplicantCourseFilter(''); setReceivingApplicantYearFilter(''); setReceivingApplicantStatusFilter(''); setReceivingApplicantPage(1) }} type="button">
+                  <span className="material-symbols-outlined" aria-hidden="true">filter_alt_off</span>
+                  Reset Filters
+                </button>
+              </div>
+
+              <div className="admin-receiving-grantee-table-wrap">
+                <table className="admin-receiving-grantee-table">
+                  <thead>
+                    <tr>
+                      <th>Student ID</th><th>Applicant Name</th><th>Course</th><th>Year Level</th><th>Application Year</th><th>Status</th><th>Mobile Number</th><th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {applicants === undefined ? (
+                      <tr><td className="admin-receiving-empty" colSpan={8}>Loading applicants...</td></tr>
+                    ) : filteredReceivingApplicants.length === 0 ? (
+                      <tr><td className="admin-receiving-empty" colSpan={8}>{applicantRows.length ? 'No applicants match these filters.' : 'No applicant records are available yet.'}</td></tr>
+                    ) : currentReceivingApplicants.map((applicant) => {
+                      const applicantName = [applicant.firstName, applicant.middleName, applicant.lastName, applicant.extensionName].filter(Boolean).join(' ')
+                      return (
+                        <tr key={applicant._id}>
+                          <td>{applicant.studentId || '—'}</td>
+                          <td>{applicantName || '—'}</td>
+                          <td>{getApplicantCourse(applicant) || '—'}</td>
+                          <td>{applicant.year || applicant.yearLevelCode || '—'}</td>
+                          <td>{getApplicantApplicationYear(applicant) || '—'}</td>
+                          <td><AdminStatusBadge status={applicant.status} tone={getQuickActionStatusTone(applicant.status)} /></td>
+                          <td>{applicant.mobileNumber || '—'}</td>
+                          <td><button aria-label={`View details for applicant ${applicant.studentId || ''}`} className="admin-receiving-view-button" onClick={() => setViewReceivingApplicant(applicant)} type="button"><span className="material-symbols-outlined" aria-hidden="true">visibility</span>View</button></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <footer className="admin-receiving-applicants-footer">
+              <p>Showing <strong>{receivingApplicantShowingStart}–{receivingApplicantShowingEnd}</strong> of <strong>{filteredReceivingApplicants.length}</strong> applicants</p>
+              <div className="admin-pagination__buttons" aria-label="Applicant records pages">
+                <button aria-label="Previous page" disabled={activeReceivingApplicantPage <= 1} onClick={() => setReceivingApplicantPage((page) => Math.max(1, page - 1))} type="button">‹</button>
+                {receivingApplicantPaginationItems.map((pageItem, index) => typeof pageItem === 'string' ? (
+                  <span className="admin-pagination__ellipsis" key={`ellipsis-${index}`}>…</span>
+                ) : (
+                  <button aria-current={activeReceivingApplicantPage === pageItem ? 'page' : undefined} className={activeReceivingApplicantPage === pageItem ? 'admin-page-button--active' : ''} key={pageItem} onClick={() => setReceivingApplicantPage(pageItem)} type="button">{pageItem}</button>
+                ))}
+                <button aria-label="Next page" disabled={activeReceivingApplicantPage >= totalReceivingApplicantPages} onClick={() => setReceivingApplicantPage((page) => Math.min(totalReceivingApplicantPages, page + 1))} type="button">›</button>
+              </div>
+              <button className="admin-button admin-button--secondary admin-receiving-close" onClick={closeUnifastPortalModals} type="button">Close</button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {viewReceivingApplicant && (
+        <div className="admin-modal-overlay admin-receiving-details-overlay" role="dialog" aria-modal="true" aria-labelledby="admin-receiving-details-title">
+          <button aria-label="Close applicant details" className="admin-modal-backdrop" onClick={() => setViewReceivingApplicant(null)} type="button" />
+          <section className="admin-modal-card admin-receiving-details-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Applicant Record</p>
+                <h2 id="admin-receiving-details-title">Applicant Details</h2>
+                <p>Application information submitted to the Scholarship Office.</p>
+              </div>
+              <button aria-label="Close applicant details" className="admin-modal-close" onClick={() => setViewReceivingApplicant(null)} type="button">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="admin-receiving-details-body">
+              <div className="admin-receiving-details-grid">
+                {[
+                  ['Student ID', viewReceivingApplicant.studentId],
+                  ['Applicant Name', [viewReceivingApplicant.firstName, viewReceivingApplicant.middleName, viewReceivingApplicant.lastName, viewReceivingApplicant.extensionName].filter(Boolean).join(' ')],
+                  ['Course', getApplicantCourse(viewReceivingApplicant)],
+                  ['Year Level', viewReceivingApplicant.year || viewReceivingApplicant.yearLevelCode],
+                  ['Application Year', getApplicantApplicationYear(viewReceivingApplicant)],
+                  ['Status', viewReceivingApplicant.status],
+                  ['Gender', viewReceivingApplicant.gender],
+                  ['Birth Date', viewReceivingApplicant.birthDate],
+                  ['Mobile Number', viewReceivingApplicant.mobileNumber],
+                  ['Email Address', viewReceivingApplicant.emailAddress],
+                  ['Address', viewReceivingApplicant.address],
+                ].map(([label, value]) => (
+                  <div key={label}><span>{label}</span><strong>{value || '—'}</strong></div>
+                ))}
+              </div>
+
+              <section className="admin-receiving-documents" aria-labelledby="admin-receiving-documents-title">
+                <div className="admin-receiving-documents__heading">
+                  <div>
+                    <span className="material-symbols-outlined" aria-hidden="true">folder_open</span>
+                    <h3 id="admin-receiving-documents-title">Submitted ID Files</h3>
+                  </div>
+                  <p>Open a submitted PDF in a new tab.</p>
+                </div>
+                <div className="admin-receiving-documents-grid">
+                  {[
+                    { label: 'Birth Certificate (PSA)', url: viewReceivingApplicant.psaFileUrl, fileName: viewReceivingApplicant.psaFileName, icon: 'picture_as_pdf' },
+                    { label: 'School ID', url: viewReceivingApplicant.schoolIdFileUrl, fileName: viewReceivingApplicant.schoolIdFileName, icon: 'badge' },
+                    { label: 'COR / Study Load', url: viewReceivingApplicant.corFileUrl, fileName: viewReceivingApplicant.corFileName, icon: 'description' },
+                    { label: 'PWD ID', url: viewReceivingApplicant.pwdIdFileUrl, fileName: viewReceivingApplicant.pwdIdFileName, icon: 'accessible' },
+                    { label: '4Ps ID', url: viewReceivingApplicant.fourPsFileUrl, fileName: viewReceivingApplicant.fourPsFileName, icon: 'family_restroom' },
+                  ].map(({ fileName, icon, label, url }) => (
+                    <div className="admin-receiving-document-card" key={label}>
+                      <span className="admin-receiving-document-card__icon material-symbols-outlined" aria-hidden="true">{icon}</span>
+                      <div className="admin-receiving-document-card__copy">
+                        <strong>{label}</strong>
+                        <small>{url ? fileName || 'PDF document' : 'Not submitted'}</small>
+                      </div>
+                      {url ? (
+                        <a className="admin-receiving-document-view" href={url} rel="noopener noreferrer" target="_blank" aria-label={`View ${label}`}>
+                          <span className="material-symbols-outlined" aria-hidden="true">visibility</span>
+                          View
+                        </a>
+                      ) : (
+                        <span className="admin-receiving-document-missing">—</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+            <div className="admin-receiving-details-footer">
+              <button className="admin-button admin-button--secondary" onClick={() => setViewReceivingApplicant(null)} type="button">Done</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isApplicantDownloadOpen && (
+        <div
+          aria-labelledby="admin-applicant-download-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-applicant-download-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant download dialog"
+            className="admin-modal-backdrop"
+            disabled={isDownloadingCourseApplicants}
+            onClick={closeApplicantDownloadModal}
+            type="button"
+          />
+          <section className="admin-modal-card admin-applicant-download-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Receiving Applicants Information</p>
+                <h2 id="admin-applicant-download-title">Download Applicant Records</h2>
+                <p>Choose all courses or select the courses to include in your {activeApplicantYear} CSV.</p>
+              </div>
+              <button
+                aria-label="Close applicant download dialog"
+                className="admin-modal-close"
+                disabled={isDownloadingCourseApplicants}
+                onClick={closeApplicantDownloadModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-applicant-download-body">
+              {applicantCourseCounts === undefined ? (
+                <div className="admin-applicant-download-loading" role="status">
+                  <span className="material-symbols-outlined" aria-hidden="true">progress_activity</span>
+                  Loading live applicant counts for {activeApplicantYear}...
+                </div>
+              ) : (
+                <>
+                  <div className="admin-applicant-download-options">
+                    <label className={`admin-applicant-download-option${applicantDownloadMode === 'all' ? ' is-selected' : ''}`}>
+                      <input
+                        checked={applicantDownloadMode === 'all'}
+                        name="applicant-download-mode"
+                        onChange={() => { setApplicantDownloadMode('all'); setApplicantDownloadError('') }}
+                        type="radio"
+                        value="all"
+                      />
+                      <span className="admin-applicant-download-option__copy">
+                        <strong>All Courses</strong>
+                        <small>Include every course with applicant records.</small>
+                      </span>
+                      <span className="admin-applicant-download-count">{applicantCourseCounts.totalCount} records</span>
+                    </label>
+                    <label className={`admin-applicant-download-option${applicantDownloadMode === 'specific' ? ' is-selected' : ''}`}>
+                      <input
+                        checked={applicantDownloadMode === 'specific'}
+                        name="applicant-download-mode"
+                        onChange={() => { setApplicantDownloadMode('specific'); setApplicantDownloadError('') }}
+                        type="radio"
+                        value="specific"
+                      />
+                      <span className="admin-applicant-download-option__copy">
+                        <strong>Select Specific Courses</strong>
+                        <small>Choose one or more courses to include.</small>
+                      </span>
+                      <span className="admin-applicant-download-count">{selectedApplicantCourses.length} selected</span>
+                    </label>
+                  </div>
+
+                  {applicantDownloadMode === 'specific' && (
+                    <div className="admin-applicant-course-picker">
+                      <div className="admin-applicant-course-picker__toolbar">
+                        <label className="admin-applicant-course-search">
+                          <span className="material-symbols-outlined" aria-hidden="true">search</span>
+                          <input
+                            aria-label="Search courses"
+                            onChange={(event) => setApplicantCourseSearch(event.target.value)}
+                            placeholder="Search courses"
+                            type="search"
+                            value={applicantCourseSearch}
+                          />
+                        </label>
+                        <div>
+                          <button className="admin-link-button" onClick={() => setSelectedApplicantCourses(unifastPortalCourses)} type="button">Select all</button>
+                          <button className="admin-link-button" onClick={() => setSelectedApplicantCourses([])} type="button">Deselect all</button>
+                        </div>
+                      </div>
+                      <div className="admin-applicant-course-list">
+                        {visibleApplicantCourses.length ? visibleApplicantCourses.map((course) => (
+                          <label className="admin-applicant-course-item" key={course}>
+                            <input
+                              checked={selectedApplicantCourses.includes(course)}
+                              onChange={() => toggleApplicantCourse(course)}
+                              type="checkbox"
+                            />
+                            <span>{course}</span>
+                            <strong>{applicantCourseCounts.counts?.[course] ?? 0}</strong>
+                          </label>
+                        )) : (
+                          <p className="admin-applicant-course-empty">No courses match “{applicantCourseSearch}”.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="admin-applicant-download-summary">
+                    <span>Matching records for {activeApplicantYear}</span>
+                    <strong>{applicantDownloadCount.toLocaleString()}</strong>
+                  </div>
+                  {applicantDownloadCount === 0 && (
+                    <p className="admin-applicant-download-empty">No applicant records match this selection for {activeApplicantYear}.</p>
+                  )}
+                </>
+              )}
+              {applicantDownloadError && <p className="admin-applicant-download-error" role="alert">{applicantDownloadError}</p>}
+            </div>
+
+            <div className="admin-applicant-download-footer">
+              <button className="admin-button admin-button--secondary" disabled={isDownloadingCourseApplicants} onClick={closeApplicantDownloadModal} type="button">Cancel</button>
+              <button
+                className="admin-button admin-button--primary"
+                disabled={applicantCourseCounts === undefined || !applicantDownloadCount || (applicantDownloadMode === 'specific' && !selectedApplicantCourses.length) || isDownloadingCourseApplicants}
+                onClick={downloadSelectedApplicantRecords}
+                type="button"
+              >
+                <span className="material-symbols-outlined" aria-hidden="true">download</span>
+                {isDownloadingCourseApplicants ? 'Preparing CSV...' : `Download CSV (${applicantDownloadCount.toLocaleString()} Applicants)`}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isApplicantYearOpen && (
+        <div
+          aria-labelledby="admin-applicant-year-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant year selection"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              setIsApplicantYearOpen(false)
+              setCurrentApplicantYearPage(1)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Receive Applicants</p>
+                <h2 id="admin-applicant-year-title">Choose Application Year</h2>
+                <p>Select the year for the new applicant cycle. Counts and downloads will use this year.</p>
+              </div>
+
+              <button
+                aria-label="Close applicant year selection"
+                className="admin-modal-close"
+                onClick={() => {
+                  setIsApplicantYearOpen(false)
+                  setCurrentApplicantYearPage(1)
+                }}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-year-options">
+              {currentApplicantYearOptions.map((applicationYear) => (
+                <button
+                  className="admin-year-option"
+                  key={applicationYear}
+                  onClick={() => receiveApplicantsForYear(applicationYear)}
+                  type="button"
+                >
+                  <span>{applicationYear}</span>
+                  <strong>
+                    {
+                      applicantRows.filter((applicant) => {
+                        return getApplicantApplicationYear(applicant) === applicationYear
+                      }).length
+                    }{' '}
+                    existing applicants
+                  </strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="admin-pagination admin-applicant-year-pagination">
+              <p>
+                Showing <strong>{applicantYearShowingStart}</strong> to{' '}
+                <strong>{applicantYearShowingEnd}</strong> of{' '}
+                <strong>{applicantYearOptions.length}</strong> years
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous application years page"
+                  disabled={activeApplicantYearPage === 1 || applicantYearOptions.length === 0}
+                  onClick={() => goToApplicantYearPage(activeApplicantYearPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {applicantYearPaginationItems.map((pageItem) =>
+                  typeof pageItem === 'number' ? (
+                    <button
+                      className={
+                        activeApplicantYearPage === pageItem
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={applicantYearOptions.length === 0}
+                      key={pageItem}
+                      onClick={() => goToApplicantYearPage(pageItem)}
+                      type="button"
+                    >
+                      {pageItem}
+                    </button>
+                  ) : (
+                    <span className="admin-pagination__ellipsis" key={pageItem}>
+                      ...
+                    </span>
+                  ),
+                )}
+
+                <button
+                  aria-label="Next application years page"
+                  disabled={
+                    activeApplicantYearPage === totalApplicantYearPages ||
+                    applicantYearOptions.length === 0
+                  }
+                  onClick={() => goToApplicantYearPage(activeApplicantYearPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={() => {
+                  setIsApplicantYearOpen(false)
+                  setCurrentApplicantYearPage(1)
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedUnifastCourse && (
+        <div
+          aria-labelledby="admin-course-applicants-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close course applicants"
+            className="admin-modal-backdrop"
+            onClick={closeCourseApplicantModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-course-applicants-modal">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Course Applicants Information</p>
+                <h2 id="admin-course-applicants-title">Applicants Table</h2>
+                <p>
+                  {selectedUnifastCourse} applicants for {activeApplicantYear}.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close course applicants"
+                className="admin-modal-close"
+                onClick={closeCourseApplicantModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-course-applicants-toolbar">
+              <div className="admin-search-field admin-course-applicant-search">
+                <span className="material-symbols-outlined">search</span>
+                <input
+                  aria-label="Search course applicants"
+                  placeholder="Search applicant name, ID, email, mobile, status..."
+                  type="search"
+                  value={courseApplicantSearch}
+                  onChange={handleCourseApplicantSearchChange}
+                />
+              </div>
+
+              <div className="admin-course-applicants-toolbar__actions">
+                <button
+                  className="admin-button admin-button--danger"
+                  disabled={
+                    applicants === undefined ||
+                    selectedCourseApplicants.length === 0 ||
+                    isDeletingCourseApplicants ||
+                    isDownloadingCourseApplicants
+                  }
+                  onClick={() => setIsCourseApplicantDeleteConfirmOpen(true)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">delete_forever</span>
+                  Delete All Applicants
+                </button>
+
+                <button
+                  className="admin-button admin-button--primary"
+                  disabled={
+                    applicants === undefined ||
+                    selectedCourseApplicants.length === 0 ||
+                    isDeletingCourseApplicants ||
+                    isDownloadingCourseApplicants
+                  }
+                  onClick={() => exportUnifastCourseCsv(selectedUnifastCourse)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">download</span>
+                  Download All Applicants Info
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-course-applicants-summary">
+              <div>
+                <span>Total Course Applicants</span>
+                <strong>{selectedCourseApplicants.length}</strong>
+              </div>
+
+              <div>
+                <span>Filtered Results</span>
+                <strong>{filteredCourseApplicants.length}</strong>
+              </div>
+
+              <div>
+                <span>Rows Per Page</span>
+                <strong>{courseApplicantsPerPage}</strong>
+              </div>
+            </div>
+
+            <div className="admin-course-applicants-table-wrap">
+              <table className="admin-course-applicants-table">
+                <thead>
+                  <tr>
+                    <th>No.</th>
+                    <th>Student ID</th>
+                    <th>Applicant Name</th>
+                    <th>Gender</th>
+                    <th>Birth Date</th>
+                    <th>Year</th>
+                    <th>Mobile No.</th>
+                    <th>Email Address</th>
+                    <th>Address</th>
+                    <th>PSA</th>
+                    <th>School ID</th>
+                    <th>COR / Study Load</th>
+                    <th>PWD ID PDF</th>
+                    <th>4Ps ID PDF</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {applicants === undefined && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={17}>
+                        Loading applicants...
+                      </td>
+                    </tr>
+                  )}
+
+                  {applicants !== undefined && filteredCourseApplicants.length === 0 && (
+                    <tr>
+                      <td className="admin-empty-state" colSpan={17}>
+                        No applicants found for this course.
+                      </td>
+                    </tr>
+                  )}
+
+                  {currentCourseApplicants.map((applicant, index) => {
+                    const applicantName =
+                      [
+                        applicant.firstName,
+                        applicant.middleName,
+                        applicant.lastName,
+                        applicant.extensionName,
+                      ]
+                        .filter(Boolean)
+                        .join(' ') || 'No name'
+
+                    return (
+                      <tr key={applicant._id}>
+                        <td data-label="No.">{firstCourseApplicantIndex + index + 1}</td>
+                        <td data-label="Student ID">{applicant.studentId}</td>
+                        <td data-label="TES Details">
+                          <details className="admin-applicant-details">
+                            <summary>View details</summary>
+                            <dl>
+                              <div><dt>LRN</dt><dd>{applicant.lrn || 'Not provided'}</dd></div>
+                              <div><dt>PhilSys ID</dt><dd>{applicant.philSysIdNumber || 'Not provided'}</dd></div>
+                              <div><dt>4Ps ID</dt><dd>{applicant.fourPsIdNumber || 'Not provided'}</dd></div>
+                              <div><dt>Address</dt><dd>{[applicant.streetBarangay, applicant.cityMunicipality, applicant.province, applicant.region, applicant.zipCode].filter(Boolean).join(', ') || applicant.address}</dd></div>
+                              <div><dt>Father</dt><dd>{applicant.fatherInformationUnavailable ? 'Information unavailable' : [applicant.fatherFirstName, applicant.fatherMiddleName, applicant.fatherLastName].filter(Boolean).join(' ') || 'Not provided'}</dd></div>
+                              <div><dt>Mother</dt><dd>{applicant.motherInformationUnavailable ? 'Information unavailable' : [applicant.motherFirstName, applicant.motherMiddleName, applicant.motherLastName].filter(Boolean).join(' ') || 'Not provided'}</dd></div>
+                              <div><dt>Disability</dt><dd>{applicant.hasDisability ? `Yes${applicant.disabilityType ? ` — ${applicant.disabilityType}` : ''}` : 'No'}</dd></div>
+                              <div><dt>Solo parent dependent</dt><dd>{applicant.soloParentDependent === 1 ? 'Yes' : 'No'}</dd></div>
+                              <div><dt>First generation</dt><dd>{applicant.firstGeneration === 1 ? 'Yes' : 'No'}</dd></div>
+                              <div><dt>Indigenous Peoples member</dt><dd>{applicant.isIndigenous ? `Yes${applicant.indigenousGroup ? ` — ${applicant.indigenousGroup}` : ''}` : 'No'}</dd></div>
+                              <div><dt>Classification</dt><dd>{applicant.applicantClassification || 'TES Applicant'}</dd></div>
+                            </dl>
+                          </details>
+                        </td>
+                        <td className="admin-applicant-name" data-label="Applicant Name">
+                          {applicantName}
+                        </td>
+                        <td data-label="Gender">{applicant.gender}</td>
+                        <td data-label="Birth Date">{applicant.birthDate}</td>
+                        <td data-label="Year">{applicant.year}</td>
+                        <td data-label="Mobile No.">{applicant.mobileNumber}</td>
+                        <td className="admin-applicant-email" data-label="Email Address">
+                          {applicant.emailAddress}
+                        </td>
+                        <td className="admin-applicant-address" data-label="Address">
+                          {applicant.address}
+                        </td>
+                        <td data-label="PSA">
+                          {applicant.psaFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.psaFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">picture_as_pdf</span>
+                              View PSA
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="School ID">
+                          {applicant.schoolIdFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.schoolIdFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">badge</span>
+                              View School ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="COR / Study Load">
+                          {applicant.corFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.corFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">description</span>
+                              View COR
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">No file</span>
+                          )}
+                        </td>
+                        <td data-label="PWD ID PDF">
+                          {applicant.pwdIdFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.pwdIdFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">accessible</span>
+                              View PWD ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">Optional</span>
+                          )}
+                        </td>
+                        <td data-label="4Ps ID PDF">
+                          {applicant.fourPsFileUrl ? (
+                            <a
+                              className="admin-applicant-file-link"
+                              href={applicant.fourPsFileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <span className="material-symbols-outlined">family_restroom</span>
+                              View 4Ps ID
+                            </a>
+                          ) : (
+                            <span className="admin-applicant-file-missing">Optional</span>
+                          )}
+                        </td>
+                        <td data-label="Status">
+                          <AdminStatusBadge
+                            status={applicant.status}
+                            tone={getQuickActionStatusTone(applicant.status)}
+                          />
+                        </td>
+                        <td data-label="Submitted">{formatSubmittedAt(applicant.submittedAt)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-course-applicants-pagination">
+              <p>
+                Showing <strong>{courseApplicantShowingStart}</strong> to{' '}
+                <strong>{courseApplicantShowingEnd}</strong> of{' '}
+                <strong>{filteredCourseApplicants.length}</strong> applicants
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous course applicants page"
+                  disabled={
+                    activeCourseApplicantPage === 1 || filteredCourseApplicants.length === 0
+                  }
+                  onClick={() => goToCourseApplicantPage(activeCourseApplicantPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {courseApplicantPaginationItems.map((pageItem) =>
+                  typeof pageItem === 'number' ? (
+                    <button
+                      className={
+                        activeCourseApplicantPage === pageItem
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={filteredCourseApplicants.length === 0}
+                      key={pageItem}
+                      onClick={() => goToCourseApplicantPage(pageItem)}
+                      type="button"
+                    >
+                      {pageItem}
+                    </button>
+                  ) : (
+                    <span className="admin-pagination__ellipsis" key={pageItem}>
+                      ...
+                    </span>
+                  ),
+                )}
+
+                <button
+                  aria-label="Next course applicants page"
+                  disabled={
+                    activeCourseApplicantPage === totalCourseApplicantPages ||
+                    filteredCourseApplicants.length === 0
+                  }
+                  onClick={() => goToCourseApplicantPage(activeCourseApplicantPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeCourseApplicantModal}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isCourseApplicantDeleteConfirmOpen && selectedUnifastCourse && (
+        <div
+          aria-labelledby="admin-course-delete-confirm-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant deletion warning"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDeletingCourseApplicants) setIsCourseApplicantDeleteConfirmOpen(false)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card">
+            <div className="admin-confirm-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">warning</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Move to Archive</p>
+              <h2 id="admin-course-delete-confirm-title">Delete all course applications?</h2>
+              <p>
+                Are you sure you want to delete all{' '}
+                <strong>{selectedCourseApplicants.length}</strong> applications for{' '}
+                <strong>{selectedUnifastCourse}</strong>, application year{' '}
+                <strong>{activeApplicantYear}</strong>?
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__notice">
+              <span className="material-symbols-outlined">report</span>
+              Applicant records will move to the archive. Their uploaded PDFs stay available so
+              the records can be restored.
+            </div>
+
+            <div className="admin-confirm-card__actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingCourseApplicants}
+                onClick={() => setIsCourseApplicantDeleteConfirmOpen(false)}
+                type="button"
+              >
+                No, Keep Applications
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isDeletingCourseApplicants}
+                onClick={handleDeleteCourseApplicants}
+                type="button"
+              >
+                {isDeletingCourseApplicants ? 'Deleting...' : 'Yes, Delete All'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isDownloadingCourseApplicants && (
+        <div
+          aria-labelledby="admin-course-download-progress-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <section className="admin-modal-card admin-modal-card--compact admin-progress-card">
+            <div className="admin-progress-icon" aria-hidden="true">
+              <span className="material-symbols-outlined">downloading</span>
+            </div>
+            <p className="admin-modal-kicker">Course Applicants Information</p>
+            <h2 id="admin-course-download-progress-title">Preparing Applicant Download</h2>
+            <p>Creating the CSV file for {selectedUnifastCourse}.</p>
+
+            <div
+              aria-label={`Download progress ${courseApplicantDownloadProgress}%`}
+              aria-valuemax="100"
+              aria-valuemin="0"
+              aria-valuenow={courseApplicantDownloadProgress}
+              className="admin-progress-track"
+              role="progressbar"
+            >
+              <span style={{ width: `${courseApplicantDownloadProgress}%` }} />
+            </div>
+            <strong className="admin-progress-value">{courseApplicantDownloadProgress}%</strong>
+          </section>
+        </div>
+      )}
+
+      {courseApplicantSuccess && (
+        <div
+          aria-labelledby="admin-course-success-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close applicant action success message"
+            className="admin-modal-backdrop"
+            onClick={() => setCourseApplicantSuccess(null)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card admin-success-card">
+            <div className="admin-success-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">check_circle</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Completed Successfully</p>
+              <h2 id="admin-course-success-title">
+                {courseApplicantSuccess.type === 'download'
+                  ? 'Applicant download is ready'
+                  : 'Applications deleted'}
+              </h2>
+              <p>
+                {courseApplicantSuccess.count} applicant{' '}
+                {courseApplicantSuccess.count === 1 ? 'record' : 'records'} for{' '}
+                <strong>{courseApplicantSuccess.course}</strong>, application year{' '}
+                <strong>{courseApplicantSuccess.year}</strong>{' '}
+                {courseApplicantSuccess.type === 'download'
+                  ? 'were added to the CSV file.'
+                  : 'were deleted successfully.'}
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__actions admin-success-card__actions">
+              <button
+                className="admin-button admin-button--primary"
+                onClick={() => setCourseApplicantSuccess(null)}
+                type="button"
+              >
+                Done
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isSchoolIdDownloadOpen && (
+        <div
+          aria-labelledby="admin-school-id-download-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID download modal"
+            className="admin-modal-backdrop"
+            onClick={closeSchoolIdDownloadModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">School ID Files</p>
+                <h2 id="admin-school-id-download-title">Choose School Year</h2>
+                <p>Download all uploaded School ID files for a specific School Year.</p>
+              </div>
+
+              <button
+                aria-label="Close School ID download"
+                className="admin-modal-close"
+                disabled={isDownloadingSchoolIdFiles}
+                onClick={closeSchoolIdDownloadModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {currentSchoolIdDownloads.map(({ fileCount, schoolYear }) => {
+                return (
+                  <button
+                    className="admin-school-year-button"
+                    disabled={isDownloadingSchoolIdFiles}
+                    key={schoolYear}
+                    onClick={() => openSchoolIdBatchDownloadModal(schoolYear)}
+                    type="button"
+                  >
+                    <span>{schoolYear}</span>
+                    <strong>
+                      {isDownloadingSchoolIdFiles
+                        ? 'Preparing...'
+                        : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
+                    </strong>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="admin-pagination admin-school-id-pagination">
+              <p>
+                Showing <strong>{schoolIdDownloadShowingStart}</strong>-
+                <strong>{schoolIdDownloadShowingEnd}</strong> of{' '}
+                <strong>{schoolIdDownloadRows.length}</strong> school years
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous School ID page"
+                  disabled={activeSchoolIdDownloadPage === 1 || isDownloadingSchoolIdFiles}
+                  onClick={() => goToSchoolIdDownloadPage(activeSchoolIdDownloadPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalSchoolIdDownloadPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={activeSchoolIdDownloadPage === pageNumber ? 'page' : undefined}
+                      className={
+                        activeSchoolIdDownloadPage === pageNumber
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={isDownloadingSchoolIdFiles}
+                      key={pageNumber}
+                      onClick={() => goToSchoolIdDownloadPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  aria-label="Next School ID page"
+                  disabled={
+                    activeSchoolIdDownloadPage === totalSchoolIdDownloadPages ||
+                    isDownloadingSchoolIdFiles
+                  }
+                  onClick={() => goToSchoolIdDownloadPage(activeSchoolIdDownloadPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDownloadingSchoolIdFiles}
+                onClick={closeSchoolIdDownloadModal}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedSchoolIdDownloadYear && (
+        <div
+          aria-labelledby="admin-school-id-batch-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID batch modal"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDownloadingSchoolIdFiles) setSelectedSchoolIdDownloadYear('')
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">School ID Files</p>
+                <h2 id="admin-school-id-batch-title">Choose Batch</h2>
+                <p>
+                  Download uploaded School ID files for {selectedSchoolIdDownloadYear} by batch.
+                  File names include Student ID, last name, first name, middle name, and batch no.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close School ID batch download"
+                className="admin-modal-close"
+                disabled={isDownloadingSchoolIdFiles}
+                onClick={() => setSelectedSchoolIdDownloadYear('')}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-year-downloads">
+              {currentSchoolIdBatchDownloads.map(({ batchId, fileCount }) => (
+                <button
+                  className="admin-school-year-button"
+                  disabled={isDownloadingSchoolIdFiles || isDeletingSchoolIdFiles}
+                  key={batchId}
+                  onClick={() => openSchoolIdBatchActionModal(batchId, fileCount)}
+                  type="button"
+                >
+                  <span>{batchId}</span>
+                  <strong>{fileCount} {fileCount === 1 ? 'file' : 'files'}</strong>
+                </button>
+              ))}
+
+              {schoolIdBatchDownloadRows.length === 0 && (
+                <div className="admin-modal-empty-state">
+                  No batches with uploaded School ID files were found for this School Year.
+                </div>
+              )}
+            </div>
+
+            <div className="admin-pagination admin-school-id-pagination">
+              <p>
+                Showing <strong>{schoolIdBatchDownloadShowingStart}</strong>-
+                <strong>{schoolIdBatchDownloadShowingEnd}</strong> of{' '}
+                <strong>{schoolIdBatchDownloadRows.length}</strong> batches
+              </p>
+
+              <div className="admin-pagination__buttons">
+                <button
+                  aria-label="Previous School ID batch page"
+                  disabled={activeSchoolIdBatchDownloadPage === 1 || isDownloadingSchoolIdFiles}
+                  onClick={() => goToSchoolIdBatchDownloadPage(activeSchoolIdBatchDownloadPage - 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+
+                {Array.from({ length: totalSchoolIdBatchDownloadPages }, (_, index) => {
+                  const pageNumber = index + 1
+
+                  return (
+                    <button
+                      aria-current={
+                        activeSchoolIdBatchDownloadPage === pageNumber ? 'page' : undefined
+                      }
+                      className={
+                        activeSchoolIdBatchDownloadPage === pageNumber
+                          ? 'admin-page-button--active'
+                          : undefined
+                      }
+                      disabled={isDownloadingSchoolIdFiles}
+                      key={pageNumber}
+                      onClick={() => goToSchoolIdBatchDownloadPage(pageNumber)}
+                      type="button"
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                })}
+
+                <button
+                  aria-label="Next School ID batch page"
+                  disabled={
+                    activeSchoolIdBatchDownloadPage === totalSchoolIdBatchDownloadPages ||
+                    isDownloadingSchoolIdFiles
+                  }
+                  onClick={() => goToSchoolIdBatchDownloadPage(activeSchoolIdBatchDownloadPage + 1)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDownloadingSchoolIdFiles}
+                onClick={() => setSelectedSchoolIdDownloadYear('')}
+                type="button"
+              >
+                Back
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedSchoolIdBatchAction && !isSchoolIdDeleteConfirmOpen && !isDownloadingSchoolIdFiles && (
+        <div
+          aria-labelledby="admin-school-id-batch-action-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID batch actions"
+            className="admin-modal-backdrop"
+            onClick={closeSchoolIdBatchActionModal}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--compact">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Batch {selectedSchoolIdBatchAction.batchId}</p>
+                <h2 id="admin-school-id-batch-action-title">Manage School ID Files</h2>
+                <p>
+                  {selectedSchoolIdBatchAction.fileCount}{' '}
+                  {selectedSchoolIdBatchAction.fileCount === 1 ? 'file' : 'files'} for School Year{' '}
+                  {selectedSchoolIdBatchAction.schoolYear}.
+                </p>
+              </div>
+
+              <button
+                aria-label="Close School ID batch actions"
+                className="admin-modal-close"
+                onClick={closeSchoolIdBatchActionModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-school-id-actions">
+              <button
+                className="admin-school-id-action admin-school-id-action--download"
+                onClick={() =>
+                  downloadSchoolIdFiles(
+                    selectedSchoolIdBatchAction.schoolYear,
+                    selectedSchoolIdBatchAction.batchId,
+                  )
+                }
+                type="button"
+              >
+                <span className="material-symbols-outlined">folder_zip</span>
+                <span>
+                  <strong>Download All IDs</strong>
+                  <small>Create one ZIP file for this batch.</small>
+                </span>
+              </button>
+
+              <button
+                className="admin-school-id-action admin-school-id-action--delete"
+                onClick={() => setIsSchoolIdDeleteConfirmOpen(true)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">delete_forever</span>
+                <span>
+                  <strong>Delete All IDs</strong>
+                  <small>Remove the Drive files and clear their Convex links.</small>
+                </span>
+              </button>
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={closeSchoolIdBatchActionModal}
+                type="button"
+              >
+                Back
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isSchoolIdDeleteConfirmOpen && selectedSchoolIdBatchAction && (
+        <div
+          aria-labelledby="admin-school-id-delete-confirm-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID delete warning"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!isDeletingSchoolIdFiles) setIsSchoolIdDeleteConfirmOpen(false)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card">
+            <div className="admin-confirm-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">warning</span>
+            </div>
+
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Move to Archive</p>
+              <h2 id="admin-school-id-delete-confirm-title">Delete all IDs in this batch?</h2>
+              <p>
+                Are you sure you want to delete all{' '}
+                <strong>{selectedSchoolIdBatchAction.fileCount}</strong> School ID files from Batch{' '}
+                <strong>{selectedSchoolIdBatchAction.batchId}</strong>?
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__notice">
+              <span className="material-symbols-outlined">report</span>
+              The file links will move to the archive and can be restored. The Drive PDFs remain
+              available until their archive entries are permanently deleted.
+            </div>
+
+            <div className="admin-confirm-card__actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isDeletingSchoolIdFiles}
+                onClick={() => setIsSchoolIdDeleteConfirmOpen(false)}
+                type="button"
+              >
+                No, Keep Files
+              </button>
+
+              <button
+                className="admin-button admin-button--danger"
+                disabled={isDeletingSchoolIdFiles}
+                onClick={handleDeleteSchoolIdBatch}
+                type="button"
+              >
+                {isDeletingSchoolIdFiles ? 'Deleting...' : 'Yes, Delete All'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isDownloadingSchoolIdFiles && selectedSchoolIdBatchAction && (
+        <div
+          aria-labelledby="admin-school-id-progress-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <section className="admin-modal-card admin-modal-card--compact admin-progress-card">
+            <div className="admin-progress-icon" aria-hidden="true">
+              <span className="material-symbols-outlined">downloading</span>
+            </div>
+            <p className="admin-modal-kicker">School ID Files</p>
+            <h2 id="admin-school-id-progress-title">Preparing Batch Download</h2>
+            <p>
+              Downloading Batch {selectedSchoolIdBatchAction.batchId} files and creating the ZIP.
+            </p>
+
+            <div
+              aria-label={`Download progress ${schoolIdDownloadProgress}%`}
+              aria-valuemax="100"
+              aria-valuemin="0"
+              aria-valuenow={schoolIdDownloadProgress}
+              className="admin-progress-track"
+              role="progressbar"
+            >
+              <span style={{ width: `${schoolIdDownloadProgress}%` }} />
+            </div>
+            <strong className="admin-progress-value">{schoolIdDownloadProgress}%</strong>
+          </section>
+        </div>
+      )}
+
+      {schoolIdFileSuccess && (
+        <div
+          aria-labelledby="admin-school-id-success-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-confirm-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close School ID success message"
+            className="admin-modal-backdrop"
+            onClick={() => setSchoolIdFileSuccess(null)}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-confirm-card admin-success-card">
+            <div className="admin-success-card__icon" aria-hidden="true">
+              <span className="material-symbols-outlined">check_circle</span>
+            </div>
+            <div className="admin-confirm-card__copy">
+              <p className="admin-modal-kicker">Completed Successfully</p>
+              <h2 id="admin-school-id-success-title">
+                {schoolIdFileSuccess.type === 'download'
+                  ? 'Batch download is ready'
+                  : 'Batch ID files deleted'}
+              </h2>
+              <p>
+                {schoolIdFileSuccess.count} School ID{' '}
+                {schoolIdFileSuccess.count === 1 ? 'file' : 'files'} for Batch{' '}
+                <strong>{schoolIdFileSuccess.batchId}</strong>, School Year{' '}
+                <strong>{schoolIdFileSuccess.schoolYear}</strong>{' '}
+                {schoolIdFileSuccess.type === 'download'
+                  ? 'were added to the ZIP file.'
+                  : 'were deleted successfully.'}
+              </p>
+            </div>
+
+            <div className="admin-confirm-card__actions admin-success-card__actions">
+              <button
+                className="admin-button admin-button--primary"
+                onClick={() => setSchoolIdFileSuccess(null)}
+                type="button"
+              >
+                Done
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedGranteeRecord && (
+        <div
+          aria-labelledby="admin-edit-record-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close edit record modal"
+            className="admin-modal-backdrop"
+            onClick={closeEditModal}
+            type="button"
+          />
+
+          <form className="admin-modal-card admin-modal-card--edit" onSubmit={handleSaveEdit}>
+            <div className="admin-modal-header admin-modal-header--edit">
+              <div>
+                <p className="admin-modal-kicker">Edit Record</p>
+                <h2 id="admin-edit-record-title">Edit Grantee Information</h2>
+                <p>Update the selected grantee record details.</p>
+              </div>
+
+              <button
+                aria-label="Close edit record"
+                className="admin-modal-close"
+                disabled={isSavingEdit}
+                onClick={closeEditModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-edit-summary">
+              <div className="admin-edit-summary__icon">
+                <span className="material-symbols-outlined">person</span>
+              </div>
+
+              <div className="admin-edit-summary__text">
+                <span>Selected Record</span>
+                <strong>{selectedGranteeRecord.studentId || 'No Student ID'}</strong>
+                <AdminStatusBadge
+                  status={selectedGranteeRecord.status}
+                  tone={getQuickActionStatusTone(selectedGranteeRecord.status)}
+                />
+              </div>
+            </div>
+
+            <div className="admin-record-details admin-record-details--responsive">
+              <label>
+                <span>No.</span>
+                <input value={editGranteeForm?.no ?? ''} onChange={handleEditFieldChange('no')} />
+              </label>
+
+              <label>
+                <span>TES Award Number</span>
+                <input
+                  value={editGranteeForm?.tesAwardNumber ?? ''}
+                  onChange={handleEditFieldChange('tesAwardNumber')}
+                />
+              </label>
+
+              <label>
+                <span>Student ID</span>
+                <input
+                  value={editGranteeForm?.studentId ?? ''}
+                  onChange={handleEditFieldChange('studentId')}
+                />
+              </label>
+
+              <label>
+                <span>Last Name</span>
+                <input
+                  value={editGranteeForm?.lastName ?? ''}
+                  onChange={handleEditFieldChange('lastName')}
+                />
+              </label>
+
+              <label>
+                <span>First Name</span>
+                <input
+                  value={editGranteeForm?.firstName ?? ''}
+                  onChange={handleEditFieldChange('firstName')}
+                />
+              </label>
+
+              <label>
+                <span>MI.</span>
+                <input
+                  value={editGranteeForm?.middleInitial ?? ''}
+                  onChange={handleEditFieldChange('middleInitial')}
+                />
+              </label>
+
+              <label>
+                <span>Batch No.</span>
+                <input
+                  value={editGranteeForm?.batchId ?? ''}
+                  onChange={handleEditFieldChange('batchId')}
+                />
+              </label>
+
+              <label>
+                <span>Status</span>
+                <select
+                  value={editGranteeForm?.status ?? ''}
+                  onChange={handleEditFieldChange('status')}
+                >
+                  <option value="">Select Status</option>
+                  <option>Grantee</option>
+                  <option>Validated</option>
+                  <option>Pending</option>
+                  <option>Rejected</option>
+                </select>
+              </label>
+
+              <label>
+                <span>Semester</span>
+                <input
+                  value={editGranteeForm?.semester ?? ''}
+                  onChange={handleEditFieldChange('semester')}
+                />
+              </label>
+
+              <label>
+                <span>School Year</span>
+                <input
+                  value={editGranteeForm?.schoolYear ?? ''}
+                  onChange={handleEditFieldChange('schoolYear')}
+                />
+              </label>
+            </div>
+
+            {editMessage && <p className="admin-edit-message">{editMessage}</p>}
+
+            <div className="admin-upload-actions admin-upload-actions--sticky">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isSavingEdit}
+                onClick={closeEditModal}
+                type="button"
+              >
+                Cancel
+              </button>
+
+              <button className="admin-button admin-button--primary" disabled={isSavingEdit} type="submit">
+                {isSavingEdit ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {isAddRecordOpen && (
+        <div
+          aria-labelledby="admin-add-record-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close add record modal"
+            className="admin-modal-backdrop"
+            onClick={closeAddRecordModal}
+            type="button"
+          />
+
+          <form className="admin-modal-card" onSubmit={handleUploadSubmit}>
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">Add New Record</p>
+                <h2 id="admin-add-record-title">Upload CSV File</h2>
+                <p>Use the required template format before uploading grantee records.</p>
+              </div>
+
+              <button
+                aria-label="Close add record"
+                className="admin-modal-close"
+                disabled={isUploadingRecords}
+                onClick={closeAddRecordModal}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="admin-upload-body">
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={downloadGranteeTemplate}
+                type="button"
+              >
+                <span className="material-symbols-outlined">download</span>
+                Download CSV Template
+              </button>
+
+              <label className="admin-upload-dropzone">
+                <span className="material-symbols-outlined">upload_file</span>
+                <strong>{selectedUploadFile ? selectedUploadFile.name : 'Choose CSV file'}</strong>
+                <span>Accepted format: downloaded CSV template</span>
+                <input
+                  accept=".csv,text/csv"
+                  disabled={isUploadingRecords}
+                  onChange={handleUploadFileChange}
+                  type="file"
+                />
+              </label>
+
+              <div className="admin-template-preview" aria-label="CSV template headers">
+                {granteeTemplateHeaders.map((header) => (
+                  <span key={header}>{header}</span>
+                ))}
+              </div>
+
+              {uploadMessage && <p className="admin-upload-message">{uploadMessage}</p>}
+            </div>
+
+            <div className="admin-upload-actions">
+              <button
+                className="admin-button admin-button--secondary"
+                disabled={isUploadingRecords}
+                onClick={closeAddRecordModal}
+                type="button"
+              >
+                Cancel
+              </button>
+
+              <button
+                className="admin-button admin-button--primary"
+                disabled={isUploadingRecords}
+                type="submit"
+              >
+                <span className="material-symbols-outlined">upload</span>
+                {isUploadingRecords ? 'Uploading...' : 'Upload'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {isUserManagementOpen && (
+        <div
+          aria-labelledby="admin-user-management-title"
+          aria-modal="true"
+          className="admin-modal-overlay"
+          role="dialog"
+        >
+          <button
+            aria-label="Close user management modal"
+            className="admin-modal-backdrop"
+            onClick={() => {
+              if (!selectedUser && !userToDelete) setIsUserManagementOpen(false)
+            }}
+            type="button"
+          />
+
+          <section className="admin-modal-card admin-modal-card--wide admin-modal-card--users">
+            <div className="admin-modal-header">
+              <div>
+                <p className="admin-modal-kicker">User Management</p>
+                <h2 id="admin-user-management-title">Student Accounts</h2>
+                <p>Search and manage registered student account details.</p>
+              </div>
+
+              <button
+                aria-label="Close user management"
+                className="admin-modal-close"
+                onClick={() => setIsUserManagementOpen(false)}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {userMessage && <p className="admin-user-message" role="status">{userMessage}</p>}
+
+            <div className="admin-search-field admin-user-search">
+              <span className="material-symbols-outlined">search</span>
+              <input
+                aria-label="Search student accounts"
+                onChange={(event) => {
+                  setUserSearchQuery(event.target.value)
+                  setCurrentUserPage(1)
+                }}
+                placeholder="Search Student ID, email, phone, or Facebook link"
+                type="search"
+                value={userSearchQuery}
+              />
+            </div>
+
+            <div className="admin-quick-actions-table-wrap admin-users-table-wrap">
+              <table className="admin-quick-actions-table admin-users-table">
+                <thead>
+                  <tr>
+                    <th>No.</th>
+                    <th>Student ID</th>
+                    <th>Email Address</th>
+                    <th>Phone Number</th>
+                    <th>Facebook Profile</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {studentAccounts === undefined && (
+                    <tr><td className="admin-empty-state" colSpan={6}>Loading users...</td></tr>
+                  )}
+                  {studentAccounts !== undefined && filteredStudentAccountRows.length === 0 && (
+                    <tr><td className="admin-empty-state" colSpan={6}>No student accounts found.</td></tr>
+                  )}
+                  {currentUsers.map((user, index) => (
+                    <tr key={user.id}>
+                      <td data-label="No.">{firstUserIndex + index + 1}</td>
+                      <td data-label="Student ID">{user.schoolId || 'Not provided'}</td>
+                      <td data-label="Email Address">{user.email}</td>
+                      <td data-label="Phone Number">{user.phoneNumber || 'Not provided'}</td>
+                      <td data-label="Facebook Profile">
+                        {user.facebookProfileUrl ? (
+                          <a
+                            className="admin-user-facebook-link"
+                            href={user.facebookProfileUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            View Profile
+                          </a>
+                        ) : (
+                          'Not provided'
+                        )}
+                      </td>
+                      <td data-label="Actions">
+                        <div className="admin-user-actions">
+                          <button aria-label={`Edit ${user.email}`} onClick={() => openEditUser(user)} type="button">
+                            <span className="material-symbols-outlined">edit</span>
+                          </button>
+                          <button
+                            aria-label={`Delete ${user.email}`}
+                            className="admin-user-action--delete"
+                            onClick={() => { setUserToDelete(user); setUserMessage('') }}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined">delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="admin-pagination admin-user-pagination">
+              <p>Showing <strong>{userShowingStart}</strong> to <strong>{userShowingEnd}</strong> of <strong>{filteredStudentAccountRows.length}</strong> users</p>
+              <div className="admin-pagination__buttons">
+                <button aria-label="Previous users page" disabled={activeUserPage === 1 || filteredStudentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage - 1)} type="button">
+                  <span className="material-symbols-outlined">chevron_left</span>
+                </button>
+                {userPaginationItems.map((pageItem) => typeof pageItem === 'string' ? (
+                  <span className="admin-pagination__ellipsis" key={pageItem}>...</span>
+                ) : (
+                  <button className={activeUserPage === pageItem ? 'admin-page-button--active' : undefined} disabled={filteredStudentAccountRows.length === 0} key={pageItem} onClick={() => setCurrentUserPage(pageItem)} type="button">{pageItem}</button>
+                ))}
+                <button aria-label="Next users page" disabled={activeUserPage === totalUserPages || filteredStudentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage + 1)} type="button">
+                  <span className="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedUser && (
+        <div aria-labelledby="admin-edit-user-title" aria-modal="true" className="admin-modal-overlay admin-modal-overlay--nested" role="dialog">
+          <button aria-label="Close edit user modal" className="admin-modal-backdrop" onClick={() => setSelectedUser(null)} type="button" />
+          <section className="admin-modal-card admin-modal-card--user-form">
+            <div className="admin-modal-header">
+              <div><p className="admin-modal-kicker">Edit User</p><h2 id="admin-edit-user-title">Update Account</h2></div>
+              <button aria-label="Close edit user" className="admin-modal-close" onClick={() => setSelectedUser(null)} type="button"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <form className="admin-user-form" onSubmit={handleUpdateUser}>
+              <label>Email Address<input autoComplete="email" name="email" onChange={handleUserFormChange} required type="email" value={userForm.email} /></label>
+              <label>Phone Number<input autoComplete="tel" name="phoneNumber" onChange={handleUserFormChange} placeholder="09123456789" required type="tel" value={userForm.phoneNumber} /></label>
+              {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
+              <div className="admin-user-form__actions">
+                <button className="admin-button admin-button--secondary" onClick={() => setSelectedUser(null)} type="button">Cancel</button>
+                <button className="admin-button admin-button--primary" disabled={isSavingUser} type="submit">{isSavingUser ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {userToDelete && (
+        <div aria-labelledby="admin-delete-user-title" aria-modal="true" className="admin-modal-overlay admin-modal-overlay--nested" role="alertdialog">
+          <button aria-label="Cancel deleting user" className="admin-modal-backdrop" onClick={() => setUserToDelete(null)} type="button" />
+          <section className="admin-modal-card admin-modal-card--confirm">
+            <div className="admin-delete-user-icon"><span className="material-symbols-outlined">delete</span></div>
+            <h2 id="admin-delete-user-title">Delete user account?</h2>
+            <p>This moves <strong>{userToDelete.email}</strong> to the archive, where the account can be restored.</p>
+            {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
+            <div className="admin-user-form__actions">
+              <button className="admin-button admin-button--secondary" onClick={() => setUserToDelete(null)} type="button">Cancel</button>
+              <button className="admin-button admin-button--danger" disabled={isDeletingUser} onClick={handleDeleteUser} type="button">{isDeletingUser ? 'Deleting...' : 'Delete User'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isQuickActionsOpen && (
+        <div
+          aria-labelledby="admin-quick-actions-title"
+          aria-modal="true"
+          className="admin-modal-overlay admin-modal-overlay--support"
+          role="dialog"
+        >
+          <button
+            aria-label="Close Student Support modal"
+            className="admin-modal-backdrop"
+            onClick={() => setIsQuickActionsOpen(false)}
+            type="button"
+          />
+          <section className="admin-modal-card admin-modal-card--wide admin-modal-card--quick-actions">
+            <StudentSupport
+              sessionToken={adminSession?.sessionToken}
+              requestCount={quickActionRows.length}
+              onExport={exportQuickActionResponsesCsv}
+              onClose={() => setIsQuickActionsOpen(false)}
+            />
+          </section>
+        </div>
+      )}
+      <div className="admin-scroll-progress" style={{ '--admin-scroll': scrollProgress }} />
+    </div>
+  )
+}
+
+const adminStyles = `
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+
+.admin-page {
+  --admin-background: #fcf9f8;
+  --admin-surface: #ffffff;
+  --admin-surface-low: #f7f2ef;
+  --admin-surface-mid: #f0e7e1;
+  --admin-text: #1c1917;
+  --admin-muted: #665348;
+  --admin-primary: #f97316;
+  --admin-primary-dark: #9d4300;
+  --admin-outline: #e7cfc2;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(249, 115, 22, 0.14), transparent 34rem),
+    var(--admin-background);
+  color: var(--admin-text);
+  font-family: 'Hanken Grotesk', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.admin-page *,
+.admin-page *::before,
+.admin-page *::after {
+  box-sizing: border-box;
+}
+
+.admin-page .material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+
+.admin-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid rgba(231, 207, 194, 0.88);
+  background: rgba(255, 255, 255, 0.92);
+  padding: 12px clamp(16px, 3vw, 32px);
+  box-shadow: 0 8px 24px rgba(28, 25, 23, 0.06);
+  backdrop-filter: blur(14px);
+}
+
+.brand-lockup {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  display: flex;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(224, 192, 177, 0.9);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(28, 25, 23, 0.08);
+}
+
+.brand-mark__image {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+}
+
+.brand-copy {
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.brand-title,
+.brand-subtitle {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand-title {
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.brand-subtitle {
+  margin-top: 3px;
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.admin-button,
+.admin-filter-button,
+.admin-pagination__buttons button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.admin-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-button:hover {
+  transform: translateY(-1px);
+}
+
+.admin-button--primary {
+  background: var(--admin-primary);
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(249, 115, 22, 0.22);
+}
+
+.admin-button--primary:hover {
+  background: #c2410c;
+}
+
+.admin-button--secondary,
+.admin-button--ghost,
+.admin-button--admin {
+  border: 1px solid var(--admin-outline);
+  background: #ffffff;
+  color: var(--admin-text);
+}
+
+.admin-button--danger {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.admin-button--secondary:hover,
+.admin-button--ghost:hover,
+.admin-button--admin:hover {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+}
+
+.admin-button--danger:hover {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.admin-button:disabled,
+.admin-modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.admin-main {
+  min-height: calc(100vh - 72px);
+  padding: clamp(24px, 4vw, 40px) clamp(14px, 3vw, 32px) 40px;
+}
+
+.admin-container {
+  width: min(100%, 1440px);
+  margin: 0 auto;
+}
+
+.admin-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.admin-heading__actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(190px, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  width: min(100%, 1068px);
+}
+
+.admin-heading__actions .admin-button {
+  width: 100%;
+  min-height: 62px;
+  padding: 13px 22px;
+}
+
+.admin-heading__actions .material-symbols-outlined {
+  font-size: 25px;
+}
+
+.admin-heading__copy {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-eyebrow {
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--admin-primary-dark);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  padding: 6px 10px;
+  text-transform: uppercase;
+}
+
+.admin-heading h1,
+.admin-heading p,
+.admin-pagination p,
+.admin-table-header h2,
+.admin-table-header p {
+  margin: 0;
+}
+
+.admin-heading h1 {
+  font-size: clamp(30px, 5vw, 46px);
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.admin-heading p {
+  max-width: 700px;
+  color: var(--admin-muted);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.admin-stat-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(231, 207, 194, 0.9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 18px;
+  box-shadow: 0 12px 28px rgba(28, 25, 23, 0.05);
+}
+
+.admin-stat-card span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-stat-card strong {
+  color: var(--admin-text);
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.admin-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.8fr) repeat(3, minmax(140px, 0.7fr)) 48px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(231, 207, 194, 0.9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 14px;
+  box-shadow: 0 12px 28px rgba(28, 25, 23, 0.05);
+}
+
+.admin-search-field {
+  position: relative;
+  min-width: 0;
+}
+
+.admin-search-field .material-symbols-outlined {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  color: var(--admin-muted);
+  transform: translateY(-50%);
+}
+
+.admin-search-field input,
+.admin-filter-panel select {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--admin-text);
+  font: inherit;
+  font-size: 14px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-search-field input {
+  padding: 10px 14px 10px 46px;
+}
+
+.admin-filter-panel select {
+  padding: 10px 14px;
+}
+
+.admin-search-field input:focus,
+.admin-filter-panel select:focus {
+  border-color: var(--admin-primary);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.16);
+}
+
+.admin-filter-button {
+  display: inline-flex;
+  width: 48px;
+  height: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: var(--admin-surface-low);
+  color: var(--admin-muted);
+}
+
+.admin-filter-button:hover {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+}
+
+.admin-table-card {
+  overflow: hidden;
+  border: 1px solid rgba(231, 207, 194, 0.95);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 38px rgba(28, 25, 23, 0.08);
+}
+
+.admin-table-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: linear-gradient(135deg, #ffffff, #fff7ed);
+  padding: 18px 22px;
+}
+
+.admin-table-header h2 {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.admin-table-header p {
+  margin-top: 4px;
+  color: var(--admin-muted);
+  font-size: 14px;
+}
+
+.admin-table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.admin-table-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.admin-table-scroll::-webkit-scrollbar-track {
+  background: var(--admin-surface-low);
+}
+
+.admin-table-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid var(--admin-surface-low);
+  border-radius: 999px;
+  background: rgba(102, 83, 72, 0.45);
+}
+
+.admin-table-card table {
+  width: 100%;
+  min-width: 1460px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.admin-table-card thead tr {
+  border-bottom: 1px solid var(--admin-outline);
+  background: var(--admin-surface-low);
+}
+
+.admin-table-card tbody tr {
+  border-bottom: 1px solid rgba(231, 207, 194, 0.75);
+  transition: background-color 160ms ease;
+}
+
+.admin-table-card tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-table-card tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.admin-table-card th,
+.admin-table-card td {
+  padding: 16px 22px;
+  color: var(--admin-muted);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.admin-table-card th {
+  color: var(--admin-text);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.admin-award-cell,
+.admin-batch-cell {
+  color: var(--admin-text);
+  font-weight: 700;
+}
+
+.admin-award-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.admin-file-link {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid var(--admin-primary);
+  border-radius: 12px;
+  color: var(--admin-primary-dark);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.admin-file-link:hover {
+  background: #fff7ed;
+  color: var(--admin-primary);
+}
+
+.admin-file-empty {
+  color: var(--admin-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-status__dot {
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.admin-status--grantee,
+.admin-status--validated {
+  background: #ecfdf5;
+  color: #047857;
+  box-shadow: inset 0 0 0 1px #a7f3d0;
+}
+
+.admin-status--grantee .admin-status__dot,
+.admin-status--validated .admin-status__dot {
+  background: #10b981;
+}
+
+.admin-status--applicant,
+.admin-status--pending {
+  background: #fff7ed;
+  color: #c2410c;
+  box-shadow: inset 0 0 0 1px #fed7aa;
+}
+
+.admin-status--applicant .admin-status__dot,
+.admin-status--pending .admin-status__dot {
+  background: #f97316;
+}
+
+.admin-status--rejected {
+  background: #fef2f2;
+  color: #b91c1c;
+  box-shadow: inset 0 0 0 1px #fecaca;
+}
+
+.admin-status--rejected .admin-status__dot {
+  background: #ef4444;
+}
+
+.admin-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+}
+
+.admin-edit-button,
+.admin-delete-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 12px;
+  transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
+}
+
+.admin-edit-button {
+  border: 1px solid var(--admin-primary);
+  background: #ffffff;
+  color: var(--admin-primary-dark);
+}
+
+.admin-edit-button:hover {
+  background: rgba(249, 115, 22, 0.1);
+}
+
+.admin-delete-button {
+  border: 1px solid #b91c1c;
+  background: #ffffff;
+  color: #b91c1c;
+}
+
+.admin-delete-button:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.admin-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.admin-checkbox-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--admin-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-checkbox-control input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--admin-primary);
+  cursor: pointer;
+}
+
+.admin-delete-message {
+  margin-top: 6px !important;
+  color: var(--admin-primary-dark) !important;
+  font-size: 13px !important;
+  font-weight: 800;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--admin-outline);
+  background: var(--admin-surface-low);
+  padding: 16px 22px;
+}
+
+.admin-pagination p {
+  color: var(--admin-muted);
+  font-size: 14px;
+}
+
+.admin-pagination p strong {
+  color: var(--admin-text);
+  font-weight: 800;
+}
+
+.admin-pagination__buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.admin-pagination__buttons button {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--admin-muted);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-pagination__buttons button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.admin-pagination__ellipsis {
+  display: inline-flex;
+  width: 32px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-pagination__buttons .admin-page-button--active {
+  border-color: var(--admin-primary);
+  background: var(--admin-primary);
+  color: #ffffff;
+}
+
+.admin-empty-state {
+  height: 160px;
+  color: var(--admin-muted);
+  font-weight: 800;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 25, 23, 0.52);
+  padding: 24px;
+  backdrop-filter: blur(8px);
+}
+
+.admin-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.admin-modal-card {
+  position: relative;
+  width: min(100%, 720px);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--admin-outline);
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(28, 25, 23, 0.25);
+}
+
+.admin-modal-card--edit {
+  display: flex;
+  width: min(100%, 860px);
+  max-height: calc(100vh - 48px);
+  flex-direction: column;
+}
+
+.admin-modal-card--wide {
+  width: min(100%, 1120px);
+}
+
+.admin-modal-card--quick-actions {
+  display: flex;
+  height: min(820px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-modal-card--quick-actions .admin-modal-header,
+.admin-modal-card--quick-actions .admin-quick-actions-summary,
+.admin-modal-card--quick-actions .admin-quick-actions-toolbar,
+.admin-modal-card--quick-actions .admin-quick-actions-pagination {
+  flex: 0 0 auto;
+}
+
+.admin-modal-card--compact {
+  width: min(100%, 560px);
+}
+
+.admin-confirm-overlay {
+  z-index: 90;
+  background: rgba(28, 25, 23, 0.64);
+  backdrop-filter: blur(12px);
+}
+
+.admin-confirm-card {
+  width: min(100%, 500px);
+  padding: 28px;
+  text-align: center;
+}
+
+.admin-confirm-card__icon {
+  display: inline-flex;
+  width: 64px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #fecaca;
+  border-radius: 20px;
+  background: #fef2f2;
+  color: #b91c1c;
+  box-shadow: 0 12px 28px rgba(185, 28, 28, 0.12);
+}
+
+.admin-confirm-card__icon .material-symbols-outlined {
+  font-size: 32px;
+}
+
+.admin-confirm-card__copy {
+  margin-top: 18px;
+}
+
+.admin-confirm-card__copy h2,
+.admin-confirm-card__copy p {
+  margin: 0;
+}
+
+.admin-confirm-card__copy h2 {
+  margin-top: 5px;
+  color: var(--admin-text);
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.admin-confirm-card__copy > p:last-child {
+  margin-top: 10px;
+  color: var(--admin-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.admin-confirm-card__copy strong {
+  color: var(--admin-text);
+}
+
+.admin-confirm-card__notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 20px;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.admin-confirm-card__notice .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 21px;
+}
+
+.admin-confirm-card__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.admin-confirm-card__actions .admin-button {
+  width: 100%;
+}
+
+.admin-modal-card--applicant-years {
+  display: flex;
+  flex-direction: column;
+  max-height: min(820px, calc(100vh - 32px));
+}
+
+.admin-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: linear-gradient(135deg, #ffffff, #fff7ed);
+  padding: 22px 24px;
+}
+
+.admin-modal-kicker,
+.admin-modal-header h2,
+.admin-modal-header p {
+  margin: 0;
+}
+
+.admin-modal-kicker {
+  color: var(--admin-primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.admin-modal-header h2 {
+  margin-top: 4px;
+  color: var(--admin-text);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.admin-modal-header p {
+  margin-top: 8px;
+  color: var(--admin-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-modal-close {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--admin-muted);
+  cursor: pointer;
+}
+
+.admin-modal-close:hover {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+}
+
+.admin-school-year-downloads {
+  display: grid;
+  gap: 12px;
+  padding: 22px 24px;
+}
+
+.admin-applicant-portal-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 24px;
+}
+
+.admin-applicant-portal-controls span,
+.admin-applicant-portal-controls strong {
+  display: block;
+}
+
+.admin-applicant-portal-controls span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-applicant-portal-controls strong {
+  margin-top: 3px;
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.admin-applicant-portal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-course-downloads {
+  max-height: min(520px, calc(100vh - 260px));
+  overflow-y: auto;
+}
+
+.admin-receiving-applicants-overlay {
+  z-index: 70;
+  padding: 0;
+}
+
+.admin-receiving-applicants-modal {
+  display: flex;
+  width: min(96vw, 1500px);
+  height: min(94dvh, 950px);
+  max-height: 94dvh;
+  min-width: 0;
+  flex-direction: column;
+  border-radius: 22px;
+  box-shadow: 0 28px 90px rgba(51, 27, 17, 0.28);
+  box-sizing: border-box;
+}
+
+.admin-receiving-applicants-header {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding-top: 20px;
+  padding-bottom: 18px;
+}
+
+.admin-receiving-applicants-header h2 {
+  font-size: clamp(21px, 2vw, 28px);
+  letter-spacing: -0.025em;
+}
+
+.admin-receiving-applicants-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: linear-gradient(100deg, #fff9f3, #ffffff 70%);
+  padding: 14px 24px;
+}
+
+.admin-receiving-status {
+  display: flex;
+  min-width: 190px;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-receiving-status > div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-receiving-status > div > span {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.admin-receiving-status strong {
+  color: var(--admin-text);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.admin-receiving-status small {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-receiving-status__indicator {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 4px solid #d9eadd;
+  border-radius: 50%;
+  background: #168344;
+  box-sizing: content-box;
+}
+
+.admin-receiving-status__indicator.is-closed {
+  border-color: #f5dfd9;
+  background: #b84b38;
+}
+
+.admin-receiving-applicants-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.admin-download-applicants-button {
+  box-shadow: 0 7px 18px rgba(220, 91, 12, 0.2);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-download-applicants-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 23px rgba(220, 91, 12, 0.28);
+}
+
+.admin-receiving-grantee-toolbar select {
+  min-width: 0;
+  height: 40px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--admin-text);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.admin-receiving-applicants-body {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.admin-receiving-grantee-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffcf9;
+  padding: 12px 24px;
+}
+
+.admin-receiving-grantee-search {
+  display: flex;
+  min-width: 220px;
+  height: 40px;
+  flex: 1 1 420px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--admin-muted);
+  padding: 0 11px;
+}
+
+.admin-receiving-grantee-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--admin-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.admin-receiving-grantee-toolbar select {
+  flex: 0 0 150px;
+}
+
+.admin-receiving-reset {
+  min-height: 40px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.admin-receiving-grantee-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-receiving-grantee-table {
+  width: 100%;
+  min-width: 1260px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.admin-receiving-grantee-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff5ec;
+}
+
+.admin-receiving-grantee-table th,
+.admin-receiving-grantee-table td {
+  border-bottom: 1px solid #f0e6dd;
+  padding: 12px 13px;
+  color: var(--admin-text);
+  font-size: 13px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.admin-receiving-grantee-table th {
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.admin-receiving-grantee-table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-receiving-empty {
+  height: 180px;
+  color: var(--admin-muted) !important;
+  font-size: 14px !important;
+  font-weight: 700;
+  text-align: center !important;
+}
+
+.admin-receiving-view-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #f4d7c2;
+  border-radius: 9px;
+  background: #fff8f2;
+  color: var(--admin-primary-dark);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-receiving-view-button .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.admin-receiving-applicants-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--admin-outline);
+  background: #ffffff;
+  padding: 11px 20px;
+}
+
+.admin-receiving-applicants-footer p {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-receiving-applicants-footer p strong {
+  color: var(--admin-text);
+}
+
+.admin-receiving-applicants-footer .admin-pagination__buttons {
+  justify-content: center;
+}
+
+.admin-receiving-applicants-footer .admin-pagination__buttons button {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.admin-receiving-applicants-footer .admin-button {
+  min-height: 36px;
+}
+
+.admin-receiving-details-overlay {
+  z-index: 95;
+}
+
+.admin-receiving-details-card {
+  display: flex;
+  width: min(100%, 680px);
+  max-height: min(820px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-receiving-details-card .admin-modal-header,
+.admin-receiving-details-footer {
+  flex: 0 0 auto;
+}
+
+.admin-receiving-details-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-receiving-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 20px 24px;
+}
+
+.admin-receiving-details-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 11px;
+  background: #fffdfb;
+  padding: 11px 12px;
+}
+
+.admin-receiving-details-grid span {
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.admin-receiving-details-grid strong {
+  overflow-wrap: anywhere;
+  color: var(--admin-text);
+  font-size: 13px;
+}
+
+.admin-receiving-documents {
+  margin: 0 24px 20px;
+  overflow: hidden;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #fffdfb;
+}
+
+.admin-receiving-documents__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fff8f1;
+  padding: 12px 14px;
+}
+
+.admin-receiving-documents__heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-receiving-documents__heading .material-symbols-outlined {
+  color: var(--admin-primary-dark);
+}
+
+.admin-receiving-documents__heading h3 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 14px;
+}
+
+.admin-receiving-documents__heading p {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+
+.admin-receiving-documents-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 12px;
+}
+
+.admin-receiving-document-card {
+  display: flex;
+  min-width: 0;
+  min-height: 62px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #eee2d8;
+  border-radius: 11px;
+  background: #ffffff;
+  padding: 9px 10px;
+}
+
+.admin-receiving-document-card__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: #fff1e5;
+  color: var(--admin-primary-dark);
+  font-size: 19px;
+}
+
+.admin-receiving-document-card__copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 3px;
+}
+
+.admin-receiving-document-card__copy strong,
+.admin-receiving-document-card__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-receiving-document-card__copy strong {
+  color: var(--admin-text);
+  font-size: 11px;
+}
+
+.admin-receiving-document-card__copy small {
+  color: var(--admin-muted);
+  font-size: 10px;
+}
+
+.admin-receiving-document-view {
+  display: inline-flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #f0c7a8;
+  border-radius: 9px;
+  background: #fff8f2;
+  color: var(--admin-primary-dark);
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.admin-receiving-document-view:hover {
+  background: #ffeddd;
+}
+
+.admin-receiving-document-view .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.admin-receiving-document-missing {
+  flex: 0 0 auto;
+  color: #a79c93;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-receiving-details-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--admin-outline);
+  padding: 12px 24px;
+}
+
+.admin-applicant-download-launch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 24px;
+}
+
+.admin-applicant-download-launch > div,
+.admin-applicant-download-option__copy {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-applicant-download-launch strong {
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.admin-applicant-download-launch span:not(.material-symbols-outlined) {
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-applicant-download-overlay {
+  z-index: 80;
+}
+
+.admin-applicant-download-card {
+  display: flex;
+  width: min(100%, 760px);
+  max-height: min(780px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-applicant-download-card .admin-modal-header,
+.admin-applicant-download-footer {
+  flex: 0 0 auto;
+}
+
+.admin-applicant-download-body {
+  display: grid;
+  min-height: 0;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.admin-applicant-download-options {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-applicant-download-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.admin-applicant-download-option.is-selected {
+  border-color: var(--admin-primary);
+  background: #fff8f0;
+  box-shadow: 0 0 0 2px rgba(234, 112, 25, 0.1);
+}
+
+.admin-applicant-download-option input,
+.admin-applicant-course-item input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: var(--admin-primary);
+}
+
+.admin-applicant-download-option__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-applicant-download-option__copy strong {
+  color: var(--admin-text);
+  font-size: 14px;
+}
+
+.admin-applicant-download-option__copy small {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-applicant-download-count {
+  flex: 0 0 auto;
+  color: var(--admin-primary-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-applicant-course-picker {
+  overflow: hidden;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+}
+
+.admin-applicant-course-picker__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 10px 12px;
+}
+
+.admin-applicant-course-picker__toolbar > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.admin-applicant-course-search {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--admin-muted);
+}
+
+.admin-applicant-course-search input {
+  width: 100%;
+  min-width: 100px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--admin-text);
+  font: inherit;
+}
+
+.admin-link-button {
+  border: 0;
+  background: transparent;
+  color: var(--admin-primary-dark);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-applicant-course-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px 14px;
+}
+
+.admin-applicant-course-item {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #f2e8df;
+  color: var(--admin-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.admin-applicant-course-item:last-child {
+  border-bottom: 0;
+}
+
+.admin-applicant-course-item span {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-applicant-course-item strong {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-applicant-course-empty,
+.admin-applicant-download-empty {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-applicant-course-empty {
+  padding: 18px 8px;
+  text-align: center;
+}
+
+.admin-applicant-download-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 12px;
+  background: #fff8f0;
+  color: var(--admin-muted);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.admin-applicant-download-summary strong {
+  color: var(--admin-primary-dark);
+  font-size: 16px;
+}
+
+.admin-applicant-download-loading {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--admin-muted);
+  font-size: 14px;
+}
+
+.admin-applicant-download-loading .material-symbols-outlined {
+  color: var(--admin-primary);
+  animation: admin-progress-pulse 1s ease-in-out infinite;
+}
+
+.admin-applicant-download-error {
+  margin: 0;
+  border: 1px solid #f1c7c0;
+  border-radius: 10px;
+  background: #fff4f2;
+  color: #ad3528;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.admin-applicant-download-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--admin-outline);
+  background: #ffffff;
+  padding: 14px 24px;
+}
+
+.admin-confirm-body {
+  display: grid;
+  gap: 8px;
+  padding: 22px 24px;
+}
+
+.admin-confirm-body p,
+.admin-confirm-body strong {
+  margin: 0;
+}
+
+.admin-confirm-body p {
+  color: var(--admin-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-confirm-body strong {
+  color: var(--admin-text);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.admin-school-id-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 24px;
+}
+
+.admin-school-id-action {
+  display: flex;
+  min-height: 126px;
+  align-items: flex-start;
+  gap: 14px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 16px;
+  background: #ffffff;
+  color: var(--admin-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 20px;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.admin-school-id-action:hover {
+  transform: translateY(-2px);
+}
+
+.admin-school-id-action > .material-symbols-outlined {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  font-size: 25px;
+}
+
+.admin-school-id-action span:last-child {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-school-id-action strong,
+.admin-school-id-action small {
+  display: block;
+}
+
+.admin-school-id-action strong {
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.admin-school-id-action small {
+  color: var(--admin-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.admin-school-id-action--download:hover {
+  border-color: var(--admin-primary);
+  background: #fff7ed;
+}
+
+.admin-school-id-action--download > .material-symbols-outlined {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+}
+
+.admin-school-id-action--delete:hover {
+  border-color: #fca5a5;
+  background: #fff1f2;
+}
+
+.admin-school-id-action--delete > .material-symbols-outlined {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.admin-progress-card {
+  padding: 32px;
+  text-align: center;
+}
+
+.admin-progress-card h2,
+.admin-progress-card p {
+  margin: 0;
+}
+
+.admin-progress-card h2 {
+  margin-top: 6px;
+  color: var(--admin-text);
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.admin-progress-card > p:not(.admin-modal-kicker) {
+  margin-top: 10px;
+  color: var(--admin-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.admin-progress-icon,
+.admin-success-card__icon {
+  display: inline-flex;
+  width: 68px;
+  height: 68px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+  border-radius: 22px;
+}
+
+.admin-progress-icon {
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+  animation: admin-progress-pulse 1.2s ease-in-out infinite;
+}
+
+.admin-progress-icon .material-symbols-outlined,
+.admin-success-card__icon .material-symbols-outlined {
+  font-size: 36px;
+}
+
+.admin-progress-track {
+  height: 14px;
+  margin-top: 26px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f3e8df;
+}
+
+.admin-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--admin-primary), var(--admin-primary-dark));
+  transition: width 240ms ease;
+}
+
+.admin-progress-value {
+  display: block;
+  margin-top: 12px;
+  color: var(--admin-primary-dark);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.admin-success-card__icon {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.admin-success-card__actions {
+  grid-template-columns: 1fr;
+}
+
+@keyframes admin-progress-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+.admin-course-applicants-modal {
+  width: min(100%, 1180px);
+}
+
+.admin-course-applicants-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 24px;
+}
+
+.admin-course-applicant-search {
+  flex: 1 1 420px;
+  min-width: 240px;
+}
+
+.admin-course-applicants-toolbar .admin-button {
+  flex: 0 0 auto;
+}
+
+.admin-course-applicants-toolbar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-course-applicants-toolbar .admin-button .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.admin-course-applicants-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  padding: 16px 24px;
+}
+
+.admin-course-applicants-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.admin-course-applicants-summary span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.admin-course-applicants-summary strong {
+  color: var(--admin-text);
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.admin-course-applicants-table-wrap {
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  padding: 12px 24px;
+}
+
+.admin-course-applicants-table {
+  width: 100%;
+  min-width: 1280px;
+  border-collapse: collapse;
+}
+
+.admin-course-applicants-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff7ed;
+}
+
+.admin-course-applicants-table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-course-applicants-table th,
+.admin-course-applicants-table td {
+  border-bottom: 1px solid var(--admin-outline);
+  padding: 12px 10px;
+  color: var(--admin-text);
+  font-size: 13px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-course-applicants-table th {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-applicant-name,
+.admin-applicant-email,
+.admin-applicant-address {
+  overflow-wrap: anywhere;
+}
+
+.admin-applicant-details summary {
+  color: var(--admin-primary-dark);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-applicant-details dl {
+  display: grid;
+  gap: 7px;
+  min-width: 220px;
+  margin: 10px 0 0;
+}
+
+.admin-applicant-details dl div {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.admin-applicant-details dt {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.admin-applicant-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.admin-applicant-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--admin-primary-dark);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-applicant-file-link:hover {
+  text-decoration: underline;
+}
+
+.admin-applicant-file-link .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.admin-applicant-file-missing {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-course-applicants-pagination {
+  border-top: 1px solid var(--admin-outline);
+  padding: 14px 24px;
+}
+
+.admin-modal-empty-state {
+  border: 1px dashed var(--admin-outline);
+  border-radius: 14px;
+  background: #fffaf5;
+  color: var(--admin-muted);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.5;
+  padding: 18px;
+  text-align: center;
+}
+
+.admin-year-options {
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 22px 24px;
+}
+
+.admin-year-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--admin-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 16px;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.admin-year-option:hover {
+  border-color: var(--admin-primary);
+  background: #fff7ed;
+  transform: translateY(-1px);
+}
+
+.admin-year-option span {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.admin-year-option strong {
+  color: var(--admin-primary-dark);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.admin-applicant-year-pagination,
+.admin-batch-export-pagination,
+.admin-school-id-pagination {
+  border-bottom: 1px solid var(--admin-outline);
+  padding: 14px 24px;
+}
+
+.admin-school-year-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--admin-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 16px;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.admin-school-year-button:hover {
+  border-color: var(--admin-primary);
+  background: #fff7ed;
+  transform: translateY(-1px);
+}
+
+.admin-school-year-button--danger strong {
+  color: #991b1b;
+}
+
+.admin-school-year-button--danger:hover {
+  border-color: #fca5a5;
+  background: #fff1f2;
+}
+
+.admin-school-year-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+  transform: none;
+}
+
+.admin-school-year-button:disabled:hover {
+  border-color: var(--admin-outline);
+  background: #ffffff;
+}
+
+.admin-school-year-button span {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.admin-school-year-button strong {
+  color: var(--admin-primary-dark);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.admin-edit-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 18px 24px;
+}
+
+.admin-edit-summary__icon {
+  display: inline-flex;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--admin-outline);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--admin-primary-dark);
+}
+
+.admin-edit-summary__icon .material-symbols-outlined {
+  font-size: 30px;
+}
+
+.admin-edit-summary__text {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-edit-summary__text span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-edit-summary__text strong {
+  color: var(--admin-text);
+  font-size: 18px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-record-details {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+}
+
+.admin-record-details--responsive {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+}
+
+.admin-record-details div,
+.admin-record-details label {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+  background: var(--admin-surface-low);
+  padding: 14px;
+}
+
+.admin-record-details span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.admin-record-details strong {
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-record-details input,
+.admin-record-details select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--admin-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.admin-record-details input:focus,
+.admin-record-details select:focus {
+  border-color: var(--admin-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
+}
+
+.admin-edit-message {
+  margin: 0;
+  padding: 0 24px 18px;
+  color: var(--admin-primary-dark);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-upload-body {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.admin-upload-dropzone {
+  position: relative;
+  display: grid;
+  min-height: 170px;
+  place-items: center;
+  gap: 8px;
+  border: 1px dashed var(--admin-outline);
+  border-radius: 16px;
+  background: var(--admin-surface-low);
+  color: var(--admin-muted);
+  cursor: pointer;
+  padding: 28px;
+  text-align: center;
+}
+
+.admin-upload-dropzone:hover {
+  border-color: var(--admin-primary);
+  background: #fffaf5;
+  color: var(--admin-primary-dark);
+}
+
+.admin-upload-dropzone .material-symbols-outlined {
+  color: var(--admin-primary);
+  font-size: 38px;
+}
+
+.admin-upload-dropzone strong {
+  color: var(--admin-text);
+  font-size: 16px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-upload-dropzone span:last-child {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-upload-dropzone input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.admin-template-preview {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--admin-outline);
+  border-radius: 14px;
+}
+
+.admin-template-preview span {
+  min-width: 0;
+  border-right: 1px solid var(--admin-outline);
+  background: var(--admin-surface-low);
+  color: var(--admin-text);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  padding: 12px;
+}
+
+.admin-template-preview span:last-child {
+  border-right: 0;
+}
+
+.admin-upload-message {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.admin-upload-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  border-top: 1px solid var(--admin-outline);
+  background: var(--admin-surface-low);
+  padding: 16px 24px;
+}
+
+.admin-quick-actions-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: var(--admin-outline);
+}
+
+.admin-quick-actions-summary div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  background: #ffffff;
+  padding: 16px 20px;
+}
+
+.admin-quick-actions-summary span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-quick-actions-summary strong {
+  color: var(--admin-text);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.admin-quick-actions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 16px 20px;
+}
+
+.admin-quick-actions-toolbar > div:first-child {
+  min-width: 0;
+}
+
+.admin-quick-actions-toolbar span,
+.admin-quick-actions-toolbar strong {
+  display: block;
+}
+
+.admin-quick-actions-toolbar div > span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-quick-actions-toolbar div > strong {
+  margin-top: 4px;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-quick-actions-toolbar .admin-button {
+  flex: 0 0 auto;
+}
+
+.admin-quick-actions-toolbar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-quick-actions-toolbar .admin-button .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.admin-quick-actions-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: #ffffff;
+  scrollbar-gutter: stable;
+}
+
+.admin-logs-table-wrap {
+  max-height: calc(100vh - 320px);
+  overflow: auto;
+  background: #ffffff;
+}
+
+.admin-logs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 14px 24px;
+}
+
+.admin-logs-toolbar span,
+.admin-logs-toolbar strong {
+  display: block;
+}
+
+.admin-modal-card--archive {
+  display: flex;
+  height: min(820px, calc(100dvh - 48px));
+  flex-direction: column;
+}
+
+.admin-archive-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-outline);
+  background: #fffaf5;
+  padding: 14px 24px;
+}
+
+.admin-archive-search {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--admin-muted);
+  padding: 0 14px;
+}
+
+.admin-archive-search input,
+.admin-archive-toolbar select {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--admin-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.admin-archive-toolbar select {
+  min-height: 44px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0 12px;
+}
+
+.admin-archive-message {
+  margin: 0;
+  border-bottom: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 10px 24px;
+}
+
+.admin-archive-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.admin-archive-table-name {
+  width: fit-content;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: var(--admin-primary-dark) !important;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.admin-archive-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-archive-action {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+}
+
+.admin-archive-action .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.admin-archive-action--restore {
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.admin-archive-action--delete {
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.admin-archive-action:hover:not(:disabled) {
+  background: #fff7ed;
+}
+
+.admin-archive-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.admin-logs-toolbar span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-logs-toolbar strong {
+  margin-top: 4px;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-quick-actions-table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.admin-logs-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.admin-quick-actions-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.admin-logs-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.admin-quick-actions-table thead tr {
+  border-bottom: 1px solid var(--admin-outline);
+  background: var(--admin-surface-low);
+}
+
+.admin-logs-table thead tr {
+  border-bottom: 1px solid var(--admin-outline);
+  background: var(--admin-surface-low);
+}
+
+.admin-quick-actions-table tbody tr {
+  border-bottom: 1px solid var(--admin-outline);
+}
+
+.admin-logs-table tbody tr {
+  border-bottom: 1px solid var(--admin-outline);
+}
+
+.admin-quick-actions-table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-logs-table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.admin-quick-actions-table th,
+.admin-quick-actions-table td,
+.admin-logs-table th,
+.admin-logs-table td {
+  padding: 15px 18px;
+  color: var(--admin-muted);
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.admin-quick-actions-table th,
+.admin-logs-table th {
+  color: var(--admin-text);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.admin-logs-table td strong,
+.admin-logs-table td span {
+  display: block;
+}
+
+.admin-logs-table td strong {
+  color: var(--admin-text);
+  font-weight: 800;
+}
+
+.admin-log-action {
+  width: fit-content;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: var(--admin-primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 9px;
+}
+
+.admin-request-student {
+  min-width: 190px;
+}
+
+.admin-request-student strong,
+.admin-request-student span {
+  display: block;
+}
+
+.admin-request-student strong {
+  color: var(--admin-text);
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.admin-request-student span {
+  margin-top: 4px;
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.admin-request-email {
+  color: var(--admin-text);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-request-question {
+  max-width: 360px;
+  color: var(--admin-text);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.admin-scroll-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 80;
+  height: 3px;
+  background: var(--admin-primary);
+  transform: scaleX(var(--admin-scroll));
+  transform-origin: left;
+  transition: transform 75ms ease;
+}
+
+.admin-modal-overlay--nested {
+  z-index: 120;
+}
+
+.admin-modal-card--users {
+  max-width: 1120px;
+}
+
+.admin-user-search {
+  margin: 16px 24px;
+}
+
+.admin-users-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.admin-users-table th:last-child,
+.admin-users-table td:last-child {
+  width: 130px;
+  text-align: center;
+}
+
+.admin-user-facebook-link {
+  color: var(--admin-primary-dark);
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-user-facebook-link:hover {
+  text-decoration: underline;
+}
+
+.admin-user-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.admin-user-actions button {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #c2410c;
+  cursor: pointer;
+}
+
+.admin-user-actions .admin-user-action--delete {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.admin-user-message {
+  margin: 12px 22px 0;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+  padding: 10px 12px;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-user-message--error {
+  margin: 0;
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.admin-modal-card--user-form,
+.admin-modal-card--confirm {
+  max-width: 500px;
+}
+
+.admin-user-form {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.admin-user-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--admin-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.admin-user-form input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--admin-outline);
+  border-radius: 11px;
+  padding: 10px 12px;
+  color: var(--admin-text);
+  font: inherit;
+}
+
+.admin-user-form input:focus {
+  border-color: var(--admin-primary);
+  outline: 3px solid rgba(249, 115, 22, 0.14);
+}
+
+.admin-user-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-modal-card--confirm {
+  padding: 28px;
+  text-align: center;
+}
+
+.admin-modal-card--confirm h2 {
+  margin: 14px 0 8px;
+  color: var(--admin-text);
+}
+
+.admin-modal-card--confirm > p {
+  margin: 0 0 22px;
+  color: var(--admin-muted);
+  line-height: 1.6;
+}
+
+.admin-delete-user-icon {
+  display: inline-flex;
+  width: 54px;
+  height: 54px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+@media (max-width: 980px) {
+  .admin-topbar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .header-actions {
+    margin-left: 0;
+  }
+
+  .admin-heading {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .admin-heading__actions {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .admin-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-filter-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 48px;
+  }
+
+  .admin-search-field {
+    grid-column: 1 / -1;
+  }
+
+  .admin-filter-button {
+    width: 100%;
+  }
+
+  .admin-receiving-applicants-modal {
+    width: 96vw;
+    height: 94dvh;
+    max-height: 94dvh;
+  }
+
+  .admin-receiving-applicants-controls {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+  }
+
+  .admin-receiving-applicants-actions {
+    flex: 1 1 500px;
+  }
+
+  .admin-receiving-grantee-toolbar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 12px 18px;
+  }
+
+  .admin-receiving-grantee-search {
+    grid-column: 1 / -1;
+  }
+
+  .admin-receiving-grantee-toolbar select {
+    width: 100%;
+  }
+}
+
+@media (max-width: 700px) {
+  .admin-receiving-applicants-overlay {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .admin-receiving-applicants-modal {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .admin-receiving-applicants-header {
+    padding: 16px 16px 13px;
+  }
+
+  .admin-receiving-applicants-header h2 {
+    max-width: calc(100vw - 82px);
+    font-size: 20px;
+  }
+
+  .admin-receiving-applicants-header p:last-child {
+    max-width: calc(100vw - 80px);
+    font-size: 12px;
+  }
+
+  .admin-receiving-applicants-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .admin-receiving-applicants-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-receiving-applicants-actions .admin-button {
+    min-width: 0;
+    justify-content: center;
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+
+  .admin-receiving-applicants-actions .admin-download-applicants-button {
+    grid-column: 1 / -1;
+  }
+
+  .admin-receiving-grantee-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .admin-receiving-grantee-search {
+    grid-column: 1 / -1;
+  }
+
+  .admin-receiving-grantee-toolbar select {
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .admin-receiving-reset {
+    width: 100%;
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+
+  .admin-receiving-applicants-footer {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .admin-receiving-applicants-footer p {
+    font-size: 11px;
+  }
+
+  .admin-receiving-applicants-footer .admin-pagination__buttons {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  .admin-receiving-applicants-footer .admin-pagination__buttons button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .admin-receiving-close {
+    justify-self: end;
+  }
+
+  .admin-receiving-details-overlay {
+    padding: 12px;
+  }
+
+  .admin-receiving-details-grid {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
+  }
+
+  .admin-receiving-documents {
+    margin: 0 18px 16px;
+  }
+
+  .admin-receiving-documents__heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-receiving-documents-grid {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .admin-receiving-details-footer {
+    padding: 10px 18px;
+  }
+
+  .admin-topbar {
+    align-items: stretch;
+    flex-direction: column;
+    position: relative;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .brand-lockup,
+  .brand-copy {
+    min-width: 0;
+  }
+
+  .brand-title,
+  .brand-subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .header-actions .admin-button {
+    width: 100%;
+    min-height: 40px;
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+
+  .admin-main {
+    padding: 18px 12px 28px;
+  }
+
+  .admin-heading h1 {
+    font-size: 30px;
+  }
+
+  .admin-heading p {
+    font-size: 14px;
+  }
+
+  .admin-heading__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-heading__actions .admin-button {
+    width: 100%;
+    min-height: 52px;
+  }
+
+  .admin-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-filter-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px;
+  }
+
+  .admin-filter-panel .admin-search-field {
+    grid-column: 1 / -1;
+  }
+
+  .admin-table-card {
+    border-radius: 18px;
+  }
+
+  .admin-table-scroll {
+    overflow: visible;
+  }
+
+  .admin-table-card table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 12px;
+  }
+
+  .admin-table-card thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .admin-table-card tbody {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .admin-table-card tbody tr,
+  .admin-table-card tbody tr:hover {
+    display: grid;
+    gap: 12px;
+    border: 1px solid var(--admin-outline);
+    border-radius: 16px;
+    background: #ffffff;
+    padding: 14px;
+  }
+
+  .admin-table-card th,
+  .admin-table-card td {
+    display: grid;
+    grid-template-columns: minmax(126px, 42%) minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    padding: 0;
+    color: var(--admin-text);
+    font-size: 13px;
+  }
+
+  .admin-table-card td::before {
+    content: attr(data-label);
+    color: var(--admin-muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .admin-status,
+  .admin-row-actions {
+    justify-self: end;
+  }
+
+  .admin-row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .admin-edit-button,
+  .admin-delete-button,
+  .admin-checkbox-control {
+    min-height: 40px;
+  }
+
+  .admin-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 14px;
+  }
+
+  .admin-pagination__buttons {
+    width: 100%;
+    gap: 6px;
+  }
+
+  .admin-pagination__buttons button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .admin-modal-overlay {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .admin-confirm-card {
+    padding: 24px 18px 18px;
+  }
+
+  .admin-confirm-card__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-modal-card {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+    border-radius: 18px 18px 10px 10px;
+  }
+
+  .admin-modal-card--applicant-years {
+    max-height: calc(100dvh - 20px);
+    overflow: hidden;
+  }
+
+  .admin-modal-header {
+    gap: 16px;
+    padding: 18px;
+  }
+
+  .admin-modal-header h2 {
+    font-size: 22px;
+  }
+
+  .admin-modal-card--applicant-years .admin-modal-header {
+    flex: 0 0 auto;
+  }
+
+  .admin-modal-card--applicant-years .admin-modal-header p {
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .admin-year-options {
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 8px;
+    overflow-y: auto;
+    padding: 14px 18px;
+  }
+
+  .admin-year-option {
+    min-height: 56px;
+    padding: 12px 14px;
+  }
+
+  .admin-applicant-year-pagination {
+    flex: 0 0 auto;
+    padding: 12px 18px;
+  }
+
+  .admin-school-year-downloads {
+    padding: 18px;
+  }
+
+  .admin-school-year-button {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    padding: 14px;
+  }
+
+  .admin-school-id-actions {
+    grid-template-columns: 1fr;
+    padding: 18px;
+  }
+
+  .admin-applicant-portal-controls {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-applicant-download-launch {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-applicant-download-launch .admin-button,
+  .admin-applicant-download-footer .admin-button {
+    width: 100%;
+  }
+
+  .admin-applicant-download-card {
+    max-height: calc(100dvh - 24px);
+    border-radius: 16px;
+  }
+
+  .admin-applicant-download-body {
+    padding: 16px 18px;
+  }
+
+  .admin-applicant-download-option {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .admin-applicant-download-option__copy {
+    flex-basis: calc(100% - 42px);
+  }
+
+  .admin-applicant-download-count {
+    margin-left: 29px;
+  }
+
+  .admin-applicant-course-picker__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-applicant-course-picker__toolbar > div {
+    justify-content: space-between;
+  }
+
+  .admin-applicant-download-footer {
+    flex-direction: column-reverse;
+    padding: 12px 18px;
+  }
+
+  .admin-applicant-portal-actions,
+  .admin-applicant-portal-actions .admin-button {
+    width: 100%;
+  }
+
+  .admin-course-applicants-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-course-applicant-search,
+  .admin-course-applicants-toolbar .admin-button,
+  .admin-course-applicants-toolbar__actions {
+    width: 100%;
+  }
+
+  .admin-course-applicants-toolbar__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-course-applicants-summary {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
+  }
+
+  .admin-edit-summary {
+    align-items: flex-start;
+    padding: 16px 18px;
+  }
+
+  .admin-record-details {
+    padding: 18px;
+  }
+
+  .admin-record-details--responsive {
+    grid-template-columns: 1fr;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .admin-upload-actions {
+    position: sticky;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
+  }
+
+  .admin-upload-actions .admin-button {
+    width: 100%;
+  }
+
+  .admin-template-preview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-quick-actions-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-modal-card--quick-actions {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+  }
+
+  .admin-modal-card--quick-actions .admin-modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary div {
+    align-content: center;
+    padding: 12px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary span {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-summary strong {
+    font-size: 15px;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-quick-actions-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-quick-actions-toolbar .admin-button {
+    width: 100%;
+  }
+
+  .admin-quick-actions-toolbar__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-logs-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px 18px;
+  }
+
+  .admin-logs-toolbar .admin-button {
+    width: 100%;
+  }
+
+  .admin-modal-card--archive {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .admin-archive-toolbar {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
+  }
+
+  .admin-archive-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .admin-quick-actions-table-wrap,
+  .admin-logs-table-wrap,
+  .admin-course-applicants-table-wrap {
+    max-height: none;
+    overflow: visible;
+    padding: 12px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-pagination {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    background: #fffaf5;
+    box-shadow: 0 -8px 20px rgba(28, 25, 23, 0.08);
+  }
+
+  .admin-quick-actions-table,
+  .admin-logs-table,
+  .admin-course-applicants-table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+  }
+
+  .admin-quick-actions-table thead,
+  .admin-logs-table thead,
+  .admin-course-applicants-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .admin-quick-actions-table tbody,
+  .admin-logs-table tbody,
+  .admin-course-applicants-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .admin-quick-actions-table tbody tr,
+  .admin-logs-table tbody tr,
+  .admin-course-applicants-table tbody tr {
+    display: grid;
+    gap: 10px;
+    border: 1px solid var(--admin-outline);
+    border-radius: 16px;
+    background: #ffffff;
+    padding: 14px;
+  }
+
+  .admin-quick-actions-table th,
+  .admin-quick-actions-table td,
+  .admin-logs-table th,
+  .admin-logs-table td,
+  .admin-course-applicants-table th,
+  .admin-course-applicants-table td {
+    display: grid;
+    grid-template-columns: minmax(112px, 42%) 1fr;
+    align-items: start;
+    gap: 12px;
+    padding: 0;
+    color: var(--admin-text);
+    font-size: 13px;
+  }
+
+  .admin-quick-actions-table td::before,
+  .admin-logs-table td::before,
+  .admin-course-applicants-table td::before {
+    content: attr(data-label);
+    color: var(--admin-muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .admin-quick-actions-table .admin-empty-state,
+  .admin-logs-table .admin-empty-state,
+  .admin-course-applicants-table .admin-empty-state {
+    display: block;
+    height: auto;
+    padding: 28px 14px;
+  }
+
+  .admin-quick-actions-table .admin-empty-state::before,
+  .admin-logs-table .admin-empty-state::before,
+  .admin-course-applicants-table .admin-empty-state::before {
+    content: none;
+  }
+
+  .admin-request-email,
+  .admin-request-student,
+  .admin-request-question,
+  .admin-applicant-name,
+  .admin-applicant-email,
+  .admin-applicant-address {
+    max-width: none;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 420px) {
+  .admin-page {
+    min-width: 0;
+  }
+
+  .brand-mark {
+    width: 42px;
+    height: 42px;
+  }
+
+  .brand-mark__image {
+    width: 36px;
+    height: 36px;
+  }
+
+  .brand-title {
+    font-size: 13px;
+  }
+
+  .brand-subtitle {
+    font-size: 11px;
+  }
+
+  .admin-table-card th,
+  .admin-table-card td,
+  .admin-quick-actions-table th,
+  .admin-quick-actions-table td,
+  .admin-logs-table th,
+  .admin-logs-table td,
+  .admin-course-applicants-table th,
+  .admin-course-applicants-table td {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .admin-modal-card--quick-actions .admin-modal-header {
+    padding: 16px;
+  }
+
+  .admin-modal-card--quick-actions .admin-modal-header p {
+    font-size: 13px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-toolbar {
+    padding: 13px 14px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-toolbar__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-table-wrap {
+    padding: 8px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-table tbody tr {
+    border-radius: 14px;
+    padding: 12px;
+  }
+
+  .admin-modal-card--quick-actions .admin-quick-actions-pagination {
+    padding: 12px;
+  }
+
+  .admin-modal-card--applicant-years .admin-modal-header {
+    padding: 16px;
+  }
+
+  .admin-year-options {
+    padding: 12px;
+  }
+
+  .admin-year-option {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .admin-year-option span {
+    font-size: 20px;
+  }
+
+  .admin-applicant-year-pagination {
+    padding: 12px;
+  }
+
+  .admin-status,
+  .admin-row-actions {
+    justify-self: start;
+  }
+
+  .admin-row-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-row-actions > button,
+  .admin-row-actions .admin-checkbox-control {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .admin-modal-overlay {
+    padding: 6px;
+  }
+
+  .admin-modal-card {
+    max-height: calc(100vh - 12px);
+  }
+}
+`
+
+export default Admin
