@@ -10,10 +10,36 @@
     <link rel="apple-touch-icon" href="/IBACMI-Scholarship-Office/IBACMI.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>IBACMI | Scholarship Office</title>
-    <script type="module" crossorigin src="/IBACMI-Scholarship-Office/assets/index-B9yWdak7.js"></script>
-    <link rel="stylesheet" crossorigin href="/IBACMI-Scholarship-Office/assets/index-CJB3z_cp.css">
+    <script type="module" crossorigin src="/IBACMI-Scholarship-Office/assets/index-CfYCOSLL.js"></script>
+    <link rel="stylesheet" crossorigin href="/IBACMI-Scholarship-Office/assets/index-Ba2CH4De.css">
   </head>
   <body>
+    <div id="ibacmi-boot-loader" class="ibacmi-loader ibacmi-loader--page ibacmi-loader--loading" role="status" aria-live="polite" aria-busy="true">
+      <span class="ibacmi-loader__emblem" aria-hidden="true"><span class="ibacmi-loader__seal"><img src="/IBACMI-Scholarship-Office/IBACMI.png" alt="" width="120" height="120" /></span><svg class="ibacmi-loader__ring" viewBox="0 0 100 100" fill="none"><circle class="ibacmi-loader__track" cx="50" cy="50" r="45" /><circle class="ibacmi-loader__arc" cx="50" cy="50" r="45" pathLength="100" stroke-dasharray="26 74" /></svg></span>
+      <span class="ibacmi-loader__copy"><span class="ibacmi-loader__brand">IBACMI Scholarship Office</span><span class="ibacmi-loader__message">Loading UniFAST information…</span></span>
+    </div>
+    <noscript>This portal needs JavaScript. Please enable JavaScript and reload the page.</noscript>
     <div id="root"></div>
+    <script>
+      window.addEventListener('error', function (event) {
+        const boot = document.getElementById('ibacmi-boot-loader')
+        if (!boot || boot.classList.contains('is-ready') || document.getElementById('root').childElementCount) return
+        if (event.target?.tagName !== 'SCRIPT' && !event.error) return
+        boot.classList.replace('ibacmi-loader--loading', 'ibacmi-loader--error')
+        boot.setAttribute('aria-busy', 'false')
+        boot.setAttribute('role', 'alert')
+        boot.querySelector('.ibacmi-loader__message').textContent = 'Unable to load the portal. Check your connection and try again.'
+        if (!boot.querySelector('button')) {
+          const actions = document.createElement('span')
+          actions.className = 'ibacmi-loader__actions'
+          const retry = document.createElement('button')
+          retry.type = 'button'
+          retry.textContent = 'Retry'
+          retry.addEventListener('click', function () { window.location.reload() })
+          actions.appendChild(retry)
+          boot.querySelector('.ibacmi-loader__copy').appendChild(actions)
+        }
+      }, true)
+    </script>
   </body>
 </html>
