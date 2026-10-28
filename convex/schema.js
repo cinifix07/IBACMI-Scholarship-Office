@@ -4,6 +4,8 @@ import { configFields, profileFields } from './billingRules'
 import { documentationFields } from './documentationRules'
 
 export default defineSchema({
+  validationRuns: defineTable({ adminId: v.id('admins'), uploadedBy: v.string(), schoolYear: v.string(), batches: v.array(v.string()), filename: v.string(), summary: v.any(), warnings: v.array(v.string()), sourceVersion: v.string(), resultsStorageId: v.optional(v.id('_storage')), allBatches: v.boolean(), createdAt: v.number(), resultExpiresAt: v.number(), metadataExpiresAt: v.number(), status: v.string() }).index('by_created', ['createdAt']),
+  noIdJobs: defineTable({ adminId: v.optional(v.id('admins')), schoolYear: v.string(), signature: v.string(), ids: v.array(v.string()), checks: v.any(), state: v.string(), createdAt: v.number(), updatedAt: v.number(), expiresAt: v.number() }),
   studentProfileSubmissions: defineTable({ accountId: v.id('admins'), schoolYear: v.string(), submittedAt: v.number(), profile: v.any(), schoolIdUrl: v.optional(v.string()), schoolIdStorageId: v.optional(v.id('_storage')) })
     .index('by_account_year', ['accountId', 'schoolYear']),
   documentation: defineTable({...documentationFields,storageId:v.id('_storage'),mimeType:v.string(),fileSize:v.number(),width:v.number(),height:v.number(),uploadedBy:v.id('admins'),createdAt:v.number(),updatedAt:v.number()})
@@ -133,6 +135,8 @@ export default defineSchema({
     lastName: v.optional(v.string()),
     firstName: v.optional(v.string()),
     middleInitial: v.optional(v.string()),
+    extensionName: v.optional(v.string()),
+    middleName: v.optional(v.string()),
     batchId: v.string(),
     status: v.string(),
     semester: v.optional(v.string()),

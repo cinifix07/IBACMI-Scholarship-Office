@@ -1,0 +1,62 @@
+[
+    {
+        "File":  "src/admin/AdminSidebar.jsx",
+        "SHA256":  "69AB5A110C273088DCA6E4C83D44C0B3EF32E4C82B834BC1AA299A28461BA5C3"
+    },
+    {
+        "File":  "src/admin/admin-sidebar.css",
+        "SHA256":  "798CE4A9429296A8728A0DD5F6FCA7251369B753C66C843707EB8E653B0ABFF6"
+    },
+    {
+        "File":  "src/admin/admin.jsx",
+        "SHA256":  "AD074928B6CFA600D3CE1971AB53CDC186744F72C9812670FC4CDE23D0712BE8"
+    },
+    {
+        "File":  "src/admin/noIdExport.js",
+        "SHA256":  "1CE1A3EBCAA40D4819D557AEB274876C75C377FFD2A4EC7E22B4C97D7FCEF4F9"
+    },
+    {
+        "File":  "src/admin/billingExport.js",
+        "SHA256":  "AD9FAC686BF1B65E453CE5332B866B2159387471F9768D28850C101F18FAB35C"
+    },
+    {
+        "File":  "convex/schema.js",
+        "SHA256":  "0A1CADE5503AAB9DD438DAE7F96A7504D00AD3C63DB7E9D2192895334AB4204D"
+    },
+    {
+        "File":  "convex/allinfo.js",
+        "SHA256":  "0BA6C043E0033FE97F92C3FAA484465E935F25AADDB9DF7FB0D5BCD6DA34C017"
+    },
+    {
+        "File":  "convex/billing.js",
+        "SHA256":  "59ACE4712964F1F97DEE0F068B67E6E7FA707CC3E2DCD4BE10EF84292E147CA4"
+    },
+    {
+        "File":  "convex/batchExport.js",
+        "SHA256":  "A13D2C63570FD52E94B11866ED82AA118737A1B948746AC255B5082963A7CBD2"
+    },
+    {
+        "File":  "convex/activityLogs.js",
+        "SHA256":  "F7BE3DFA213413B2C92B4C5BB9934EF1B7EB7AD8F3C48A7E0665A8ACB7FECB68"
+    },
+    {
+        "File":  "convex/_generated/api.d.ts",
+        "SHA256":  "69235027E7814879DE49E840098F5AAC67E79C15C56A495263D328B610E82089"
+    },
+    {
+        "File":  "src/errors/convex.js",
+        "SHA256":  "551BDC73FF410FC9C2BCB0D42313C0FFE4B3F5964845D3D2830C6837D09078AE"
+    },
+    {
+        "File":  "src/errors/errorPolicy.js",
+        "SHA256":  "7B491941CA4F4BD8DB53718FAB2ED79ACF8B41BAB8177305956369FEBBECFD92"
+    },
+    {
+        "File":  "package.json",
+        "SHA256":  "4FFC8A37E16C14E539E07D7A31CEDD114D6657DEA6B79F488C6DF04802D5B388"
+    },
+    {
+        "File":  "package-lock.json",
+        "SHA256":  "6ED13F198CD087F0A90C96CD04B62FBE138C6395CA9965DB250D3590FA6B9BD1"
+    }
+]

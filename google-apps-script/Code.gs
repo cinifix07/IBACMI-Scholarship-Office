@@ -24,6 +24,8 @@ function doPost(event) {
       return downloadDriveFile(payload)
     }
 
+    if (payload.operation === 'inspect') return inspectDriveFiles(payload)
+
     if (
       !payload.fileBase64 ||
       !payload.fileName ||
@@ -99,6 +101,35 @@ function downloadDriveFile(payload) {
     fileBase64: Utilities.base64Encode(fileBlob.getBytes()),
     fileName: driveFile.getName(),
   })
+}
+
+// Read-only metadata check. Never download bytes or expose files outside the student root.
+function inspectDriveFiles(payload) {
+  if (payload.destination !== 'students' || !Array.isArray(payload.fileIds) || payload.fileIds.length > 40) return jsonResponse({ success: false })
+  const files = payload.fileIds.map(function(id) {
+    try {
+      const file = DriveApp.getFileById(id)
+      if (file.isTrashed() || !fileBelongsToFolder(file, DRIVE_FOLDER_IDS.students) || file.getSize() <= 0 || file.getMimeType() !== 'application/pdf') return { id: id, state: 'missing' }
+      const path = schoolIdPath(file.getParents(), DRIVE_FOLDER_IDS.students, [])
+      const year = (path || []).find(function(name) { return /^\d{4}-\d{4}$/.test(name) }) || ''
+      const studentFolder = (path || []).find(function(name) { return /^.+ - .+$/.test(name) }) || ''
+      return { id: id, state: 'valid', name: file.getName(), year: year, studentId: studentFolder ? studentFolder.split(' - ')[0] : '' }
+    } catch (error) {
+      const message = String(error && error.message || '')
+      return { id: id, state: /not found|does not exist|no item with|cannot find/i.test(message) ? 'missing' : 'unknown' }
+    }
+  })
+  return jsonResponse({ success: true, files: files })
+}
+
+function schoolIdPath(parents, rootId, names) {
+  while (parents.hasNext()) {
+    const parent = parents.next()
+    if (parent.getId() === rootId) return names
+    const path = schoolIdPath(parent.getParents(), rootId, names.concat([parent.getName()]))
+    if (path) return path
+  }
+  return null
 }
 
 function fileBelongsToFolder(driveFile, folderId) {

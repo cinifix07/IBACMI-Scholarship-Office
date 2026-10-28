@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
 import { fixture } from './billingFixtures.mjs'
+import { handlers as batchExports } from './batchExportFixtures.mjs'
 import JSZip from 'jszip'
 import { jsPDF } from 'jspdf'
 const { chromium } = await import(pathToFileURL('C:/Users/ACER ASPIRE 3/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'))
@@ -29,7 +30,9 @@ try {
   })
   const account = { id: 'synthetic-account', schoolId: 'TEST-0001', email: 'synthetic@example.invalid', phoneNumber: '09123456789', role: 'student', status: 'active' }
   const routeBridge = "export {useQuery,useMutation,useQueries,useConvex,useConvexConnectionState,useMutation as useAction} from '/IBACMI-Scholarship-Office/tests/billingBridge.jsx';export function ConvexProvider({children}){return children}export class ConvexReactClient{constructor(url){this.url=url}}"
-  await page.exposeFunction('billingCall', async (name) => {
+  await page.exposeFunction('billingCall', async (name, args) => {
+    if (name === 'batchExport:options') return batchExports.options.handler(data.ctx, args)
+    if (name === 'batchExport:prepare') return batchExports.prepare.handler(data.ctx, args)
     if (name === 'applicantPortal:get') { await portalGate; return { isReceivingApplicants: false } }
     if (name === 'adminAuth:login') { await loginGate; return { success: false, message: 'Synthetic test credentials rejected.' } }
     if (name === 'allinfo:list') return data.tables.allinfo
@@ -67,21 +70,19 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Login', exact: true }).isDisabled(), false)
   await page.route('**/__loading-pages-check', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style></head><body><div id="root"></div><script type="module" src="/IBACMI-Scholarship-Office/tests/loadingPagesHarness.jsx"></script></body></html>' }))
   await page.goto(base + '/__loading-pages-check')
-  await page.getByRole('button', { name: /Export to CSV Batch Info/ }).click()
-  await page.getByRole('dialog', { name: 'Choose Batch', exact: true }).locator('.admin-school-year-button').first().click()
-  await page.getByRole('dialog', { name: 'Choose School Year', exact: true }).locator('.admin-school-year-button').first().click()
-  await page.getByRole('dialog', { name: 'Choose Semester', exact: true }).locator('.admin-school-year-button').first().click()
+  await page.getByRole('button', { name: 'Download Batch', exact: true }).click()
+  const batchModal = page.getByRole('dialog', { name: 'Download Batch', exact: true })
+  await batchModal.getByLabel('Select School Year').selectOption('2025-2026')
+  await batchModal.getByRole('button', { name: 'Select All', exact: true }).click()
   const download = page.waitForEvent('download').catch(() => null)
-  await page.getByRole('alertdialog', { name: 'Download this batch information?', exact: true }).getByRole('button', { name: /Yes/ }).click()
-  await page.locator('.ibacmi-file-dialog .ibacmi-loader--success,.ibacmi-file-dialog .ibacmi-loader--error').waitFor()
+  await batchModal.getByRole('button', { name: 'Download Batch', exact: true }).click()
   const file = await download
   await file.saveAs(out + '/admin-batch-info.csv')
-  const status = page.getByRole('dialog', { name: 'File preparation status' })
-  await status.getByText('Your file is ready!', { exact: true }).waitFor()
-  assert.equal(await status.getByRole('progressbar').getAttribute('aria-valuenow'), '100')
+  await batchModal.getByText('Download Ready!', { exact: true }).waitFor()
   assert.match(await fs.readFile(out + '/admin-batch-info.csv', 'utf8'), /TEST-0001/)
   await page.screenshot({ path: out + '/admin-csv-ready.png' })
-  await status.getByRole('button', { name: 'Close', exact: true }).click()
+  await batchModal.getByRole('button', { name: 'Close', exact: true }).click()
+  const status = page.getByRole('dialog', { name: 'File preparation status' })
   await page.getByRole('button', { name: /Download School ID File/ }).click()
   await page.getByRole('dialog', { name: 'Choose School Year', exact: true }).locator('.admin-school-year-button').first().click()
   await page.locator('.admin-school-year-button').filter({ hasText: /1 file/ }).last().click()

@@ -7,6 +7,10 @@ import { reportError, resolveError } from './errorBus.js'
 import { safeErrorMessage, validSessionToken } from './errorPolicy.js'
 
 const protectedQueries = new Set([
+  'validation:options', 'validation:history',
+  'batchExport:options',
+  'noIdList:options',
+  'noIdList:progress',
   'allinfo:listByStudentId', 'studentProfile:get', 'studentProfile:checkUploadAccess', 'applicants:list', 'applicants:getCourseCounts',
   'billing:options', 'billing:workspace', 'form2:settings', 'documentation:list', 'support:listConversations', 'support:listStudentConversations', 'quickActions:list',
 ])

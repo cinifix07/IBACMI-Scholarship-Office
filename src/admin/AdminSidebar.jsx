@@ -9,6 +9,7 @@ const iconPaths = {
   school: ['m2 9 10-6 10 6-10 6-10-6 M6 11.4V17q6 5 12 0v-5.6 M22 9v8'],
   archive: ['M3 3h18v5H3z M5 8v13h14V8 M10 12h4'],
   billing: ['M14 2H4v20h16V8l-6-6 M14 2v6h6 M7 12h10 M7 16h10 M11 12v8'],
+  validation: ['M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6l-9-4', 'm8 12 3 3 5-6'],
   images: ['M3 3h18v18H3z M3 16l6-6 5 5 3-3 4 4','M16 8h.01'],
   history: ['M3 11a9 9 0 1 1 2.6 7.4 M3 4v7h7 M12 7v5l3 2'],
   forum: ['M14 14H6l-4 4V3h16v7 M10 17v3h8l4 3V10h-4'],
@@ -35,6 +36,7 @@ const groups = [
     { id: 'logs', label: 'Activity Logs', icon: 'history' },
     { id: 'billing', label: 'Billing Management', icon: 'billing' },
     { id: 'form2', label: 'Form 2 List', icon: 'billing' },
+    { id: 'validation', label: 'Validation Management', icon: 'validation' },
   ] },
   { label: 'Student services', items: [
     { id: 'support', label: 'Student Support', icon: 'forum' },

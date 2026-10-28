@@ -1,0 +1,52 @@
+.download-batch{box-sizing:border-box;width:min(94vw,720px);max-width:none;max-height:90dvh;margin:auto;padding:0;overflow:hidden;border:1px solid #fff;border-radius:26px;background:#fff;color:#63342c;box-shadow:15px 18px 50px #41212840,-6px -6px 25px #ffffff80;font-family:'Hanken Grotesk',system-ui,sans-serif;animation:batch-enter .18s ease-out}
+.download-batch[open]{display:flex;flex-direction:column}
+.download-batch *{box-sizing:border-box}
+.download-batch::backdrop{background:#30212680;backdrop-filter:blur(5px)}
+.download-batch__header{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;padding:26px 28px 20px;border-bottom:1px solid #eee5df;flex-shrink:0}
+.download-batch__eyebrow{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a34c28}
+.download-batch h2{font-size:27px;line-height:1.2;color:#792d39;margin:7px 0 10px}
+.download-batch p{font-size:13px;line-height:1.6;margin:0;color:#816b63}
+.download-batch__close{flex-shrink:0;width:36px;height:36px;border:0;border-radius:12px;background:#faf5f1;color:#792d39;font-size:25px;cursor:pointer}
+.download-batch__body{padding:22px 28px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
+.download-batch fieldset{padding:0;margin:0;border:0;min-width:0}
+.download-batch__field{display:grid;gap:8px;font-size:13px;font-weight:700;margin-bottom:18px}
+.download-batch select,.download-batch input[type=search]{width:100%;min-width:0;min-height:46px;padding:12px 14px;font:inherit;font-weight:400;border:1px solid #e5d9d2;border-radius:12px;background:#faf8f7;color:#53362f;box-shadow:inset 3px 3px 7px #e7dfdb,inset -3px -3px 7px #fff}
+.download-batch__section-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:22px 0 12px}
+.download-batch h3{font-size:15px;color:#792d39;margin:0}
+.download-batch__section-title>span{font-size:12px;background:#fff1e4;color:#985020;border-radius:20px;padding:6px 10px}
+.download-batch__selection-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.download-batch__selection-actions button{min-height:38px;border:1px solid #e7d6c9;border-radius:10px;background:#fffaf6;padding:8px 12px;font:700 12px 'Hanken Grotesk',system-ui,sans-serif;color:#8b462a;cursor:pointer}
+.download-batch__selection-actions>span{font-size:11px;color:#8b746b}
+.download-batch__list{max-height:240px;overflow-y:auto;border:1px solid #eee4dd;border-radius:14px;background:#fdfbf9;overscroll-behavior:contain}
+.download-batch__row{display:flex;align-items:center;gap:12px;padding:13px 14px;min-height:52px;font-size:13px;cursor:pointer;border-bottom:1px solid #eee6df}
+.download-batch__row:last-child{border-bottom:0}
+.download-batch__row:has(input:checked){background:#fff1e5}
+.download-batch__row input{width:19px;height:19px;flex-shrink:0;accent-color:#df752b}
+.download-batch__row>span{overflow-wrap:anywhere;min-width:0}
+.download-batch__row>span:last-child{margin-left:auto;text-align:right;font-size:11px;color:#80675c}
+.download-batch__empty{padding:22px;text-align:center}
+.download-batch__summary{margin-top:20px;padding:18px;border:1px solid #f0ddd0;border-radius:16px;background:linear-gradient(145deg,#fff8f1,#faf4ef);box-shadow:4px 4px 12px #e7ded657,-4px -4px 12px #fff}
+.download-batch dl{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:17px 0}
+.download-batch dl div{min-width:0}
+.download-batch dt{font-size:11px;color:#8a7066;margin-bottom:5px}
+.download-batch dd{margin:0;font-size:15px;font-weight:700;overflow-wrap:anywhere}
+.download-batch__summary p{font-size:11px}
+.download-batch__footer{display:flex;justify-content:flex-end;gap:10px;padding:18px 28px;border-top:1px solid #eee5df;background:#fffdfb;flex-shrink:0}
+.download-batch__footer button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:46px;border-radius:12px;padding:12px 20px;font:700 13px 'Hanken Grotesk',system-ui,sans-serif;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.download-batch__primary{border:1px solid #d96c26;background:linear-gradient(135deg,#f29545,#dc6d27);color:#fff;box-shadow:4px 4px 10px #d9ab8840}
+.download-batch__secondary{border:1px solid #e3d4cb;background:#fff;color:#792d39}
+.download-batch button:not(:disabled):hover{transform:translateY(-1px);box-shadow:3px 5px 10px #68403020}
+.download-batch button:not(:disabled):active{transform:translateY(1px)}
+.download-batch button:disabled{opacity:.5;cursor:not-allowed}
+.download-batch :focus-visible{outline:3px solid #e8a46e;outline-offset:3px}
+.download-batch__notice{padding:15px;margin-top:16px;border-radius:12px;background:#fff4e6;border:1px solid #efd6bc;font-size:14px}
+.download-batch__notice.is-success{background:#f3f9ee;border-color:#d1e5bf;color:#406a2f}
+.download-batch__notice.is-error{background:#fff3f1;color:#8f303d}
+.download-batch__notice strong{display:block;margin-bottom:5px}
+.download-batch__preparing{position:absolute;inset:0;z-index:2;background:#fffcf9;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;overflow-y:auto}
+.download-batch__preparing>svg{width:32px;height:32px;flex-shrink:0;color:#dc762d;margin-bottom:15px}
+.download-batch__preparing h3{font-size:23px;margin-bottom:12px}
+.download-batch__preparing>p{max-width:340px;margin-bottom:16px}
+@keyframes batch-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:540px){.download-batch{width:min(96vw,720px);max-height:94dvh;border-radius:20px}.download-batch__header{padding:20px 18px 16px}.download-batch h2{font-size:23px}.download-batch__body{padding:18px}.download-batch__footer{padding:14px 18px;flex-direction:column-reverse}.download-batch__footer button{width:100%}.download-batch__row{gap:8px;padding:12px 10px}.download-batch__row>span:last-child{max-width:100px}}
+@media(prefers-reduced-motion:reduce){.download-batch{animation:none}.download-batch button{transition:none}.download-batch::backdrop{backdrop-filter:none}}
