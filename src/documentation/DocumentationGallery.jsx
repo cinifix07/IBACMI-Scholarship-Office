@@ -1,6 +1,7 @@
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useQuery } from 'convex/react'
+import { useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import DocumentationImage from './DocumentationImage'
 import DocumentationViewer from './DocumentationViewer'
@@ -56,6 +57,7 @@ export default function DocumentationGallery(){
   const imageCache=useMemo(()=>createDocumentationImageCache(),[])
   useEffect(()=>()=>imageCache.destroy(),[imageCache])
   useEffect(()=>{imageCache.retain((images||[]).map(documentationImageUrl))},[images,imageCache])
-  if(!images?.length)return null
+  if(images === undefined)return <IBACMILoader message="Loading documentation gallery…" />
+  if(!images.length)return null
   return <section className="documentation-gallery" aria-labelledby="documentation-gallery-title"><header className="documentation-gallery-heading"><span>IBACMI · Scholarship Office</span><h2 id="documentation-gallery-title">Scholarship Office Documentation</h2><p>Explore official activities, announcements, and memorable moments from the Scholarship Office.</p></header><Carousel images={images} imageCache={imageCache} /></section>
 }

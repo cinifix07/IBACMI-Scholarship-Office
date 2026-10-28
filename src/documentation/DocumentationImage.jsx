@@ -1,3 +1,4 @@
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useEffect,useRef,useState } from 'react'
 import { documentationImageUrl } from './api'
 
@@ -17,7 +18,7 @@ export default function DocumentationImage({image,sessionToken,imageCache,loadin
   },[url,sessionToken,imageCache,loading])
   const src=sessionToken||imageCache?privateUrl:url
   return <span ref={ref} className={`documentation-image ${className} ${state==='loading'?'is-loading':''}`}>
-    {state==='loading'&&<span className="documentation-skeleton" aria-hidden="true" />}
+    {state==='loading'&&<IBACMILoader variant="image" message="Loading image…" />}
     {state==='error'?<span className="documentation-image-error" role="img" aria-label="Documentation image unavailable">Image unavailable</span>:src&&<img src={src} alt={image.title||'Scholarship Office documentation'} loading={loading} decoding="async" width={image.width} height={image.height} onLoad={()=>setState('ready')} onError={()=>setState('error')} />}
   </span>
 }

@@ -27,3 +27,31 @@ export function useMutation(ref) {
     return result
   },[name])
 }
+
+// The production safe-query adapter uses Convex's supported error-as-value API.
+export function useQueries(queries) {
+  const encoded = JSON.stringify(Object.fromEntries(Object.entries(queries).map(([key, value]) => [key, { name: getFunctionName(value.query), args: value.args }])))
+  const [snapshot, setSnapshot] = useState(null)
+  const [revision, setRevision] = useState(0)
+  useEffect(() => {
+    const refresh = () => setRevision(value => value + 1)
+    window.addEventListener('billing-refresh', refresh)
+    return () => window.removeEventListener('billing-refresh', refresh)
+  }, [])
+  useEffect(() => {
+    let active = true
+    const entries = Object.entries(JSON.parse(encoded))
+    Promise.all(entries.map(async ([key, request]) => {
+      try { return [key, await window.billingCall(request.name, request.args)] } catch (error) { return [key, new Error(error.message)] }
+    })).then(results => { if (active) setSnapshot({ encoded, values: Object.fromEntries(results) }) })
+    return () => { active = false }
+  }, [encoded, revision])
+  return snapshot?.encoded === encoded ? snapshot.values : {}
+}
+const testClient = { url: 'https://isolated-test.convex.cloud', connectionState: () => window.testConnectionState || { isWebSocketConnected: true, hasEverConnected: true, connectionRetries: 0 } }
+export function useConvex() { return testClient }
+export function useConvexConnectionState() {
+  const [state, setState] = useState(() => window.testConnectionState || { isWebSocketConnected: true, hasEverConnected: true, connectionRetries: 0 })
+  useEffect(() => { const update = () => setState({ ...window.testConnectionState }); window.addEventListener('test-connection', update); return () => window.removeEventListener('test-connection', update) }, [])
+  return state
+}

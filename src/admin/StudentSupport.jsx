@@ -1,5 +1,7 @@
+import { userErrorMessage } from '../errors/errorBus.js'
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import './student-support.css'
 
@@ -65,7 +67,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
   useEffect(() => {
     if (!sessionToken) return
     migrateLegacy({ sessionToken }).catch((error) => {
-      setNotice(error.message || 'Unable to prepare existing requests.')
+      setNotice(userErrorMessage(error, 'Unable to prepare existing requests.', 'admin.StudentSupport'))
       setNoticeError(true)
     })
   }, [sessionToken, requestCount, migrateLegacy])
@@ -134,7 +136,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
       setDraft('')
       if (composerTextareaRef.current) composerTextareaRef.current.style.height = ''
     } catch (error) {
-      setNotice(error.message || 'Message could not be sent. Please try again.')
+      setNotice(userErrorMessage(error, 'Message could not be sent. Please try again.', 'admin.StudentSupport'))
       setNoticeError(true)
     } finally {
       isSendingRef.current = false
@@ -168,7 +170,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
         : 'Support links saved.')
       setNoticeError(false)
     } catch (error) {
-      setNotice(error.message || 'Support links could not be saved.')
+      setNotice(userErrorMessage(error, 'Support links could not be saved.', 'admin.StudentSupport'))
       setNoticeError(true)
     } finally {
       setIsSaving(false)
@@ -181,7 +183,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
     try {
       await setStatus({ sessionToken, conversationId: selected._id, status: next })
     } catch (error) {
-      setNotice(error.message || 'Conversation status could not be updated.')
+      setNotice(userErrorMessage(error, 'Conversation status could not be updated.', 'admin.StudentSupport'))
       setNoticeError(true)
     }
   }
@@ -195,7 +197,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
       setNotice('Requests and chat history were archived and cleared.')
       setNoticeError(false)
     } catch (error) {
-      setNotice(error.message || 'Messages could not be cleared.')
+      setNotice(userErrorMessage(error, 'Messages could not be cleared.', 'admin.StudentSupport'))
       setNoticeError(true)
     } finally {
       setIsClearingLocal(false)
@@ -213,7 +215,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
         <div className="support-toolbar">
           <span className="support-total"><b>{requestCount}</b> total requests</span>
           <button type="button" className="support-secondary-button" onClick={onExport} disabled={!requestCount}>Export responses</button>
-          <button type="button" className="support-danger-button" onClick={() => { if (window.confirm(`Move ${requestCount} student requests and their chat history to the archive, then remove them from the active inbox? You can restore archived records later.`)) clearMessages() }} disabled={!requestCount || isClearingLocal}>{isClearingLocal ? 'Archiving…' : 'Clear all'}</button>
+          <button type="button" className="support-danger-button" onClick={() => { if (window.confirm(`Move ${requestCount} student requests and their chat history to the archive, then remove them from the active inbox? You can restore archived records later.`)) clearMessages() }} disabled={!requestCount || isClearingLocal}>{isClearingLocal ? <IBACMILoader variant="inline" message="Archiving requests…" /> : 'Clear all'}</button>
           <button type="button" className="admin-modal-close support-close" aria-label="Close Student Support" onClick={onClose}><span className="material-symbols-outlined">close</span></button>
         </div>
       </header>
@@ -228,7 +230,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
               <label>Support URL<input type="url" value={linkValues[`link${number}Url`]} onChange={(event) => { setLinksTouched(true); setLinks((current) => ({ ...current, [`link${number}Url`]: event.target.value })) }} placeholder="https://example.com/support" /></label>
             </fieldset>
           ))}
-          <button type="submit" className="support-primary-button" disabled={isSaving}>{isSaving ? 'Saving links…' : 'Save Support Links'}</button>
+          <button type="submit" className="support-primary-button" disabled={isSaving}>{isSaving ? <IBACMILoader variant="inline" message="Saving links…" /> : 'Save Support Links'}</button>
         </form>
       </details>
 
@@ -243,7 +245,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
             {[['all', 'All'], ['students', 'Student Requests'], ['visitors', 'Visitor Chats'], ['unread', 'Unread'], ['replied', 'Replied'], ['resolved', 'Resolved']].map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
           </div>
           <div className="support-conversation-list">
-            {conversations === undefined && <div className="support-list-skeleton" aria-label="Loading conversations">{[1, 2, 3, 4].map((row) => <div className="support-skeleton-row" key={row}><i /><span><b /><b /></span></div>)}</div>}
+            {conversations === undefined && <IBACMILoader variant="compact" message="Connecting to your conversations…" />}
             {conversations?.length === 0 && <div className="support-list-state">No student requests yet.</div>}
             {filtered.map((item) => {
               const latest = item.messages.at(-1)
@@ -285,7 +287,7 @@ export default function StudentSupport({ sessionToken, requestCount, onExport, o
             <form className="support-composer" onSubmit={(event) => { event.preventDefault(); submitMessage() }}>
               <div className="support-composer-input">
                 <textarea ref={composerTextareaRef} value={draft} onChange={resizeComposer} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitMessage() } }} maxLength={2000} placeholder="Write a helpful reply…" aria-label="Write a message" />
-                <button className="support-send-button" type="submit" aria-label={isSending ? 'Sending message' : 'Send message'} disabled={!draft.trim() || isSending}><span className="material-symbols-outlined">{isSending ? 'hourglass_top' : 'send'}</span></button>
+                <button className="support-send-button" type="submit" aria-label={isSending ? 'Sending message' : 'Send message'} disabled={!draft.trim() || isSending}>{isSending ? <IBACMILoader variant="inline" message="" /> : <span className="material-symbols-outlined" aria-hidden="true">send</span>}</button>
               </div>
               <div className="support-composer-meta"><span>{draft.length}/2000 · Enter to send, Shift + Enter for a new line</span><span>{isSending ? 'Sending…' : 'Messages are saved to this conversation'}</span></div>
             </form>

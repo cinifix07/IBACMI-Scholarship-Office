@@ -1,0 +1,298 @@
+import IBACMILoader from '../components/IBACMILoader.jsx'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+import './student-support.css'
+
+const emptyLinks = { link1Name: '', link1Url: '', link2Name: '', link2Url: '' }
+
+function initials(name = '') {
+  return String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'S'
+}
+
+function createClientMessageId() {
+  const cryptoApi = globalThis.crypto
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    try { return cryptoApi.randomUUID() } catch { /* Use the compatible fallback below. */ }
+  }
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    try {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16))
+      return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+    } catch { /* Use the compatible fallback below. */ }
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}
+
+function clock(timestamp) {
+  if (!timestamp) return ''
+  return new Intl.DateTimeFormat('en-PH', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(timestamp))
+}
+
+function sameDay(first, second) {
+  const left = new Date(first)
+  const right = new Date(second)
+  return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate()
+}
+
+export default function StudentSupport({ sessionToken, requestCount, onExport, onClose }) {
+  const [selectedId, setSelectedId] = useState(null)
+  const [mobileListOnly, setMobileListOnly] = useState(() => window.matchMedia('(max-width: 767px)').matches)
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('all')
+  const [draft, setDraft] = useState('')
+  const [isSending, setIsSending] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isClearingLocal, setIsClearingLocal] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [noticeError, setNoticeError] = useState(false)
+  const [links, setLinks] = useState(emptyLinks)
+  const [linksTouched, setLinksTouched] = useState(false)
+  const messageHistoryRef = useRef(null)
+  const composerTextareaRef = useRef(null)
+  const isSendingRef = useRef(false)
+  const shouldPinToBottomRef = useRef(true)
+  const previousConversationRef = useRef(null)
+  const previousMessageCountRef = useRef(0)
+  const conversations = useQuery(api.support.listConversations, sessionToken ? { sessionToken } : 'skip')
+  const savedLinks = useQuery(api.support.getSettings)
+  const migrateLegacy = useMutation(api.support.migrateLegacyRequests)
+  const sendMessage = useMutation(api.support.sendMessage)
+  const markRead = useMutation(api.support.markRead)
+  const setStatus = useMutation(api.support.setStatus)
+  const saveSettings = useMutation(api.support.saveSettings)
+  const clearAll = useMutation(api.support.clearAll)
+
+  useEffect(() => {
+    if (!sessionToken) return
+    migrateLegacy({ sessionToken }).catch((error) => {
+      setNotice(error.message || 'Unable to prepare existing requests.')
+      setNoticeError(true)
+    })
+  }, [sessionToken, requestCount, migrateLegacy])
+
+  useEffect(() => {
+    if (!notice) return undefined
+    const timer = window.setTimeout(() => setNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  const linkValues = linksTouched ? links : { ...emptyLinks, ...savedLinks }
+
+  const filtered = useMemo(() => (conversations ?? []).filter((item) => {
+    const query = search.trim().toLowerCase()
+    const matchesSearch = !query || [item.studentName, item.studentId, item.email, item.visitorType, item.visitorStudentName].some((value) => String(value ?? '').toLowerCase().includes(query))
+    const latest = item.messages?.at(-1)
+    const isVisitor = item.source === 'Visitor Chat' || Boolean(item.visitorSessionHash)
+    const matchesFilter = filter === 'all' ||
+      (filter === 'students' && !isVisitor) ||
+      (filter === 'visitors' && isVisitor) ||
+      (filter === 'unread' && item.unreadCount > 0) ||
+      (filter === 'replied' && item.messages?.some((message) => message.senderRole === 'admin')) ||
+      (filter === 'resolved' && item.status === 'resolved')
+    return matchesSearch && matchesFilter && latest
+  }), [conversations, search, filter])
+  const selected = mobileListOnly ? null : (conversations ?? []).find((item) => item._id === selectedId) ?? filtered[0] ?? null
+  const selectedConversationId = selected?._id
+  const messages = selected?.messages ?? []
+
+  useEffect(() => {
+    const history = messageHistoryRef.current
+    if (!history || !selectedConversationId) return
+
+    const conversationChanged = previousConversationRef.current !== selectedConversationId
+    const messagesChanged = previousMessageCountRef.current !== messages.length
+    if (conversationChanged || (messagesChanged && shouldPinToBottomRef.current)) {
+      history.scrollTo({ top: history.scrollHeight, behavior: 'smooth' })
+      shouldPinToBottomRef.current = true
+    }
+    previousConversationRef.current = selectedConversationId
+    previousMessageCountRef.current = messages.length
+  }, [selectedConversationId, messages.length])
+
+  useEffect(() => {
+    if (sessionToken && selected?._id) markRead({ sessionToken, conversationId: selected._id }).catch(() => {})
+  }, [sessionToken, selected?._id, markRead])
+
+  const selectConversation = (conversation) => {
+    setSelectedId(conversation._id)
+    setMobileListOnly(false)
+    previousConversationRef.current = null
+    setNotice('')
+    setNoticeError(false)
+  }
+
+  const submitMessage = async () => {
+    const content = draft.trim()
+    if (!content || !selected || isSendingRef.current) return
+    isSendingRef.current = true
+    shouldPinToBottomRef.current = true
+    setIsSending(true)
+    setNotice('')
+    setNoticeError(false)
+    try {
+      await sendMessage({ sessionToken, conversationId: selected._id, content, clientMessageId: createClientMessageId() })
+      setDraft('')
+      if (composerTextareaRef.current) composerTextareaRef.current.style.height = ''
+    } catch (error) {
+      setNotice(error.message || 'Message could not be sent. Please try again.')
+      setNoticeError(true)
+    } finally {
+      isSendingRef.current = false
+      setIsSending(false)
+    }
+  }
+
+  const resizeComposer = (event) => {
+    setDraft(event.target.value)
+    event.target.style.height = 'auto'
+    event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`
+  }
+
+  const trackMessageScroll = (event) => {
+    const history = event.currentTarget
+    shouldPinToBottomRef.current = history.scrollHeight - history.scrollTop - history.clientHeight < 80
+  }
+
+  const saveSupportLinks = async (event) => {
+    event.preventDefault()
+    setIsSaving(true)
+    setNotice('')
+    try {
+      const result = await saveSettings({ sessionToken, ...linkValues })
+      if (result.settings) {
+        setLinks(result.settings)
+        setLinksTouched(true)
+      }
+      setNotice(result.skippedNames?.length
+        ? `Saved complete links. Add a URL for: ${result.skippedNames.join(', ')}.`
+        : 'Support links saved.')
+      setNoticeError(false)
+    } catch (error) {
+      setNotice(error.message || 'Support links could not be saved.')
+      setNoticeError(true)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const changeStatus = async () => {
+    if (!selected) return
+    const next = selected.status === 'resolved' ? 'open' : 'resolved'
+    try {
+      await setStatus({ sessionToken, conversationId: selected._id, status: next })
+    } catch (error) {
+      setNotice(error.message || 'Conversation status could not be updated.')
+      setNoticeError(true)
+    }
+  }
+
+  const clearMessages = async () => {
+    if (isClearingLocal) return
+    setIsClearingLocal(true)
+    try {
+      await clearAll({ sessionToken })
+      setSelectedId(null)
+      setNotice('Requests and chat history were archived and cleared.')
+      setNoticeError(false)
+    } catch (error) {
+      setNotice(error.message || 'Messages could not be cleared.')
+      setNoticeError(true)
+    } finally {
+      setIsClearingLocal(false)
+    }
+  }
+
+  return (
+    <div className="support-modal">
+      <header className="support-titlebar">
+        <div>
+          <span className="support-eyebrow">STUDENT SERVICES</span>
+          <h2 id="admin-quick-actions-title">Student Support</h2>
+          <p>Requests, conversations, and support settings in one place.</p>
+        </div>
+        <div className="support-toolbar">
+          <span className="support-total"><b>{requestCount}</b> total requests</span>
+          <button type="button" className="support-secondary-button" onClick={onExport} disabled={!requestCount}>Export responses</button>
+          <button type="button" className="support-danger-button" onClick={() => { if (window.confirm(`Move ${requestCount} student requests and their chat history to the archive, then remove them from the active inbox? You can restore archived records later.`)) clearMessages() }} disabled={!requestCount || isClearingLocal}>{isClearingLocal ? <IBACMILoader variant="inline" message="Archiving requests…" /> : 'Clear all'}</button>
+          <button type="button" className="admin-modal-close support-close" aria-label="Close Student Support" onClick={onClose}><span className="material-symbols-outlined">close</span></button>
+        </div>
+      </header>
+
+      <details className="support-settings">
+        <summary><span className="material-symbols-outlined">settings</span> Support Links Configuration <span className="support-settings-hint">Student portal links</span></summary>
+        <form onSubmit={saveSupportLinks} className="support-settings-grid">
+          {[1, 2].map((number) => (
+            <fieldset key={number}>
+              <legend>Support Link {number}</legend>
+              <label>Link name<input value={linkValues[`link${number}Name`]} maxLength={80} onChange={(event) => { setLinksTouched(true); setLinks((current) => ({ ...current, [`link${number}Name`]: event.target.value })) }} placeholder={number === 1 ? 'Facebook Messenger' : 'Student Support Portal'} /></label>
+              <label>Support URL<input type="url" value={linkValues[`link${number}Url`]} onChange={(event) => { setLinksTouched(true); setLinks((current) => ({ ...current, [`link${number}Url`]: event.target.value })) }} placeholder="https://example.com/support" /></label>
+            </fieldset>
+          ))}
+          <button type="submit" className="support-primary-button" disabled={isSaving}>{isSaving ? <IBACMILoader variant="inline" message="Saving links…" /> : 'Save Support Links'}</button>
+        </form>
+      </details>
+
+      {notice && <div className={`support-notice ${noticeError ? 'support-notice--error' : ''}`} role={noticeError ? 'alert' : 'status'}>{notice}</div>}
+      {!sessionToken && <div className="support-notice support-notice--error">Your administrator session needs to be refreshed. Sign out and sign back in to manage support.</div>}
+
+      <div className={`support-chat ${selected && !mobileListOnly ? 'support-chat--selected' : ''}`}>
+        <aside className="support-inbox">
+          <div className="support-inbox-heading"><div><h3>Conversations</h3><span>{conversations?.length ?? '…'} conversations</span></div><span className="material-symbols-outlined">forum</span></div>
+          <label className="support-search"><span className="material-symbols-outlined">search</span><input aria-label="Search conversations" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, ID or email" /></label>
+          <div className="support-filters" role="tablist" aria-label="Conversation filters">
+            {[['all', 'All'], ['students', 'Student Requests'], ['visitors', 'Visitor Chats'], ['unread', 'Unread'], ['replied', 'Replied'], ['resolved', 'Resolved']].map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
+          </div>
+          <div className="support-conversation-list">
+            {conversations === undefined && <IBACMILoader variant="compact" message="Connecting to your conversations…" />}
+            {conversations?.length === 0 && <div className="support-list-state">No student requests yet.</div>}
+            {filtered.map((item) => {
+              const latest = item.messages.at(-1)
+              const isVisitor = item.source === 'Visitor Chat' || Boolean(item.visitorSessionHash)
+              const descriptor = isVisitor
+                ? `${item.visitorType || 'Visitor'} · Visitor${item.visitorStudentName ? ` · Student: ${item.visitorStudentName}` : ''}${item.studentId ? ` · ID: ${item.studentId}` : ''}`
+                : `${item.studentPortal ? 'Student Portal · ' : ''}${item.studentId || item.email}${item.tesAwardNumber ? ` · TES ${item.tesAwardNumber}` : ''}`
+              return <button type="button" key={item._id} className={`support-conversation ${selected?._id === item._id ? 'is-active' : ''}`} onClick={() => selectConversation(item)}>
+                <span className="support-avatar">{initials(item.studentName)}</span>
+                <span className="support-conversation-copy"><strong>{item.studentName || 'Student'}{isVisitor && <span className="support-visitor-badge">Visitor</span>}{item.studentPortal && <span className="support-portal-badge">Student Portal</span>}</strong><small>{descriptor}</small><span>{latest.content}</span></span>
+                <span className="support-conversation-meta"><time>{clock(latest.createdAt)}</time>{item.unreadCount > 0 && <i aria-label={`${item.unreadCount} unread messages`}>{item.unreadCount}</i>}<small className={item.status === 'resolved' ? 'is-resolved' : ''}>{item.status}</small></span>
+              </button>
+            })}
+            {conversations?.length > 0 && filtered.length === 0 && <div className="support-list-state">No conversations match those filters.</div>}
+          </div>
+        </aside>
+
+        <section className="support-thread" aria-label="Student conversation">
+          {selected ? <>
+            <header className="support-thread-header">
+              <button type="button" className="support-back-button" onClick={() => setMobileListOnly(true)}>← Back</button>
+              <span className="support-avatar support-avatar--large">{initials(selected.studentName)}</span>
+              <div className="support-student-id"><h3>{selected.studentName || 'Student'}{(selected.source === 'Visitor Chat' || selected.visitorSessionHash) && <span className="support-visitor-badge">Visitor · {selected.visitorType || 'Other Visitor'}</span>}{selected.studentPortal && <span className="support-portal-badge">Student Portal</span>}</h3><span>{selected.source === 'Visitor Chat' || selected.visitorSessionHash ? `${selected.studentId ? `School ID: ${selected.studentId} · ` : ''}${selected.visitorStudentName ? `Student: ${selected.visitorStudentName} · ` : ''}Visitor chat` : `${selected.studentId || 'No student ID'} · ${selected.email} · ${selected.source || 'Student Portal'}${selected.tesAwardNumber ? ` · TES Award No. ${selected.tesAwardNumber}` : ''}`}</span></div>
+              <span className={`support-status-pill ${selected.status === 'resolved' ? 'is-resolved' : ''}`}>{selected.status}</span>
+              <button type="button" className="support-resolve-button" onClick={changeStatus}>{selected.status === 'resolved' ? 'Reopen' : 'Mark resolved'}</button>
+            </header>
+            <div className="support-message-history" ref={messageHistoryRef} onScroll={trackMessageScroll}>
+              {messages.length === 0 && <div className="support-list-state">No messages in this conversation yet.</div>}
+              {messages.map((message, index) => {
+                const previous = messages[index - 1]
+                const showDate = !previous || !sameDay(previous.createdAt, message.createdAt)
+                const own = message.senderRole === 'admin'
+                return <div key={message._id}>
+                  {showDate && <div className="support-date-divider"><span>{new Intl.DateTimeFormat('en-PH', { dateStyle: 'full' }).format(new Date(message.createdAt))}</span></div>}
+                  <div className={`support-message-row ${own ? 'is-own' : ''}`}><span className="support-avatar support-avatar--message">{own ? 'A' : initials(selected.studentName)}</span><div className="support-message-body"><div className={`support-bubble ${own ? 'is-own' : ''}`}>{message.content}</div><time>{clock(message.createdAt)}</time></div></div>
+                </div>
+              })}
+            </div>
+            <form className="support-composer" onSubmit={(event) => { event.preventDefault(); submitMessage() }}>
+              <div className="support-composer-input">
+                <textarea ref={composerTextareaRef} value={draft} onChange={resizeComposer} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitMessage() } }} maxLength={2000} placeholder="Write a helpful reply…" aria-label="Write a message" />
+                <button className="support-send-button" type="submit" aria-label={isSending ? 'Sending message' : 'Send message'} disabled={!draft.trim() || isSending}>{isSending ? <IBACMILoader variant="inline" message="" /> : <span className="material-symbols-outlined" aria-hidden="true">send</span>}</button>
+              </div>
+              <div className="support-composer-meta"><span>{draft.length}/2000 · Enter to send, Shift + Enter for a new line</span><span>{isSending ? 'Sending…' : 'Messages are saved to this conversation'}</span></div>
+            </form>
+          </> : <div className="support-empty-thread"><span className="material-symbols-outlined">forum</span><h3>Select a conversation</h3><p>Choose a student request to review its history and reply.</p></div>}
+        </section>
+      </div>
+    </div>
+  )
+}

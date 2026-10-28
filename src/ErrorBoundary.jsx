@@ -1,84 +1,20 @@
 import React from 'react'
+import { reportError, resolveError } from './errors/errorBus.js'
 
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props)
-    this.state = { hasError: false, error: null }
+export default class ErrorBoundary extends React.Component {
+  state = { hasError: false }
+  pending = null
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(error) {
+    this.pending?.reject(error)
+    this.pending = null
+    reportError(error, { operation: 'application.render', source: 'application.render', kind: 'render', canClose: false, retry: () => new Promise((resolve, reject) => { this.pending = { resolve, reject }; this.setState({ hasError: false }) }) })
   }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error }
+  componentDidUpdate() {
+    if (!this.state.hasError && this.pending) { this.pending.resolve(); this.pending = null; resolveError('application.render') }
   }
-
-  componentDidCatch(error, info) {
-    console.error('ErrorBoundary caught', error, info)
-  }
-
+  componentWillUnmount() { this.pending?.resolve(); resolveError('application.render') }
   render() {
-    if (this.state.hasError) {
-      const message = this.state.error?.message || 'An unexpected error occurred.'
-
-      return (
-        <div style={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-          boxSizing: 'border-box',
-          background: '#fbfaf8',
-          color: '#1c1b1b',
-          fontFamily: "'Hanken Grotesk', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-        }}>
-          <div style={{ maxWidth: 720 }}>
-            <h2 style={{ marginTop: 0 }}>Something went wrong</h2>
-            <p style={{ color: '#584237', fontWeight: 700 }}>{message}</p>
-            <p style={{ color: '#584237' }}>
-              If the message mentions Convex functions (for example "Could not find public function"),
-              make sure the Convex dev server is running (`npx convex dev`) or that
-              `VITE_CONVEX_URL` points to a deployed Convex app.
-            </p>
-
-            <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                style={{
-                  background: '#ea580c',
-                  color: '#fff',
-                  border: 0,
-                  padding: '10px 14px',
-                  borderRadius: 8,
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                }}
-              >
-                Reload
-              </button>
-
-              <button
-                type="button"
-                onClick={() => alert('Run `npx convex dev` in the project root or set VITE_CONVEX_URL.')}
-                style={{
-                  background: '#fff',
-                  color: '#1c1b1b',
-                  border: '1px solid rgba(150,116,101,0.6)',
-                  padding: '10px 14px',
-                  borderRadius: 8,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                Help
-              </button>
-            </div>
-          </div>
-        </div>
-      )
-    }
-
-    return this.props.children
+    return this.state.hasError ? <main className="ibacmi-error-fallback"><p>This page could not be loaded. Please use the recovery options to try again.</p></main> : this.props.children
   }
 }
-
-export default ErrorBoundary

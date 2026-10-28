@@ -1,3 +1,6 @@
+import ServerErrorProvider from './errors/ServerErrorProvider.jsx'
+import { validStoredSession } from './errors/errorPolicy.js'
+import { resetErrors } from './errors/errorBus.js'
 import { useEffect, useState } from 'react'
 import Admin from './admin/admin.jsx'
 import AllLanding from './landingpage/alllanding.jsx'
@@ -12,7 +15,7 @@ function getStoredAdminSession() {
   try {
     const storedSession = window.localStorage.getItem(ADMIN_SESSION_STORAGE_KEY)
     const session = storedSession ? JSON.parse(storedSession) : null
-    return session?.sessionToken ? session : null
+    return validStoredSession(session, 'admin') ? session : null
   } catch {
     return null
   }
@@ -30,7 +33,7 @@ function getStoredStudentSession() {
   try {
     const storedSession = window.localStorage.getItem(STUDENT_SESSION_STORAGE_KEY)
     const session = storedSession ? JSON.parse(storedSession) : null
-    return session?.sessionToken ? session : null
+    return validStoredSession(session, 'student') ? session : null
   } catch {
     return null
   }
@@ -43,16 +46,28 @@ function App() {
     () => getStoredStudentViewOpen() && Boolean(getStoredStudentSession()?.sessionToken),
   )
 
+  const [initialSignIn,setInitialSignIn] = useState(false)
+  const signInAgain = () => {
+    resetErrors()
+    for (const key of [ADMIN_SESSION_STORAGE_KEY, STUDENT_SESSION_STORAGE_KEY, STUDENT_VIEW_STORAGE_KEY]) { try { window.localStorage.removeItem(key) } catch { /* Storage may be unavailable. */ } }
+    setAdminSession(null); setStudentSession(null); setIsStudentViewOpen(false); setInitialSignIn(true)
+  }
+
   const handleAdminLogout = () => {
+    resetErrors()
+    setInitialSignIn(false)
     setAdminSession(null)
   }
 
   const handleStudentLogout = () => {
+    resetErrors()
+    setInitialSignIn(false)
     setStudentSession(null)
     setIsStudentViewOpen(false)
   }
 
   const handleLoginSuccess = (account) => {
+    setInitialSignIn(false)
     if (account?.role === 'student') {
       setAdminSession(null)
       setStudentSession(account)
@@ -131,35 +146,8 @@ function App() {
     }
   }, [isStudentViewOpen, studentSession])
 
-  if (adminSession) {
-    return (
-      <ErrorBoundary>
-        <Admin adminSession={adminSession} onLogout={handleAdminLogout} />
-      </ErrorBoundary>
-    )
-  }
-
-  if (isStudentViewOpen) {
-    return (
-      <ErrorBoundary>
-        <Student
-          key={studentSession?.schoolId ?? 'student'}
-          studentSession={studentSession}
-          onLogout={handleStudentLogout}
-          onStudentSessionUpdate={handleStudentSessionUpdate}
-        />
-      </ErrorBoundary>
-    )
-  }
-
-  return (
-    <ErrorBoundary>
-      <AllLanding
-        onAdminLoginSuccess={handleLoginSuccess}
-        onStudentRegistrationSuccess={handleStudentRegistrationSuccess}
-      />
-    </ErrorBoundary>
-  )
+  const session=adminSession||studentSession
+  const content=adminSession ? <Admin adminSession={adminSession} onLogout={handleAdminLogout} /> : isStudentViewOpen ? <Student key={studentSession?.schoolId} studentSession={studentSession} onLogout={handleStudentLogout} onStudentSessionUpdate={handleStudentSessionUpdate} /> : <AllLanding key={initialSignIn ? 'sign-in' : 'public'} initialSignIn={initialSignIn} onAdminLoginSuccess={handleLoginSuccess} onStudentRegistrationSuccess={handleStudentRegistrationSuccess} />
+  return <ServerErrorProvider session={session} onSignIn={signInAgain}><ErrorBoundary key={session?.id||session?.schoolId||session?.role||'public'}>{content}</ErrorBoundary></ServerErrorProvider>
 }
-
 export default App

@@ -1,5 +1,8 @@
+import { userErrorMessage } from '../errors/errorBus.js'
+import IBACMILoader from '../components/IBACMILoader.jsx'
+import useFileOperation from '../components/useFileOperation.js'
 import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import './billing-management.css'
 import './form2-management.css'
@@ -33,7 +36,9 @@ export default function Form2Management({sessionToken,onClose,onOpenBilling}) {
   const [mode,setMode]=useState('all'),[batches,setBatches]=useState([]),[batchSearch,setBatchSearch]=useState('')
   const [sourceId,setSourceId]=useState(''),[search,setSearch]=useState(''),[page,setPage]=useState(1)
   const [refresh,setRefresh]=useState(0),[response,setResponse]=useState(null)
-  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('')
+  const [working,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('')
+  const {operation,run:runFile,retry}=useFileOperation()
+  const busy=working||operation?.state==='loading'
   const [reference,setReference]=useState(''),[billingDate,setBillingDate]=useState(()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'}))
   const [reportId,setReportId]=useState(null)
   const workspace=useQuery(api.billing.workspace,year?{sessionToken,schoolYear:year,semester}:'skip')
@@ -45,28 +50,34 @@ export default function Form2Management({sessionToken,onClose,onOpenBilling}) {
     const selection=JSON.parse(requestKey)
     if(!selection.year)return
     const request=selection.mode==='specific'&&!selection.batches.length?Promise.reject(new Error('Select at least one batch.')):makePreview({sessionToken,schoolYear:selection.year,semester:selection.semester,batches:selection.mode==='all'?[]:selection.batches,...(selection.sourceId?{billingReportId:selection.sourceId}:{})})
-    request.then(data=>{if(active){setResponse({key:requestKey,data});setPage(1);setReportId(null);if(data.reference)setReference(data.reference);else if(data.config)setReference(data.config.referenceFormat.replaceAll('{YEAR}',selection.year.slice(0,4)).replaceAll('{TERM}',selection.semester==='1st Semester'?'1':'2').replaceAll('{TRANCHE}',String(data.nextTranche)))}}).catch(err=>{if(active)setResponse({key:requestKey,error:err.message})})
+    request.then(data=>{if(active){setResponse({key:requestKey,data});setPage(1);setReportId(null);if(data.reference)setReference(data.reference);else if(data.config)setReference(data.config.referenceFormat.replaceAll('{YEAR}',selection.year.slice(0,4)).replaceAll('{TERM}',selection.semester==='1st Semester'?'1':'2').replaceAll('{TRANCHE}',String(data.nextTranche)))}}).catch(err=>{if(active)setResponse({key:requestKey,error:userErrorMessage(err, 'Unable to complete this request.', 'admin.Form2Management')})})
     return()=>{active=false}
   },[requestKey,makePreview,sessionToken])
   const preview=response?.key===requestKey?response.data:null
   const loading=Boolean(year&&response?.key!==requestKey)
   const filters={schoolYear:year,semester,batches:mode==='all'?[]:batches,...(sourceId?{billingReportId:sourceId}:{})}
   const reset=()=>{setPage(1);setReportId(null);setError('');setMessage('');setSearch('')}
-  const attempt=async action=>{setBusy(true);setError('');try{await action()}catch(err){setError(err instanceof Error?err.message:'Form 2 operation failed. Please try again.')}finally{setBusy(false)}}
-  const download=(format,savedId)=>attempt(async()=>{
-    const exporter=await import('./form2Export');const template=await exporter.loadForm2Template()
+  const attempt=async action=>{setBusy(true);setError('');try{await action()}catch(err){setError(userErrorMessage(err, 'Form 2 operation failed. Please try again.', 'admin.Form2Management'))}finally{setBusy(false)}}
+  const download=(format,savedId)=>{
     let id=savedId||reportId
-    if(!id){if(!preview)throw new Error('Generate and review Form 2 first.');id=await generate({sessionToken,...filters,expectedVersion:preview.version,reference,billingDate});setReportId(id)}
-    const report=await authorizeDownload({sessionToken,reportId:id,format})
-    await exporter.downloadForm2(report,format,template);setMessage(`Downloaded Form 2 for ${report.reference}. Re-download from history without creating another bill.`)
-  })
+    return attempt(()=>runFile(format==='pdf'?'Generating PDF report…':'Generating Excel report…',async update=>{
+      setError('')
+      update({message:'Preparing official Form 2 template…',progress:undefined})
+      const exporter=await import('./form2Export');const template=await exporter.loadForm2Template()
+      update({message:'Generating official Form 2…'})
+      if(!id){if(!preview)throw new Error('Generate and review Form 2 first.');id=await generate({sessionToken,...filters,expectedVersion:preview.version,reference,billingDate});setReportId(id)}
+      const report=await authorizeDownload({sessionToken,reportId:id,format})
+      update({message:format==='pdf'?'Generating PDF report…':'Generating Excel report…'})
+      await exporter.downloadForm2(report,format,template,update);setMessage('Your file is ready! Re-download from history without creating another bill.')
+    }))
+  }
   const visible=(preview?.rows||[]).map((row,index)=>({...row,number:index+1})).filter(row=>`${row.studentId} ${row.tesAwardNumber} ${row.profile.lastName} ${row.profile.firstName} ${row.profile.program} ${row.batch}`.toLowerCase().includes(search.toLowerCase()))
   const pages=Math.max(1,Math.ceil(visible.length/10))
   const numberedPages=Array.from({length:pages},(_,i)=>i+1).filter(n=>n===1||n===pages||Math.abs(n-page)<=2)
   const exportDisabled=busy||loading||!preview||(!reportId&&preview.globalIssues.length>0)||(!sourceId&&(!reference.trim()||!billingDate))
   return <dialog ref={ref} className="billing-dialog billing-main-dialog form2-main-dialog" aria-labelledby="form2-title" onCancel={e=>{e.preventDefault();if(!busy)onClose()}} onKeyDown={e=>{if(e.key!=='Tab')return;const fields=[...e.currentTarget.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary')].filter(el=>el.getClientRects().length);if(e.shiftKey&&document.activeElement===fields[0]){e.preventDefault();fields.at(-1)?.focus()}else if(!e.shiftKey&&document.activeElement===fields.at(-1)){e.preventDefault();fields[0]?.focus()}}}>
     <header className="billing-header"><div><p className="billing-kicker">Scholarship operations · Listahanan 2</p><h2 id="form2-title">Form 2 List — TES Continuing Grantees</h2><p>Generate official TES Continuing Form 2 records from the Convex database.</p></div><button type="button" className="billing-close" aria-label="Close Form 2 List" disabled={busy} onClick={onClose}>×</button></header>
-    <div className="billing-body">
+    <div className="billing-body">{!options&&<IBACMILoader message="Preparing Form 2 options…" />}{year&&!workspace&&<IBACMILoader variant="compact" message="Preparing billing records…" />}{operation&&<IBACMILoader variant="compact" {...operation} onRetry={retry} />}
       {error&&<p role="alert" className="billing-error">{error}</p>}{message&&<p role="status" className="billing-notice">{message}</p>}
       <section className="billing-card"><div className="billing-filters form2-filters">
         <label className="billing-field"><span>Select School Year</span><select aria-label="Select School Year" value={year} disabled={busy} onChange={e=>{setYear(e.target.value);setBatches([]);setSourceId('');reset()}}><option value="">Select school year</option>{options?.years.map(y=><option key={y}>{y}</option>)}</select></label>
@@ -79,7 +90,7 @@ export default function Form2Management({sessionToken,onClose,onOpenBilling}) {
       {!sourceId&&<div className="billing-form-grid form2-reference"><label className="billing-field"><span>Authorized billing reference</span><input aria-label="Authorized billing reference" maxLength={120} value={reference} disabled={busy||Boolean(reportId)} onChange={e=>setReference(e.target.value)} placeholder="From verified Billing Management rules" /></label><label className="billing-field"><span>Billing date</span><input aria-label="Form 2 billing date" type="date" value={billingDate} disabled={busy||Boolean(reportId)} onChange={e=>setBillingDate(e.target.value)} /></label></div>}
       </section>
       {settings&&<MappingSettings key={JSON.stringify(settings.mapping)} mapping={settings.mapping} configured={settings.configured} busy={busy} onSave={mapping=>attempt(async()=>{await saveMapping({sessionToken,schoolYear:year,semester,...mapping});reset();setRefresh(n=>n+1);setMessage('Official Form 2 field mappings saved.')})} />}
-      {loading&&<p role="status">Loading the selected Convex records…</p>}
+      {loading&&<IBACMILoader message="Generating official Form 2…" />}
       {response?.key===requestKey&&response.error&&<p className="billing-error" role="alert">{response.error}</p>}
       {preview&&<>
         <div className="billing-summary form2-summary">{[['Matching grantees',preview.rows.length],['Complete / verified',preview.eligibleCount],['Missing data / review',preview.rows.filter(r=>!r.eligible&&!r.excluded).length],['TES benefits',pesos(preview.totals.tes1+preview.totals.tes2)],['TES-3A',pesos(preview.totals.tes3a)],['Total with authorized ASC',pesos(preview.totals.total)]].map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
@@ -93,6 +104,6 @@ export default function Form2Management({sessionToken,onClose,onOpenBilling}) {
       {settings?.history.length>0&&<section className="billing-card"><h3>Form 2 report history</h3>{settings.history.map(report=><div className="billing-history-row" key={report._id}><div><strong>{report.reference}</strong><span>{new Date(report.generatedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})} · {report.schoolYear} · {report.semester} · {report.batches.length?report.batches.join(', '):'All matching batches'}</span><span>{report.granteeCount} grantees · {report.generatedBy} · {report.status}</span></div><div className="form2-history-buttons"><button type="button" className="billing-secondary" disabled={busy} onClick={()=>download('xlsx',report._id)}>Excel</button><button type="button" className="billing-secondary" disabled={busy} onClick={()=>download('pdf',report._id)}>PDF</button></div></div>)}</section>}
       {!year&&<p className="billing-notice">Select an academic period to retrieve actual Convex grantees. No sample students are loaded.</p>}
     </div>
-    <footer className="billing-footer"><p className="billing-hint">{sourceId||reportId?'Supporting export reuses the saved bill; no duplicate charge.':'A new export finalizes the existing billing workflow and reserves its eligible students.'}</p><button className="billing-secondary" type="button" disabled={busy} onClick={onClose}>Close</button><button className="billing-secondary" type="button" disabled={exportDisabled} onClick={()=>download('pdf')}>{busy?'Preparing…':'Download PDF'}</button><button className="billing-primary" type="button" disabled={exportDisabled} onClick={()=>download('xlsx')}>Download Excel</button></footer>
+    <footer className="billing-footer"><p className="billing-hint">{sourceId||reportId?'Supporting export reuses the saved bill; no duplicate charge.':'A new export finalizes the existing billing workflow and reserves its eligible students.'}</p><button className="billing-secondary" type="button" disabled={busy} onClick={onClose}>Close</button><button className="billing-secondary" type="button" disabled={exportDisabled} onClick={()=>download('pdf')}>{busy?<IBACMILoader variant="inline" message={operation?.state==='loading' ? operation.message : 'Saving Form 2 information…'} />:'Download PDF'}</button><button className="billing-primary" type="button" disabled={exportDisabled} onClick={()=>download('xlsx')}>Download Excel</button></footer>
   </dialog>
 }

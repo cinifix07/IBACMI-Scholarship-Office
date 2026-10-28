@@ -88,11 +88,12 @@ async function populate(report,template) {
   const serializer=new XMLSerializer();sheets.forEach((doc,i)=>zip.file(`xl/worksheets/sheet${i+1}.xml`,serializer.serializeToString(doc)));zip.file('xl/styles.xml',serializer.serializeToString(styles));zip.file('xl/workbook.xml',serializer.serializeToString(workbook))
   return {zip,sheets,styles,metadata}
 }
-export async function createForm2Workbook(report,template){const {zip}=await populate(report,template);return zip.generateAsync({type:'uint8array',compression:'DEFLATE'})}
-export async function createForm2Pdf(report,template){
+export async function createForm2Workbook(report,template,onProgress){const {zip}=await populate(report,template);return zip.generateAsync({type:'uint8array',compression:'DEFLATE'},metadata=>onProgress?.({message:'Compressing Excel report…',progress:metadata.percent}))}
+export async function createForm2Pdf(report,template,onProgress){
   const {jsPDF}=await import('jspdf');const {zip,sheets,styles,metadata}=await populate(report,template)
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'legal',compress:true})
   const layout=drawTemplateSheet(pdf,sheets[0],[],styles,{first:false,reference:report.reference,maxColumn:18,maxRow:49,paperFormat:'legal',headerRows:[34,35],continuedTitle:'TES Continuing Form 2'})
+  onProgress?.({message:'Generating PDF report…',progress:undefined,detail:'Cover worksheet rendered. Preparing detail sheets.'})
   // Retain the CHED and UniFAST logos from the original drawing anchors.
   const drawing=parse(await zip.file('xl/drawings/drawing1.xml').async('string'))
   const anchors=[...drawing.documentElement.children]
@@ -112,8 +113,9 @@ export async function createForm2Pdf(report,template){
   const count=pdf.getNumberOfPages();for(let i=1;i<=count;i++){pdf.setPage(i);pdf.setFont('helvetica','normal');pdf.setFontSize(7);pdf.text(`${report.reference} | Form 2 | ${i} of ${count}`,pdf.internal.pageSize.getWidth()/2,pdf.internal.pageSize.getHeight()-5,{align:'center'})}
   return new Uint8Array(pdf.output('arraybuffer'))
 }
-export async function downloadForm2(report,format,template){
-  const bytes=format==='pdf'?await createForm2Pdf(report,template):await createForm2Workbook(report,template)
+export async function downloadForm2(report,format,template,onProgress){
+  const bytes=format==='pdf'?await createForm2Pdf(report,template,onProgress):await createForm2Workbook(report,template,onProgress)
+  onProgress?.({message:'Preparing your file…',progress:undefined})
   const url=URL.createObjectURL(new Blob([bytes],{type:format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}))
   const a=document.createElement('a');a.href=url;a.download=`Form-2-${report.reference.replace(/[^A-Za-z0-9._-]/g,'-')}.${format}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000)
 }

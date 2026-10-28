@@ -1,0 +1,74 @@
+﻿[
+    {
+        "File":  "src/student/student.jsx",
+        "SHA256":  "22ADC0582148321C43F89CC08D83DEC62E3C98F94DB1A603ADE512F79A820C2D"
+    },
+    {
+        "File":  "src/student/student.css",
+        "SHA256":  "813AC95D45A5DDC30541BDED94DE9E1699747A1C7850A0F9BB8A042C6ED36826"
+    },
+    {
+        "File":  "src/App.jsx",
+        "SHA256":  "14B28F3612A2F700685F5B3FA6AA7EE2EE9996F2FDC74A657B87B00131487593"
+    },
+    {
+        "File":  "src/landingpage/alllanding.jsx",
+        "SHA256":  "E448B34024455238501DEA43A7520B14C0EB2B2F0BBA8330DB2D78AB31C3161F"
+    },
+    {
+        "File":  "convex/schema.js",
+        "SHA256":  "EBA4644E44ECBB33A83EFE3C9467DA1974BAAFBE86983D7F1A11160EE2FEDDCA"
+    },
+    {
+        "File":  "convex/adminAuth.js",
+        "SHA256":  "C1CC2C399CE7C7C5BD8CE8CD596570DC295B30A9F121C9C2BD5D804A2180B56F"
+    },
+    {
+        "File":  "convex/allinfo.js",
+        "SHA256":  "5A5CF564FBF3E5752CBE9670E339E68D02407F17729671B75FDCD17CD641C9FD"
+    },
+    {
+        "File":  "convex/applicants.js",
+        "SHA256":  "D4E24EBAB3DE93B617DF3C0D7EA8569CAAA5B023ACBAFB51E8F0C51E7F6ECDC8"
+    },
+    {
+        "File":  "convex/support.js",
+        "SHA256":  "0A5BFC3D9B53559DAE154BBD40584794F8E8FDC1985809068C3ED94A7AAD95CF"
+    },
+    {
+        "File":  "convex/billing.js",
+        "SHA256":  "5C3815F7325918AEA92415D8C1E410D71A071F97E3821BE98AA30C7B376D1017"
+    },
+    {
+        "File":  "convex/billingRules.js",
+        "SHA256":  "96152B2B07C2FCF6FFF2E98FBE596D47F063035CC1322E21B12B203EE4D46D43"
+    },
+    {
+        "File":  "convex/form2.js",
+        "SHA256":  "25653682DCB8CFDF2F9B0704B0541F040BBCDDCA1E85EEBAA4AF8C96906258CC"
+    },
+    {
+        "File":  "src/admin/BillingManagement.jsx",
+        "SHA256":  "F6F54C4C9A6B00D9158D486E5076674F472BC13EEE376761CCCDDD481E66FE14"
+    },
+    {
+        "File":  "src/admin/Form2Management.jsx",
+        "SHA256":  "FD8C14EF8668193BED5C73949886DE2C65760FE30C730935D13A99FEE17EAD95"
+    },
+    {
+        "File":  "src/admin/form2Export.js",
+        "SHA256":  "73F2F49BF008566B07D28FB6C2F05F1EB5A91E10D17F8AB56B99F857225CABD7"
+    },
+    {
+        "File":  "convex/_generated/api.d.ts",
+        "SHA256":  "D794CADF4174B1296529B1CF76E92CC803FA2C7AFB2EFED808CEDCBE24C757CA"
+    },
+    {
+        "File":  "convex/_generated/api.js",
+        "SHA256":  "F513058549831E85376F8D19CAFAF2A4A770B6EB1B859FB371141F2C9DEC0D70"
+    },
+    {
+        "File":  "package.json",
+        "SHA256":  "4FFC8A37E16C14E539E07D7A31CEDD114D6657DEA6B79F488C6DF04802D5B388"
+    }
+]

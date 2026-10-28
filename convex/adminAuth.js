@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { archiveRecord } from './archiveHelpers'
 import { mutation, query } from './_generated/server'
+import { requireStudentOwnership, requireProfileEditable } from './studentProfileAuth'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -489,10 +490,13 @@ export const changePasswordWithOtp = mutation({
 
 export const updateStudentPhoneNumber = mutation({
   args: {
+    sessionToken: v.string(),
     schoolId: v.string(),
     phoneNumber: v.string(),
   },
   handler: async (ctx, args) => {
+    const studentAccount = await requireStudentOwnership(ctx, args.sessionToken, args.schoolId)
+    await requireProfileEditable(ctx, studentAccount)
     const schoolId = args.schoolId.trim()
     const phoneNumber = normalizePhoneNumber(args.phoneNumber)
 
@@ -557,10 +561,13 @@ export const updateStudentPhoneNumber = mutation({
 
 export const updateStudentCurrentAddress = mutation({
   args: {
+    sessionToken: v.string(),
     schoolId: v.string(),
     currentAddress: v.string(),
   },
   handler: async (ctx, args) => {
+    const studentAccount = await requireStudentOwnership(ctx, args.sessionToken, args.schoolId)
+    await requireProfileEditable(ctx, studentAccount)
     const schoolId = args.schoolId.trim()
     const currentAddress = args.currentAddress.trim()
 
@@ -625,10 +632,13 @@ export const updateStudentCurrentAddress = mutation({
 
 export const updateStudentFacebookProfile = mutation({
   args: {
+    sessionToken: v.string(),
     schoolId: v.string(),
     facebookProfileUrl: v.string(),
   },
   handler: async (ctx, args) => {
+    const studentAccount = await requireStudentOwnership(ctx, args.sessionToken, args.schoolId)
+    await requireProfileEditable(ctx, studentAccount)
     const schoolId = args.schoolId.trim()
     const facebookProfileUrl = args.facebookProfileUrl.trim()
 

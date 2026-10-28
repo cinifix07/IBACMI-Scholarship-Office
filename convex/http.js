@@ -12,7 +12,7 @@ const maxPdfSize = 5 * 1024 * 1024
 
 function corsHeaders(contentType = 'application/json') {
   return {
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Origin': '*',
     'Content-Type': contentType,
@@ -166,6 +166,17 @@ const googleDriveUpload = httpAction(async (ctx, request) => {
 
   const requestUrl = new URL(request.url)
   const isStudentUpload = requestUrl.pathname.endsWith('/student-upload')
+  if (isStudentUpload) {
+    try {
+      await ctx.runQuery(api.studentProfile.checkUploadAccess, {
+        sessionToken: (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, ''),
+        studentId: requestUrl.searchParams.get('studentId') || '',
+        schoolYear: requestUrl.searchParams.get('schoolYear') || '',
+      })
+    } catch {
+      return jsonResponse({ message: 'Please sign in to upload or replace your School ID for your active school year.' }, 403)
+    }
+  }
   const destination = isStudentUpload ? 'students' : 'applicants'
 
   if (!isStudentUpload) {

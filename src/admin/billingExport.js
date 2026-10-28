@@ -181,9 +181,9 @@ async function populatedTemplate(report,template) {
   return { zip, form1, form2 }
 }
 
-export async function createBillingWorkbook(report,template) {
+export async function createBillingWorkbook(report,template,onProgress) {
   const {zip}=await populatedTemplate(report,template)
-  return zip.generateAsync({type:'uint8array',compression:'DEFLATE'})
+  return zip.generateAsync({type:'uint8array',compression:'DEFLATE'},metadata=>onProgress?.({message:'Compressing Excel report…',progress:metadata.percent}))
 }
 
 function pdfText(value) {
@@ -272,7 +272,7 @@ export function drawTemplateSheet(pdf,doc,shared,styles,{first,reference,maxColu
 
 export const workbookTools = {NS,parse,nodes,serial,element,columnNumber,columnName,cellAt,rowAt,write,merge,shiftedRef,cellText}
 
-export async function createBillingPdf(report,template) {
+export async function createBillingPdf(report,template,onProgress) {
   const { jsPDF }=await import('jspdf')
   const { zip,form1,form2 }=await populatedTemplate(report,template)
   const sharedDoc=parse(await zip.file('xl/sharedStrings.xml').async('string'))
@@ -280,14 +280,17 @@ export async function createBillingPdf(report,template) {
   const styles=parse(await zip.file('xl/styles.xml').async('string'))
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'legal',compress:true})
   drawTemplateSheet(pdf,form1,shared,styles,{first:true,reference:report.reference})
+  onProgress?.({message:'Generating PDF report…',progress:50,detail:'1 of 2 worksheets rendered.'})
   pdf.addPage('a3','landscape')
   drawTemplateSheet(pdf,form2,shared,styles,{first:false,reference:report.reference})
+  onProgress?.({message:'Preparing PDF file…',progress:undefined,detail:'Both worksheets rendered. Serializing the report.'})
   const count=pdf.getNumberOfPages()
   for(let i=1;i<=count;i++){pdf.setPage(i);pdf.setFont('helvetica','normal');pdf.setFontSize(7);pdf.text(`${report.reference} | ${i} of ${count}`,pdf.internal.pageSize.getWidth()/2,pdf.internal.pageSize.getHeight()-5,{align:'center'})}
   return new Uint8Array(pdf.output('arraybuffer'))
 }
-export async function downloadBilling(report,format,template) {
-  const bytes=format==='pdf'?await createBillingPdf(report,template):await createBillingWorkbook(report,template)
+export async function downloadBilling(report,format,template,onProgress) {
+  const bytes=format==='pdf'?await createBillingPdf(report,template,onProgress):await createBillingWorkbook(report,template,onProgress)
+  onProgress?.({message:'Preparing your file…',progress:undefined})
   const blob=new Blob([bytes],{type:format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
   const url=URL.createObjectURL(blob)
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`${report.reference.replace(/[^A-Za-z0-9._-]/g,'-')}.${format}`;anchor.click()

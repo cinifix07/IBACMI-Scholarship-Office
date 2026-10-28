@@ -1,5 +1,7 @@
+import IBACMILoader from '../components/IBACMILoader.jsx'
+import { userErrorMessage } from '../errors/errorBus.js'
 import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import ibacmiLogo from '../assets/IBACMI.png'
 import './visitor-support.css'
@@ -108,7 +110,7 @@ export default function VisitorSupport({ onRequest }) {
       window.localStorage.setItem(TOKEN_KEY, result.visitorToken)
       setVisitorToken(result.visitorToken)
     } catch (startError) {
-      setError(startError.message || 'Unable to start a conversation. Please try again.')
+      setError(userErrorMessage(startError, 'Unable to start a conversation. Please try again.', 'support.visitor'))
     } finally {
       setIsStarting(false)
     }
@@ -124,7 +126,7 @@ export default function VisitorSupport({ onRequest }) {
       setDraft('')
       if (textareaRef.current) textareaRef.current.style.height = ''
     } catch (sendError) {
-      setError(sendError.message || 'Message could not be sent. Please try again.')
+      setError(userErrorMessage(sendError, 'Message could not be sent. Please try again.', 'support.visitor'))
     } finally {
       setIsSending(false)
     }
@@ -152,7 +154,7 @@ export default function VisitorSupport({ onRequest }) {
         <button type="button" aria-label="Minimize chat" onClick={() => setIsOpen(false)}><span className="material-symbols-outlined">expand_more</span></button>
       </header>
 
-      {!startNew && conversationData === undefined && <div className="visitor-chat__loading" role="status">Restoring your conversation…</div>}
+      {!startNew && conversationData === undefined && <IBACMILoader variant="compact" message="Connecting to your conversations…" />}
       {startNew && <form className="visitor-welcome" onSubmit={startConversation}>
         <p className="visitor-welcome__intro">Welcome to IBACMI Scholarship Office Support! We&apos;re here to assist you with your scholarship questions.</p>
         {isExpired && <p className="visitor-chat__expired">Your previous chat session has expired. You can start a new conversation.</p>}
@@ -164,7 +166,7 @@ export default function VisitorSupport({ onRequest }) {
         {visitorType === 'Parent / Guardian' && <label>Student&apos;s name <span>(optional)</span><input maxLength={100} value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Student's name" /></label>}
         <p className="visitor-privacy">We use these details only to identify your conversation and respond to your inquiry.</p>
         {error && <p className="visitor-chat__error" role="alert">{error}</p>}
-        <button className="visitor-primary" type="submit" disabled={isStarting}>{isStarting ? 'Starting…' : 'Start Conversation'}</button>
+        <button className="visitor-primary" type="submit" disabled={isStarting}>{isStarting ? <IBACMILoader variant="inline" message="Connecting…" /> : 'Start Conversation'}</button>
         {onRequest && <button className="visitor-request-link" type="button" onClick={() => setIsSupportOptionsOpen(true)}>Submit a student support request</button>}
       </form>}
 
@@ -187,7 +189,7 @@ export default function VisitorSupport({ onRequest }) {
         <form className="visitor-composer" onSubmit={(event) => { event.preventDefault(); submitMessage() }}>
           {error && <p className="visitor-chat__error" role="alert">{error}</p>}
           <div><textarea ref={textareaRef} value={draft} onChange={resizeComposer} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitMessage() } }} maxLength={2000} placeholder="Write a message…" aria-label="Write a message" />
-            <button type="submit" aria-label="Send message" disabled={!draft.trim() || isSending}>{isSending ? <span className="material-symbols-outlined">hourglass_top</span> : <span className="material-symbols-outlined">send</span>}</button></div>
+            <button type="submit" aria-label="Send message" disabled={!draft.trim() || isSending}>{isSending ? <IBACMILoader variant="inline" message="" /> : <span className="material-symbols-outlined">send</span>}</button></div>
           <small>Enter to send · Shift + Enter for a new line</small>
         </form>
       </>}
@@ -203,7 +205,7 @@ export default function VisitorSupport({ onRequest }) {
           <p>Choose your preferred support channel to contact the IBACMI Scholarship Office.</p>
         </div>
         <div className="support-options-list" aria-live="polite">
-          {supportSettings === undefined && <div className="support-options-state" role="status"><span className="support-options-spinner" />Loading support channels…</div>}
+          {supportSettings === undefined && <IBACMILoader variant="compact" message="Loading support channels…" />}
           {supportSettings?.error && <div className="support-options-state support-options-state--error" role="alert">Support channels could not be loaded. Please try again shortly.</div>}
           {supportSettings && !supportSettings.error && supportLinks.length === 0 && <div className="support-options-state">No support channels are configured yet. Please continue using this chat for help.</div>}
           {supportLinks.map((link) => <a className="support-option-card" key={link.id} href={link.url} target="_blank" rel="noopener noreferrer">

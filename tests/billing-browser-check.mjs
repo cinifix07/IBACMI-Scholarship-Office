@@ -12,7 +12,7 @@ const data=fixture(12)
 const out='tmp/billing-check'
 await fs.mkdir(out,{recursive:true})
 const base='http://127.0.0.1:5174/IBACMI-Scholarship-Office'
-const bridge=`export {useQuery,useMutation} from '/IBACMI-Scholarship-Office/tests/billingBridge.jsx';`
+const bridge=`export {useQuery,useMutation,useQueries,useConvex,useConvexConnectionState,useMutation as useAction} from '/IBACMI-Scholarship-Office/tests/billingBridge.jsx';`
 const html=`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui;margin:0;background:#faf8f6}button{font:inherit}</style></head><body><button id="open">Open billing test</button><div id="root"></div><script type="module" src="/IBACMI-Scholarship-Office/tests/billingHarness.jsx"></script></body></html>`
 const browser=await chromium.launch({channel:'msedge',headless:true})
 try{

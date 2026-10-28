@@ -1,5 +1,10 @@
+import { logSanitizedError } from '../errors/errorBus.js'
+import { userErrorMessage } from '../errors/errorBus.js'
+import useFileOperation from '../components/useFileOperation.js'
+import FileOperationDialog from '../components/FileOperationDialog.jsx'
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useEffect, useMemo, useState } from 'react'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import AdminSidebar from './AdminSidebar.jsx'
 import BillingManagement from './BillingManagement.jsx'
@@ -100,7 +105,7 @@ function escapeCsvValue(value) {
   return `"${String(value ?? '').replaceAll('"', '""')}"`
 }
 
-function downloadCsvFile(filename, rows) {
+function prepareCsvFile(filename, rows) {
   if (!Array.isArray(rows) || rows.length < 2) throw new Error('No applicant rows are available to download.')
   const csvMarkup = rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n')
   const blob = new Blob([csvMarkup], { type: 'text/csv;charset=utf-8' })
@@ -117,7 +122,7 @@ function downloadCsvFile(filename, rows) {
   return true
 }
 
-function downloadGranteeTemplate() {
+function prepareGranteeTemplateFile() {
   const templateRows = [
     granteeTemplateHeaders,
     [
@@ -265,7 +270,7 @@ async function getZipFileFromGrantee(grantee, index) {
   const downloadUrl = `${convexSiteUrl}/google-drive/file?url=${encodeURIComponent(
     grantee.frontIdUrl,
   )}`
-  const response = await fetch(downloadUrl)
+  const response = await fetch(downloadUrl, { signal: AbortSignal.timeout(120000) })
 
   if (!response.ok) {
     throw new Error(`Unable to download School ID file for ${grantee.studentId || 'student'}.`)
@@ -518,7 +523,6 @@ function Admin({ adminSession, onLogout }) {
   const [isSchoolIdDeleteConfirmOpen, setIsSchoolIdDeleteConfirmOpen] = useState(false)
   const [isDownloadingSchoolIdFiles, setIsDownloadingSchoolIdFiles] = useState(false)
   const [isDeletingSchoolIdFiles, setIsDeletingSchoolIdFiles] = useState(false)
-  const [schoolIdDownloadProgress, setSchoolIdDownloadProgress] = useState(0)
   const [schoolIdFileSuccess, setSchoolIdFileSuccess] = useState(null)
   const [selectedDeleteBatch, setSelectedDeleteBatch] = useState(null)
   const [selectedUploadFile, setSelectedUploadFile] = useState(null)
@@ -547,7 +551,6 @@ function Admin({ adminSession, onLogout }) {
     useState(false)
   const [isDeletingCourseApplicants, setIsDeletingCourseApplicants] = useState(false)
   const [isDownloadingCourseApplicants, setIsDownloadingCourseApplicants] = useState(false)
-  const [courseApplicantDownloadProgress, setCourseApplicantDownloadProgress] = useState(0)
   const [courseApplicantSuccess, setCourseApplicantSuccess] = useState(null)
   const [currentCourseApplicantPage, setCurrentCourseApplicantPage] = useState(1)
   const [currentApplicantYearPage, setCurrentApplicantYearPage] = useState(1)
@@ -578,6 +581,10 @@ function Admin({ adminSession, onLogout }) {
   const exportCourseApplicants = useAction(api.applicants.exportCourseApplicants)
   const updateStudentAccount = useMutation(api.adminAuth.updateStudentAccount)
   const deleteStudentAccount = useMutation(api.adminAuth.deleteStudentAccount)
+
+  const {operation:adminFileOperation,run:runAdminFile,retry:retryAdminFile}=useFileOperation()
+  const downloadCsvFile=(filename,rows)=>runAdminFile('Generating CSV report…',async()=>prepareCsvFile(filename,rows)).catch(()=>false)
+  const downloadGranteeTemplate=()=>{void runAdminFile('Preparing grantee template…',async()=>prepareGranteeTemplateFile()).catch(()=>{})}
 
   const isAnyModalOpen =
     isLogsOpen ||
@@ -1224,9 +1231,12 @@ function Admin({ adminSession, onLogout }) {
     if (matchingFiles.length === 0) return
 
     setIsDownloadingSchoolIdFiles(true)
-    setSchoolIdDownloadProgress(0)
+
 
     try {
+      await runAdminFile('Preparing your batch download…',async update=>{
+      setIsDownloadingSchoolIdFiles(true)
+      try {
       const zipFiles = []
 
       for (const [index, grantee] of matchingFiles.entries()) {
@@ -1234,12 +1244,10 @@ function Admin({ adminSession, onLogout }) {
           const zipFile = await getZipFileFromGrantee(grantee, index)
           zipFiles.push(zipFile)
         } catch (error) {
-          console.warn(error)
+          logSanitizedError(error, 'admin.admin')
         }
 
-        setSchoolIdDownloadProgress(
-          Math.min(90, Math.round(((index + 1) / matchingFiles.length) * 90)),
-        )
+        update({message:'Preparing your batch download…',progress:(index+1)/(matchingFiles.length+2)*100,detail:`${index+1} of ${matchingFiles.length} file requests processed.`})
       }
 
       if (zipFiles.length === 0) {
@@ -1247,7 +1255,7 @@ function Admin({ adminSession, onLogout }) {
       }
 
       const zipBlob = createStoredZipBlob(zipFiles)
-      setSchoolIdDownloadProgress(96)
+      update({message:'Preparing ZIP file…',progress:(matchingFiles.length+1)/(matchingFiles.length+2)*100})
       const zipUrl = URL.createObjectURL(zipBlob)
       const link = document.createElement('a')
       const safeYear = sanitizeDownloadPart(selectedYear, 'school-year')
@@ -1260,24 +1268,17 @@ function Admin({ adminSession, onLogout }) {
       link.click()
       document.body.removeChild(link)
       URL.revokeObjectURL(zipUrl)
-
-      setSchoolIdDownloadProgress(100)
-      await new Promise((resolve) => window.setTimeout(resolve, 350))
       setIsSchoolIdDownloadOpen(false)
       setSelectedSchoolIdDownloadYear('')
       setSelectedSchoolIdBatchAction(null)
       setCurrentSchoolIdBatchDownloadPage(1)
-      setSchoolIdFileSuccess({
-        batchId: selectedBatchId,
-        count: zipFiles.length,
-        schoolYear: selectedYear,
-        type: 'download',
+      return {detail:`${zipFiles.length} of ${matchingFiles.length} School ID files are ready in the ZIP.${zipFiles.length<matchingFiles.length?` ${matchingFiles.length-zipFiles.length} files were unavailable.`:''}`}
+      } finally { setIsDownloadingSchoolIdFiles(false) }
       })
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to download School ID files.')
+      logSanitizedError(error, 'admin.admin') // The branded operation status provides the error and Retry action.
     } finally {
       setIsDownloadingSchoolIdFiles(false)
-      setSchoolIdDownloadProgress(0)
     }
   }
 
@@ -1304,15 +1305,14 @@ function Admin({ adminSession, onLogout }) {
         type: 'delete',
       })
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to delete School ID files.')
+      window.alert(userErrorMessage(error, 'Unable to delete School ID files.', 'admin.admin'))
     } finally {
       setIsDeletingSchoolIdFiles(false)
     }
   }
 
-  const exportBatchInfoCsv = (batchId, schoolYear, semester) => {
+  const exportBatchInfoCsv = async (batchId, schoolYear, semester) => {
     if (studentAccounts === undefined) {
-      window.alert('Please wait while student account data is loading.')
       return
     }
 
@@ -1379,13 +1379,12 @@ function Admin({ adminSession, onLogout }) {
     const safeBatch = sanitizeDownloadPart(selectedBatch, 'batch')
     const safeSchoolYear = sanitizeDownloadPart(selectedSchoolYear, 'school-year')
     const safeSemester = sanitizeDownloadPart(selectedSemester, 'semester')
-    downloadCsvFile(`batch-info-${safeBatch}-${safeSchoolYear}-${safeSemester}.csv`, csvRows)
+    await downloadCsvFile(`batch-info-${safeBatch}-${safeSchoolYear}-${safeSemester}.csv`, csvRows)
     closeBatchExportModal()
   }
 
   const exportUnifastCourseCsv = async (course) => {
     if (applicants === undefined) {
-      window.alert('Please wait while applicant information is loading.')
       return
     }
 
@@ -1403,28 +1402,13 @@ function Admin({ adminSession, onLogout }) {
     }
 
     setIsDownloadingCourseApplicants(true)
-    setCourseApplicantDownloadProgress(8)
-
-    await new Promise((resolve) => window.setTimeout(resolve, 120))
 
     const csvRows = createUnifastApplicantCsvRows(courseRecords, selectedCourse)
 
-    setCourseApplicantDownloadProgress(72)
-    await new Promise((resolve) => window.setTimeout(resolve, 120))
-
     const safeCourse = sanitizeDownloadPart(selectedCourse, 'course')
     const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
-    downloadCsvFile(`unifast-applicants-${safeYear}-${safeCourse}.csv`, csvRows)
-    setCourseApplicantDownloadProgress(100)
-    await new Promise((resolve) => window.setTimeout(resolve, 350))
+    await downloadCsvFile(`unifast-applicants-${safeYear}-${safeCourse}.csv`, csvRows)
     setIsDownloadingCourseApplicants(false)
-    setCourseApplicantDownloadProgress(0)
-    setCourseApplicantSuccess({
-      count: courseRecords.length,
-      course: selectedCourse,
-      type: 'download',
-      year: activeApplicantYear,
-    })
   }
 
   const handleDeleteCourseApplicants = async () => {
@@ -1450,15 +1434,14 @@ function Admin({ adminSession, onLogout }) {
       setCourseApplicantSearch('')
       setCurrentCourseApplicantPage(1)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to delete course applicants.')
+      window.alert(userErrorMessage(error, 'Unable to delete course applicants.', 'admin.admin'))
     } finally {
       setIsDeletingCourseApplicants(false)
     }
   }
 
-  const exportQuickActionResponsesCsv = () => {
+  const exportQuickActionResponsesCsv = async () => {
     if (quickActions === undefined) {
-      window.alert('Please wait while student requests are loading.')
       return
     }
 
@@ -1498,7 +1481,7 @@ function Admin({ adminSession, onLogout }) {
     ]
 
     const exportedDate = new Date().toISOString().slice(0, 10)
-    downloadCsvFile(`student-requests-responses-${exportedDate}.csv`, csvRows)
+    await downloadCsvFile(`student-requests-responses-${exportedDate}.csv`, csvRows)
   }
 
   const handleClearAllActivityLogs = async () => {
@@ -1516,7 +1499,7 @@ function Admin({ adminSession, onLogout }) {
       await clearAllActivityLogs({})
       setCurrentLogPage(1)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Unable to clear activity logs.')
+      window.alert(userErrorMessage(error, 'Unable to clear activity logs.', 'admin.admin'))
     } finally {
       setIsClearingActivityLogs(false)
     }
@@ -1537,7 +1520,7 @@ function Admin({ adminSession, onLogout }) {
       await restoreArchivedItem({ id: item._id })
       setArchiveMessage(`${item.sourceLabel || 'Item'} restored successfully.`)
     } catch (error) {
-      setArchiveMessage(error instanceof Error ? error.message : 'Unable to restore this item.')
+      setArchiveMessage(userErrorMessage(error, 'Unable to restore this item.', 'admin.admin'))
     } finally {
       setProcessingArchiveId(null)
     }
@@ -1559,7 +1542,7 @@ function Admin({ adminSession, onLogout }) {
       setArchiveMessage(`${item.sourceLabel || 'Item'} permanently deleted.`)
     } catch (error) {
       setArchiveMessage(
-        error instanceof Error ? error.message : 'Unable to permanently delete this item.',
+        userErrorMessage(error, 'Unable to permanently delete this item.', 'admin.admin'),
       )
     } finally {
       setProcessingArchiveId(null)
@@ -1579,7 +1562,7 @@ function Admin({ adminSession, onLogout }) {
       }
     } catch (error) {
       window.alert(
-        error instanceof Error ? error.message : 'Unable to update applicant portal status.',
+        userErrorMessage(error, 'Unable to update applicant portal status.', 'admin.admin'),
       )
     }
   }
@@ -1643,8 +1626,11 @@ function Admin({ adminSession, onLogout }) {
 
     setApplicantDownloadError('')
     setIsDownloadingCourseApplicants(true)
-    setCourseApplicantDownloadProgress(12)
     try {
+      await runAdminFile('Fetching official applicant records…',async update=>{
+      setApplicantDownloadError('')
+      setIsDownloadingCourseApplicants(true)
+      try {
       const records = await exportCourseApplicants({
         sessionToken: adminSession?.sessionToken,
         applicationYear: activeApplicantYear,
@@ -1653,27 +1639,20 @@ function Admin({ adminSession, onLogout }) {
       if (!Array.isArray(records) || records.length === 0) {
         throw new Error('No applicant records matched the selected courses and application year.')
       }
-      setCourseApplicantDownloadProgress(76)
+      update({message:'Generating CSV report…',progress:undefined})
       const csvRows = createUnifastApplicantCsvRows(records)
       const safeYear = sanitizeDownloadPart(activeApplicantYear, 'application-year')
       const courseLabel = applicantDownloadMode === 'all' ? 'all-courses' : 'selected-courses'
-      if (!downloadCsvFile(`unifast-applicants-${safeYear}-${courseLabel}.csv`, csvRows)) {
+      if (!prepareCsvFile(`unifast-applicants-${safeYear}-${courseLabel}.csv`, csvRows)) {
         throw new Error('The applicant CSV file could not be generated.')
       }
-      setCourseApplicantDownloadProgress(100)
-      await new Promise((resolve) => window.setTimeout(resolve, 220))
       setIsApplicantDownloadOpen(false)
-      setCourseApplicantSuccess({
-        count: records.length,
-        course: applicantDownloadMode === 'all' ? 'All courses' : `${courses.length} selected courses`,
-        type: 'download',
-        year: activeApplicantYear,
+      } finally { setIsDownloadingCourseApplicants(false) }
       })
     } catch (error) {
-      setApplicantDownloadError(error instanceof Error ? error.message : 'Unable to download applicant records. Please try again.')
+      setApplicantDownloadError(userErrorMessage(error, 'Unable to download applicant records. Please try again.', 'admin.admin'))
     } finally {
       setIsDownloadingCourseApplicants(false)
-      setCourseApplicantDownloadProgress(0)
     }
   }
 
@@ -1796,7 +1775,7 @@ function Admin({ adminSession, onLogout }) {
       setSelectedGranteeRecord(null)
       setEditGranteeForm(null)
     } catch (error) {
-      setEditMessage(error instanceof Error ? error.message : 'Unable to update record.')
+      setEditMessage(userErrorMessage(error, 'Unable to update record.', 'admin.admin'))
     } finally {
       setIsSavingEdit(false)
     }
@@ -1843,7 +1822,7 @@ function Admin({ adminSession, onLogout }) {
         } deleted successfully.`,
       )
     } catch (error) {
-      setDeleteMessage(error instanceof Error ? error.message : 'Unable to delete records.')
+      setDeleteMessage(userErrorMessage(error, 'Unable to delete records.', 'admin.admin'))
     } finally {
       setIsDeletingRecords(false)
     }
@@ -1883,7 +1862,7 @@ function Admin({ adminSession, onLogout }) {
       setIsBatchDeleteOpen(false)
       setCurrentGranteePage(1)
     } catch (error) {
-      setDeleteMessage(error instanceof Error ? error.message : 'Unable to delete batch records.')
+      setDeleteMessage(userErrorMessage(error, 'Unable to delete batch records.', 'admin.admin'))
     } finally {
       setIsDeletingRecords(false)
     }
@@ -1931,7 +1910,7 @@ function Admin({ adminSession, onLogout }) {
 
       setSelectedUploadFile(null)
     } catch (error) {
-      setUploadMessage(error instanceof Error ? error.message : 'Unable to upload records.')
+      setUploadMessage(userErrorMessage(error, 'Unable to upload records.', 'admin.admin'))
     } finally {
       setIsUploadingRecords(false)
     }
@@ -2006,7 +1985,7 @@ function Admin({ adminSession, onLogout }) {
       setSelectedUser(null)
       setUserMessage(result.message)
     } catch (error) {
-      setUserMessage(error instanceof Error ? error.message : 'Unable to update the user account.')
+      setUserMessage(userErrorMessage(error, 'Unable to update the user account.', 'admin.admin'))
     } finally {
       setIsSavingUser(false)
     }
@@ -2029,7 +2008,7 @@ function Admin({ adminSession, onLogout }) {
       setUserToDelete(null)
       setUserMessage(result.message)
     } catch (error) {
-      setUserMessage(error instanceof Error ? error.message : 'Unable to delete the user account.')
+      setUserMessage(userErrorMessage(error, 'Unable to delete the user account.', 'admin.admin'))
     } finally {
       setIsDeletingUser(false)
     }
@@ -2097,6 +2076,8 @@ function Admin({ adminSession, onLogout }) {
   return (
     <div className="admin-page">
       <style>{adminStyles}</style>
+      {adminFileOperation&&<FileOperationDialog key={adminFileOperation.id} operation={adminFileOperation} onRetry={retryAdminFile} />}
+      {allInfoRecords===undefined&&<IBACMILoader variant="compact" message="Loading dashboard information…" />}
 
       <AdminSidebar
         activeItem={isDocumentationOpen ? 'documentation' : isForm2Open ? 'form2' : isBillingOpen ? 'billing' : isQuickActionsOpen ? 'support' : isUserManagementOpen ? 'users' : isArchiveOpen ? 'archive' : isLogsOpen ? 'logs' : (isUnifastPortalConfirmOpen || isUnifastPortalCoursesOpen || isApplicantYearOpen || selectedUnifastCourse || isApplicantDownloadOpen) ? 'portal' : activeSection}
@@ -2272,7 +2253,7 @@ function Admin({ adminSession, onLogout }) {
                   {allInfoRecords === undefined && (
                     <tr>
                       <td className="admin-empty-state" colSpan={12}>
-                        Loading grantee records...
+                        <IBACMILoader variant="table" message="Fetching official grantee records…" />
                       </td>
                     </tr>
                   )}
@@ -2489,7 +2470,7 @@ function Admin({ adminSession, onLogout }) {
                 type="button"
               >
                 <span className="material-symbols-outlined">delete_sweep</span>
-                {isClearingActivityLogs ? 'Clearing...' : 'Clear All Logs'}
+                {isClearingActivityLogs ? <IBACMILoader variant="inline" message="Archiving activity logs…" /> : 'Clear All Logs'}
               </button>
             </div>
 
@@ -2509,7 +2490,7 @@ function Admin({ adminSession, onLogout }) {
                   {activityLogs === undefined && (
                     <tr>
                       <td className="admin-empty-state" colSpan={5}>
-                        Loading activity logs...
+                        <IBACMILoader variant="table" message="Loading activity logs…" />
                       </td>
                     </tr>
                   )}
@@ -2672,7 +2653,7 @@ function Admin({ adminSession, onLogout }) {
                 <tbody>
                   {archivedItems === undefined && (
                     <tr>
-                      <td className="admin-empty-state" colSpan={5}>Loading archive...</td>
+                      <td className="admin-empty-state" colSpan={5}><IBACMILoader variant="table" message="Loading archived records…" /></td>
                     </tr>
                   )}
 
@@ -2708,7 +2689,7 @@ function Admin({ adminSession, onLogout }) {
                             type="button"
                           >
                             <span className="material-symbols-outlined">restore</span>
-                            {processingArchiveId === item._id ? 'Working...' : 'Restore'}
+                            {processingArchiveId === item._id ? <IBACMILoader variant="inline" message="Restoring record…" /> : 'Restore'}
                           </button>
                           <button
                             className="admin-archive-action admin-archive-action--delete"
@@ -2821,7 +2802,7 @@ function Admin({ adminSession, onLogout }) {
                     <span>{batchId}</span>
                     <strong>
                       {studentAccounts === undefined
-                        ? 'Loading accounts...'
+                        ? <IBACMILoader variant="inline" message="Loading accounts…" />
                         : `${recordCount} records / ${accountCount} accounts`}
                     </strong>
                   </button>
@@ -3255,7 +3236,7 @@ function Admin({ adminSession, onLogout }) {
                 onClick={handleDeleteBatch}
                 type="button"
               >
-                {isDeletingRecords ? 'Deleting...' : 'Delete Batch'}
+                {isDeletingRecords ? <IBACMILoader variant="inline" message="Deleting grantee records…" /> : 'Delete Batch'}
               </button>
             </div>
           </section>
@@ -3360,7 +3341,7 @@ function Admin({ adminSession, onLogout }) {
                 <span className={`admin-receiving-status__indicator${applicantPortal?.isReceivingApplicants ? ' is-open' : ' is-closed'}`} />
                 <div>
                 <span>Landing Portal Status</span>
-                  <strong>{applicantPortal === undefined ? 'Checking status' : applicantPortal.isReceivingApplicants ? 'OPEN' : 'CLOSED'}</strong>
+                  <strong>{applicantPortal === undefined ? <IBACMILoader variant="inline" message="Checking portal status…" /> : applicantPortal.isReceivingApplicants ? 'OPEN' : 'CLOSED'}</strong>
                   <small>{applicantPortal?.isReceivingApplicants ? `Receiving ${activeApplicantYear} applicants` : `Not receiving ${activeApplicantYear} applicants`}</small>
                 </div>
               </div>
@@ -3436,7 +3417,7 @@ function Admin({ adminSession, onLogout }) {
                   </thead>
                   <tbody>
                     {applicants === undefined ? (
-                      <tr><td className="admin-receiving-empty" colSpan={8}>Loading applicants...</td></tr>
+                      <tr><td className="admin-receiving-empty" colSpan={8}><IBACMILoader variant="table" message="Loading UniFAST applicants…" /></td></tr>
                     ) : filteredReceivingApplicants.length === 0 ? (
                       <tr><td className="admin-receiving-empty" colSpan={8}>{applicantRows.length ? 'No applicants match these filters.' : 'No applicant records are available yet.'}</td></tr>
                     ) : currentReceivingApplicants.map((applicant) => {
@@ -3585,10 +3566,7 @@ function Admin({ adminSession, onLogout }) {
 
             <div className="admin-applicant-download-body">
               {applicantCourseCounts === undefined ? (
-                <div className="admin-applicant-download-loading" role="status">
-                  <span className="material-symbols-outlined" aria-hidden="true">progress_activity</span>
-                  Loading live applicant counts for {activeApplicantYear}...
-                </div>
+                <IBACMILoader message={`Loading live applicant counts for ${activeApplicantYear}…`} />
               ) : (
                 <>
                   <div className="admin-applicant-download-options">
@@ -3679,7 +3657,7 @@ function Admin({ adminSession, onLogout }) {
                 type="button"
               >
                 <span className="material-symbols-outlined" aria-hidden="true">download</span>
-                {isDownloadingCourseApplicants ? 'Preparing CSV...' : `Download CSV (${applicantDownloadCount.toLocaleString()} Applicants)`}
+                {isDownloadingCourseApplicants ? <IBACMILoader variant="inline" message="Generating CSV report…" /> : `Download CSV (${applicantDownloadCount.toLocaleString()} Applicants)`}
               </button>
             </div>
           </section>
@@ -3937,7 +3915,7 @@ function Admin({ adminSession, onLogout }) {
                   {applicants === undefined && (
                     <tr>
                       <td className="admin-empty-state" colSpan={17}>
-                        Loading applicants...
+                        <IBACMILoader variant="table" message="Loading UniFAST applicants…" />
                       </td>
                     </tr>
                   )}
@@ -4207,42 +4185,14 @@ function Admin({ adminSession, onLogout }) {
                 onClick={handleDeleteCourseApplicants}
                 type="button"
               >
-                {isDeletingCourseApplicants ? 'Deleting...' : 'Yes, Delete All'}
+                {isDeletingCourseApplicants ? <IBACMILoader variant="inline" message="Deleting applicant records…" /> : 'Yes, Delete All'}
               </button>
             </div>
           </section>
         </div>
       )}
 
-      {isDownloadingCourseApplicants && (
-        <div
-          aria-labelledby="admin-course-download-progress-title"
-          aria-modal="true"
-          className="admin-modal-overlay admin-confirm-overlay"
-          role="dialog"
-        >
-          <section className="admin-modal-card admin-modal-card--compact admin-progress-card">
-            <div className="admin-progress-icon" aria-hidden="true">
-              <span className="material-symbols-outlined">downloading</span>
-            </div>
-            <p className="admin-modal-kicker">Course Applicants Information</p>
-            <h2 id="admin-course-download-progress-title">Preparing Applicant Download</h2>
-            <p>Creating the CSV file for {selectedUnifastCourse}.</p>
 
-            <div
-              aria-label={`Download progress ${courseApplicantDownloadProgress}%`}
-              aria-valuemax="100"
-              aria-valuemin="0"
-              aria-valuenow={courseApplicantDownloadProgress}
-              className="admin-progress-track"
-              role="progressbar"
-            >
-              <span style={{ width: `${courseApplicantDownloadProgress}%` }} />
-            </div>
-            <strong className="admin-progress-value">{courseApplicantDownloadProgress}%</strong>
-          </section>
-        </div>
-      )}
 
       {courseApplicantSuccess && (
         <div
@@ -4340,7 +4290,7 @@ function Admin({ adminSession, onLogout }) {
                     <span>{schoolYear}</span>
                     <strong>
                       {isDownloadingSchoolIdFiles
-                        ? 'Preparing...'
+                        ? <IBACMILoader variant="inline" message="Preparing your file…" />
                         : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
                     </strong>
                   </button>
@@ -4674,44 +4624,14 @@ function Admin({ adminSession, onLogout }) {
                 onClick={handleDeleteSchoolIdBatch}
                 type="button"
               >
-                {isDeletingSchoolIdFiles ? 'Deleting...' : 'Yes, Delete All'}
+                {isDeletingSchoolIdFiles ? <IBACMILoader variant="inline" message="Deleting School ID files…" /> : 'Yes, Delete All'}
               </button>
             </div>
           </section>
         </div>
       )}
 
-      {isDownloadingSchoolIdFiles && selectedSchoolIdBatchAction && (
-        <div
-          aria-labelledby="admin-school-id-progress-title"
-          aria-modal="true"
-          className="admin-modal-overlay admin-confirm-overlay"
-          role="dialog"
-        >
-          <section className="admin-modal-card admin-modal-card--compact admin-progress-card">
-            <div className="admin-progress-icon" aria-hidden="true">
-              <span className="material-symbols-outlined">downloading</span>
-            </div>
-            <p className="admin-modal-kicker">School ID Files</p>
-            <h2 id="admin-school-id-progress-title">Preparing Batch Download</h2>
-            <p>
-              Downloading Batch {selectedSchoolIdBatchAction.batchId} files and creating the ZIP.
-            </p>
 
-            <div
-              aria-label={`Download progress ${schoolIdDownloadProgress}%`}
-              aria-valuemax="100"
-              aria-valuemin="0"
-              aria-valuenow={schoolIdDownloadProgress}
-              className="admin-progress-track"
-              role="progressbar"
-            >
-              <span style={{ width: `${schoolIdDownloadProgress}%` }} />
-            </div>
-            <strong className="admin-progress-value">{schoolIdDownloadProgress}%</strong>
-          </section>
-        </div>
-      )}
 
       {schoolIdFileSuccess && (
         <div
@@ -4908,7 +4828,7 @@ function Admin({ adminSession, onLogout }) {
               </button>
 
               <button className="admin-button admin-button--primary" disabled={isSavingEdit} type="submit">
-                {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                {isSavingEdit ? <IBACMILoader variant="inline" message="Saving grantee information…" /> : 'Save Changes'}
               </button>
             </div>
           </form>
@@ -4995,7 +4915,7 @@ function Admin({ adminSession, onLogout }) {
                 type="submit"
               >
                 <span className="material-symbols-outlined">upload</span>
-                {isUploadingRecords ? 'Uploading...' : 'Upload'}
+                {isUploadingRecords ? <IBACMILoader variant="inline" message="Saving grantee records…" /> : 'Upload'}
               </button>
             </div>
           </form>
@@ -5066,7 +4986,7 @@ function Admin({ adminSession, onLogout }) {
                 </thead>
                 <tbody>
                   {studentAccounts === undefined && (
-                    <tr><td className="admin-empty-state" colSpan={6}>Loading users...</td></tr>
+                    <tr><td className="admin-empty-state" colSpan={6}><IBACMILoader variant="table" message="Loading student accounts…" /></td></tr>
                   )}
                   {studentAccounts !== undefined && filteredStudentAccountRows.length === 0 && (
                     <tr><td className="admin-empty-state" colSpan={6}>No student accounts found.</td></tr>
@@ -5146,7 +5066,7 @@ function Admin({ adminSession, onLogout }) {
               {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
               <div className="admin-user-form__actions">
                 <button className="admin-button admin-button--secondary" onClick={() => setSelectedUser(null)} type="button">Cancel</button>
-                <button className="admin-button admin-button--primary" disabled={isSavingUser} type="submit">{isSavingUser ? 'Saving...' : 'Save Changes'}</button>
+                <button className="admin-button admin-button--primary" disabled={isSavingUser} type="submit">{isSavingUser ? <IBACMILoader variant="inline" message="Saving account information…" /> : 'Save Changes'}</button>
               </div>
             </form>
           </section>
@@ -5163,7 +5083,7 @@ function Admin({ adminSession, onLogout }) {
             {userMessage && <p className="admin-user-message admin-user-message--error" role="alert">{userMessage}</p>}
             <div className="admin-user-form__actions">
               <button className="admin-button admin-button--secondary" onClick={() => setUserToDelete(null)} type="button">Cancel</button>
-              <button className="admin-button admin-button--danger" disabled={isDeletingUser} onClick={handleDeleteUser} type="button">{isDeletingUser ? 'Deleting...' : 'Delete User'}</button>
+              <button className="admin-button admin-button--danger" disabled={isDeletingUser} onClick={handleDeleteUser} type="button">{isDeletingUser ? <IBACMILoader variant="inline" message="Deleting account…" /> : 'Delete User'}</button>
             </div>
           </section>
         </div>

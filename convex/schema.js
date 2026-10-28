@@ -4,6 +4,8 @@ import { configFields, profileFields } from './billingRules'
 import { documentationFields } from './documentationRules'
 
 export default defineSchema({
+  studentProfileSubmissions: defineTable({ accountId: v.id('admins'), schoolYear: v.string(), submittedAt: v.number(), profile: v.any(), schoolIdUrl: v.optional(v.string()), schoolIdStorageId: v.optional(v.id('_storage')) })
+    .index('by_account_year', ['accountId', 'schoolYear']),
   documentation: defineTable({...documentationFields,storageId:v.id('_storage'),mimeType:v.string(),fileSize:v.number(),width:v.number(),height:v.number(),uploadedBy:v.id('admins'),createdAt:v.number(),updatedAt:v.number()})
     .index('by_status_order',['status','displayOrder']).index('by_created',['createdAt']).index('by_status_created',['status','createdAt']).index('by_storage',['storageId']),
   documentationUploads: defineTable({...documentationFields,adminId:v.id('admins'),mimeType:v.string(),fileSize:v.number(),createdAt:v.number(),expiresAt:v.number(),state:v.union(v.literal('pending'),v.literal('uploading'),v.literal('completed'),v.literal('failed')),storageId:v.optional(v.id('_storage'))})
@@ -31,6 +33,12 @@ export default defineSchema({
     phoneNumber: v.optional(v.string()),
     currentAddress: v.optional(v.string()),
     facebookProfileUrl: v.optional(v.string()),
+    studentInformation: v.optional(v.object({
+      lastName: v.string(), firstName: v.string(), middleInitial: v.string(),
+      course: v.string(), yearLevelCode: v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4), v.literal(5)), birthDate: v.string(),
+      zipCode: v.string(), emailAddress: v.string(), sexCode: v.union(v.literal(0), v.literal(1)),
+    })),
+    studentInformationUpdatedAt: v.optional(v.number()),
     password: v.string(),
     name: v.string(),
     role: v.string(),
@@ -132,6 +140,7 @@ export default defineSchema({
     frontIdStorageId: v.optional(v.id('_storage')),
     frontIdUrl: v.optional(v.string()),
     idFilesUploadedAt: v.optional(v.number()),
+    studentInformationUpdatedAt: v.optional(v.number()),
     uploadedAt: v.float64(),
   })
     .index('by_student_id', ['studentId'])

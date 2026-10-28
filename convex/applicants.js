@@ -2,6 +2,7 @@ import { internal } from './_generated/api'
 import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
 import { archiveRecord } from './archiveHelpers'
+import { DEGREE_PROGRAMS } from './studentProfileRules'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -13,15 +14,7 @@ async function logActivity(ctx, log) {
 
 const PORTAL_SETTINGS_KEY = 'unifast-applicants'
 const APPLICANT_PDF_MAX_SIZE = 10 * 1024 * 1024
-const TES_PROGRAM_OPTIONS = [
-  'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
-  'BACHELOR OF SCIENCE IN ENTREPRENEURSHIP',
-  'BACHELOR OF SCIENCE IN CRIMINOLOGY',
-  'BACHELOR OF ELEMENTARY EDUCATION',
-  'BACHELOR OF EARLY CHILDHOOD EDUCATION',
-  'BACHELOR OF SCIENCE IN HOSPITALITY MANAGEMENT',
-  'BACHELOR OF PUBLIC ADMINISTRATION',
-]
+const TES_PROGRAM_OPTIONS = DEGREE_PROGRAMS
 const TES_PROGRAMS = new Set(TES_PROGRAM_OPTIONS)
 
 async function requireAdminSession(ctx, token) {

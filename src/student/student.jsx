@@ -1,9 +1,15 @@
+import { logSanitizedError } from '../errors/errorBus.js'
+import { userErrorMessage } from '../errors/errorBus.js'
+import { uploadWithProgress } from '../components/transfer.js'
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import sampleSchoolIdFormat from '../assets/samp.jpg'
 import StudentInbox from './StudentInbox.jsx'
 import './student.css'
+import ProfileCompletion from './ProfileCompletion.jsx'
+import { selectStudentRecord } from '../../convex/studentProfileRules'
 
 const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
 const activeConvexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
@@ -21,64 +27,11 @@ const initialForm = {
   schoolYear: '',
 }
 
-function getUniqueOptions(options) {
-  return [...new Set(options.filter(Boolean))]
-}
-
-function parseSchoolYearStart(schoolYear) {
-  const match = String(schoolYear ?? '').match(/\d{4}/)
-  return match ? Number(match[0]) : 0
-}
-
-function getCurrentSchoolYear() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const startYear = now.getMonth() >= 5 ? year : year - 1
-  return `${startYear}-${startYear + 1}`
-}
-
-function normalizePhoneNumber(phoneNumber) {
-  return phoneNumber.replace(/[\s-]/g, '').trim()
-}
-
-function sanitizePhoneNumberInput(phoneNumber) {
-  return phoneNumber.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
-}
-
-function isValidPhoneNumber(phoneNumber) {
-  const normalizedPhone = normalizePhoneNumber(phoneNumber)
-
-  return /^09\d{9}$/.test(normalizedPhone) || /^\+639\d{9}$/.test(normalizedPhone)
-}
-
-function findCurrentStudentRecord(records) {
-  const currentSchoolYear = getCurrentSchoolYear()
-  const currentRecord = records
-    .filter((record) => record.schoolYear === currentSchoolYear)
-    .sort((firstRecord, secondRecord) => {
-      return (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
-    })[0]
-
-  if (currentRecord) return currentRecord
-
-  return [...records].sort((firstRecord, secondRecord) => {
-    const schoolYearDifference =
-      parseSchoolYearStart(secondRecord.schoolYear) - parseSchoolYearStart(firstRecord.schoolYear)
-
-    if (schoolYearDifference !== 0) return schoolYearDifference
-
-    const uploadDifference = (secondRecord.uploadedAt ?? 0) - (firstRecord.uploadedAt ?? 0)
-
-    if (uploadDifference !== 0) return uploadDifference
-
-    return (secondRecord._creationTime ?? 0) - (firstRecord._creationTime ?? 0)
-  })[0]
-}
-
 function StudentPdfPreview({ url }) {
   const containerRef = useRef(null)
   const [containerWidth, setContainerWidth] = useState(0)
   const [previewError, setPreviewError] = useState('')
+  const [isRendering, setIsRendering] = useState(true)
   const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
@@ -111,6 +64,7 @@ function StudentPdfPreview({ url }) {
 
     const renderPdf = async () => {
       setPreviewError('')
+      setIsRendering(true)
       container.replaceChildren()
       container.setAttribute('aria-busy', 'true')
 
@@ -170,12 +124,12 @@ function StudentPdfPreview({ url }) {
         }
       } catch (error) {
         if (!cancelled && error?.name !== 'RenderingCancelledException') {
-          console.error('Unable to render uploaded School ID PDF:', error)
+          logSanitizedError(error, 'student.preview')
           container.replaceChildren()
           setPreviewError('Preview unavailable, but your file was uploaded successfully.')
         }
       } finally {
-        if (!cancelled) container.removeAttribute('aria-busy')
+        if (!cancelled) { container.removeAttribute('aria-busy'); setIsRendering(false) }
       }
     }
 
@@ -196,8 +150,9 @@ function StudentPdfPreview({ url }) {
         }`}
         ref={containerRef}
       >
-        <span className="student-id-preview__loading">Loading PDF preview...</span>
+
       </div>
+      {isRendering && <IBACMILoader variant="compact" message="Preparing School ID preview…" />}
       {previewError && (
         <div className="student-id-preview__error">
           <span className="student-id-preview__status-icon" aria-hidden="true">
@@ -221,42 +176,23 @@ function StudentPdfPreview({ url }) {
   )
 }
 
-export default function StudentInfoForm({ studentSession, onLogout, onStudentSessionUpdate }) {
+export default function StudentInfoForm({ studentSession, onLogout }) {
   const studentSchoolId = String(studentSession?.schoolId ?? '').trim()
-  const allInfoRecords = useQuery(
-    api.allinfo.listByStudentId,
-    studentSchoolId ? { studentId: studentSchoolId } : 'skip',
+  const profileData = useQuery(
+    api.studentProfile.get,
+    studentSession?.sessionToken ? { sessionToken: studentSession.sessionToken } : 'skip',
   )
+  const allInfoRecords = profileData?.records
   const saveStudentIdUploads = useMutation(api.allinfo.saveStudentIdUploads)
-  const updateStudentPhoneNumber = useMutation(api.adminAuth.updateStudentPhoneNumber)
   const [frontIdFile, setFrontIdFile] = useState(null)
   const [uploadError, setUploadError] = useState('')
   const [uploadSuccess, setUploadSuccess] = useState('')
   const [isSavingUploads, setIsSavingUploads] = useState(false)
+  const [idUploadProgress,setIdUploadProgress] = useState(undefined)
   const uploadSuccessButtonRef = useRef(null)
-  const [phoneNumber, setPhoneNumber] = useState(studentSession?.phoneNumber ?? '')
-  const [phoneError, setPhoneError] = useState('')
-  const [phoneSuccess, setPhoneSuccess] = useState('')
-  const [isSavingPhoneNumber, setIsSavingPhoneNumber] = useState(false)
-  const updateStudentCurrentAddress = useMutation(api.adminAuth.updateStudentCurrentAddress)
-  const [currentAddress, setCurrentAddress] = useState(studentSession?.currentAddress ?? '')
-  const [addressError, setAddressError] = useState('')
-  const [addressSuccess, setAddressSuccess] = useState('')
-  const [isSavingCurrentAddress, setIsSavingCurrentAddress] = useState(false)
-  const updateStudentFacebookProfile = useMutation(api.adminAuth.updateStudentFacebookProfile)
   const logoutSupportSession = useMutation(api.support.logout)
-  const [facebookProfileUrl, setFacebookProfileUrl] = useState(studentSession?.facebookProfileUrl ?? '')
-  const [facebookError, setFacebookError] = useState('')
-  const [facebookSuccess, setFacebookSuccess] = useState('')
-  const [isSavingFacebookProfile, setIsSavingFacebookProfile] = useState(false)
 
   const normalizedStudentSchoolId = studentSchoolId.toLowerCase()
-  const savedPhoneNumber = studentSession?.phoneNumber ?? ''
-  const hasPhoneNumberChanged = normalizePhoneNumber(phoneNumber) !== normalizePhoneNumber(savedPhoneNumber)
-  const savedCurrentAddress = studentSession?.currentAddress ?? ''
-  const hasCurrentAddressChanged = currentAddress.trim() !== savedCurrentAddress.trim()
-  const savedFacebookProfileUrl = studentSession?.facebookProfileUrl ?? ''
-  const hasFacebookProfileChanged = facebookProfileUrl.trim() !== savedFacebookProfileUrl.trim()
   const studentRecord = useMemo(() => {
     if (!normalizedStudentSchoolId || !allInfoRecords) return null
 
@@ -265,7 +201,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
       return recordStudentId === normalizedStudentSchoolId
     })
 
-    return findCurrentStudentRecord(matchingRecords) ?? null
+    return selectStudentRecord(matchingRecords) ?? null
   }, [allInfoRecords, normalizedStudentSchoolId])
 
   const form = studentRecord
@@ -285,9 +221,6 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   const isLoading = allInfoRecords === undefined
   const hasStudentSession = Boolean(normalizedStudentSchoolId)
   const showMissingRecord = !isLoading && hasStudentSession && !studentRecord
-  const statusOptions = getUniqueOptions([form.status, 'Validated', 'Pending', 'Rejected'])
-  const semesterOptions = getUniqueOptions([form.semester, '1st Semester', '2nd Semester'])
-  const schoolYearOptions = getUniqueOptions([form.schoolYear, '2023-2024', '2024-2025'])
   const hasSavedFrontId = Boolean(studentRecord?.frontIdUrl || studentRecord?.frontIdStorageId)
   const uploadedIdUrl = studentRecord?.frontIdUrl ?? ''
 
@@ -316,182 +249,6 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
       // Clear the browser session even when revocation cannot reach Convex.
     } finally {
       if (typeof onLogout === 'function') onLogout()
-    }
-  }
-
-  const handlePhoneNumberChange = (event) => {
-    setPhoneNumber(sanitizePhoneNumberInput(event.target.value))
-    setPhoneError('')
-    setPhoneSuccess('')
-  }
-
-  const handleCurrentAddressChange = (event) => {
-    setCurrentAddress(event.target.value)
-    setAddressError('')
-    setAddressSuccess('')
-  }
-
-  const handleFacebookProfileChange = (event) => {
-    setFacebookProfileUrl(event.target.value)
-    setFacebookError('')
-    setFacebookSuccess('')
-  }
-
-  const handleSaveFacebookProfile = async () => {
-    const nextFacebookProfileUrl = facebookProfileUrl.trim()
-    setFacebookError('')
-    setFacebookSuccess('')
-
-    if (!studentSchoolId) {
-      setFacebookError('Please sign in before updating your Facebook profile link.')
-      return
-    }
-
-    let parsedUrl
-    try {
-      parsedUrl = new URL(nextFacebookProfileUrl)
-    } catch {
-      setFacebookError('Enter a valid Facebook profile link.')
-      return
-    }
-
-    const hostname = parsedUrl.hostname.toLowerCase()
-    if (
-      parsedUrl.protocol !== 'https:' ||
-      !(hostname === 'facebook.com' || hostname.endsWith('.facebook.com') || hostname === 'fb.com' || hostname.endsWith('.fb.com'))
-    ) {
-      setFacebookError('Use a valid https://facebook.com profile link.')
-      return
-    }
-
-    if (!hasFacebookProfileChanged) {
-      setFacebookSuccess('Facebook profile link is already up to date.')
-      return
-    }
-
-    setIsSavingFacebookProfile(true)
-    try {
-      const result = await updateStudentFacebookProfile({
-        schoolId: studentSession.schoolId,
-        facebookProfileUrl: nextFacebookProfileUrl,
-      })
-
-      if (!result.success) {
-        setFacebookError(result.message || 'Unable to update Facebook profile link.')
-        return
-      }
-
-      setFacebookProfileUrl(result.admin?.facebookProfileUrl ?? nextFacebookProfileUrl)
-      setFacebookSuccess(result.message || 'Facebook profile link updated successfully.')
-      if (typeof onStudentSessionUpdate === 'function') onStudentSessionUpdate(result.admin)
-    } catch (error) {
-      setFacebookError(error instanceof Error ? error.message : 'Unable to update Facebook profile link.')
-    } finally {
-      setIsSavingFacebookProfile(false)
-    }
-  }
-
-  const handleSavePhoneNumber = async () => {
-    const nextPhoneNumber = normalizePhoneNumber(phoneNumber)
-
-    setPhoneError('')
-    setPhoneSuccess('')
-
-    if (!studentSchoolId) {
-      setPhoneError('Please sign in before updating your phone number.')
-      return
-    }
-
-    if (!nextPhoneNumber) {
-      setPhoneError('Phone number is required.')
-      return
-    }
-
-    if (!isValidPhoneNumber(nextPhoneNumber)) {
-      setPhoneError('Please enter a valid phone number. Example: 09123456789 or +639123456789.')
-      return
-    }
-
-    if (!hasPhoneNumberChanged) {
-      setPhoneSuccess('Phone number is already up to date.')
-      return
-    }
-
-    setIsSavingPhoneNumber(true)
-
-    try {
-      const result = await updateStudentPhoneNumber({
-        schoolId: studentSession.schoolId,
-        phoneNumber: nextPhoneNumber,
-      })
-
-      if (!result.success) {
-        setPhoneError(result.message || 'Unable to update phone number.')
-        return
-      }
-
-      setPhoneNumber(result.admin?.phoneNumber ?? nextPhoneNumber)
-      setPhoneSuccess(result.message || 'Phone number updated successfully.')
-
-      if (typeof onStudentSessionUpdate === 'function') {
-        onStudentSessionUpdate(result.admin)
-      }
-    } catch (error) {
-      setPhoneError(error instanceof Error ? error.message : 'Unable to update phone number.')
-    } finally {
-      setIsSavingPhoneNumber(false)
-    }
-  }
-
-  const handleSaveCurrentAddress = async () => {
-    const nextCurrentAddress = currentAddress.trim()
-
-    setAddressError('')
-    setAddressSuccess('')
-
-    if (!studentSchoolId) {
-      setAddressError('Please sign in before updating your current address.')
-      return
-    }
-
-    if (!nextCurrentAddress) {
-      setAddressError('Current address is required.')
-      return
-    }
-
-    if (nextCurrentAddress.length < 8) {
-      setAddressError('Current address must be at least 8 characters.')
-      return
-    }
-
-    if (!hasCurrentAddressChanged) {
-      setAddressSuccess('Current address is already up to date.')
-      return
-    }
-
-    setIsSavingCurrentAddress(true)
-
-    try {
-      const result = await updateStudentCurrentAddress({
-        schoolId: studentSession.schoolId,
-        currentAddress: nextCurrentAddress,
-      })
-
-      if (!result.success) {
-        setAddressError(result.message || 'Unable to update current address.')
-        return
-      }
-
-      setCurrentAddress(result.admin?.currentAddress ?? nextCurrentAddress)
-      setAddressSuccess(result.message || 'Current address updated successfully.')
-
-      if (typeof onStudentSessionUpdate === 'function') {
-        onStudentSessionUpdate(result.admin)
-      }
-    } catch (error) {
-      setAddressError(error instanceof Error ? error.message : 'Unable to update current address.')
-    } finally {
-      setIsSavingCurrentAddress(false)
     }
   }
 
@@ -542,20 +299,18 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     let uploadResult
 
     try {
-      uploadResult = await fetch(
+      uploadResult = await uploadWithProgress(
         `${convexSiteUrl}/google-drive/student-upload?${uploadParams.toString()}`,
-        {
-          method: 'POST',
+        file, {
+          onProgress: setIdUploadProgress,
           headers: {
             'Content-Type': file.type || 'application/pdf',
+            Authorization: `Bearer ${studentSession.sessionToken}`,
           },
-          body: file,
         },
       )
-    } catch {
-      throw new Error(
-        'Unable to connect to the PDF upload service. Deploy the Convex HTTP functions and check VITE_CONVEX_URL or VITE_CONVEX_SITE_URL.',
-      )
+    } catch (error) {
+      throw new Error(userErrorMessage(error, 'Unable to upload your School ID. Please check your connection and try again.', 'student.student'), { cause: error })
     }
 
     if (!uploadResult.ok) {
@@ -574,6 +329,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
   }
 
   const handleSaveUploads = async () => {
+    if (!profileData?.submission.canUploadId) { setUploadError('Palihog i-check ang imong login ug active school year para maka-upload sa School ID.'); return }
     setUploadError('')
     setUploadSuccess('')
 
@@ -588,11 +344,13 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
     }
 
     setIsSavingUploads(true)
+    setIdUploadProgress(undefined)
 
     try {
       const frontIdUrl = await uploadFileToGoogleDrive(frontIdFile)
 
       const result = await saveStudentIdUploads({
+        sessionToken: studentSession.sessionToken,
         studentId: studentRecord.studentId,
         schoolYear: studentRecord.schoolYear,
         frontIdUrl,
@@ -601,249 +359,13 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
       setFrontIdFile(null)
       setUploadSuccess(`ID file saved for School Year ${result.schoolYear || form.schoolYear}.`)
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'Unable to save uploaded files.')
+      setUploadError(userErrorMessage(error, 'Unable to save uploaded files.', 'student.student'))
     } finally {
       setIsSavingUploads(false)
     }
   }
 
-  return (
-    <div className="student-page">
-      <header className="student-topbar">
-        <button
-          aria-label="Log out and return to landing page"
-          className="student-icon-button"
-          onClick={handleLogout}
-          type="button"
-        >
-          <span className="material-symbols-outlined">arrow_back</span>
-        </button>
-        <h1>Student Information</h1>
-      </header>
-
-      <main className="student-main">
-        <section className="student-hero" aria-labelledby="student-title">
-          <div className="student-badge">Academic Year Update</div>
-          <h2 id="student-title">Unifast Portal</h2>
-          <p>Please ensure all details match your official documents for successful validation.</p>
-        </section>
-
-        {hasStudentSession && <StudentInbox studentSession={studentSession} />}
-
-        {!hasStudentSession && (
-          <div className="student-state-box">
-            Please sign in with a student account to view your grantee information.
-          </div>
-        )}
-
-        {isLoading && <div className="student-state-box">Loading your grantee information...</div>}
-
-        {showMissingRecord && (
-          <div className="student-state-box student-state-box--warning">
-            No allinfo record was found for Student ID {studentSession?.schoolId}.
-          </div>
-        )}
-
-        <form className="student-form" id="student-information-form">
-          <div className="student-field">
-            <label htmlFor="tes-award-no">TES Award No.</label>
-            <input
-              id="tes-award-no"
-              placeholder="e.g. TES-2024-XXXX"
-              readOnly
-              type="text"
-              value={form.tesAwardNo}
-            />
-          </div>
-
-          <div className="student-field">
-            <label htmlFor="student-id">Student ID</label>
-            <input
-              id="student-id"
-              placeholder="Enter your University ID"
-              readOnly
-              type="text"
-              value={form.studentId}
-            />
-          </div>
-
-          <div className="student-field student-field--with-action">
-            <label htmlFor="phone-number">Phone No.</label>
-            <div className="student-inline-control">
-              <input
-                id="phone-number"
-                inputMode="tel"
-                pattern="\+?[0-9]*"
-                placeholder="09123456789 or +639123456789"
-                type="tel"
-                value={phoneNumber}
-                onChange={handlePhoneNumberChange}
-              />
-
-              <button
-                className="student-inline-button"
-                disabled={!hasStudentSession || !hasPhoneNumberChanged || isSavingPhoneNumber}
-                onClick={handleSavePhoneNumber}
-                type="button"
-              >
-                {isSavingPhoneNumber ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-
-            {phoneError && (
-              <p className="student-upload-message student-upload-message--error">{phoneError}</p>
-            )}
-            {phoneSuccess && (
-              <p className="student-upload-message student-upload-message--success">{phoneSuccess}</p>
-            )}
-          </div>
-
-          <div className="student-field student-field--with-action student-field--full">
-            <label htmlFor="current-address">Your Home Permanent Address ( Ex. Purok number, Brgy, City/Municipality, Province )</label>
-            <textarea
-              id="current-address"
-              placeholder="Enter your current address"
-              rows={3}
-              value={currentAddress}
-              onChange={handleCurrentAddressChange}
-            />
-
-            <button
-              className="student-inline-button student-inline-button--wide"
-              disabled={!hasStudentSession || !hasCurrentAddressChanged || isSavingCurrentAddress}
-              onClick={handleSaveCurrentAddress}
-              type="button"
-            >
-              {isSavingCurrentAddress ? 'Saving Address...' : 'Save Current Address'}
-            </button>
-
-            {addressError && (
-              <p className="student-upload-message student-upload-message--error">{addressError}</p>
-            )}
-            {addressSuccess && (
-              <p className="student-upload-message student-upload-message--success">{addressSuccess}</p>
-            )}
-          </div>
-
-          <div className="student-field student-field--with-action student-field--full">
-            <label htmlFor="facebook-profile-url">Facebook Profile Link</label>
-            <div className="student-inline-control">
-              <input
-                id="facebook-profile-url"
-                inputMode="url"
-                onChange={handleFacebookProfileChange}
-                placeholder="https://www.facebook.com/your.profile"
-                type="url"
-                value={facebookProfileUrl}
-              />
-              <button
-                className="student-inline-button"
-                disabled={!hasStudentSession || !hasFacebookProfileChanged || isSavingFacebookProfile}
-                onClick={handleSaveFacebookProfile}
-                type="button"
-              >
-                {isSavingFacebookProfile ? 'Saving...' : 'Save Link'}
-              </button>
-            </div>
-            {facebookError && (
-              <p className="student-upload-message student-upload-message--error">{facebookError}</p>
-            )}
-            {facebookSuccess && (
-              <p className="student-upload-message student-upload-message--success">{facebookSuccess}</p>
-            )}
-          </div>
-
-          <div className="student-field">
-            <label htmlFor="last-name">Last Name</label>
-            <input
-              id="last-name"
-              placeholder="Last Name"
-              readOnly
-              type="text"
-              value={form.lastName}
-            />
-          </div>
-
-          <div className="student-field">
-            <label htmlFor="first-name">First Name</label>
-            <input
-              id="first-name"
-              placeholder="First Name"
-              readOnly
-              type="text"
-              value={form.firstName}
-            />
-          </div>
-
-          <div className="student-field">
-            <label htmlFor="middle-initial">MI.</label>
-            <input
-              id="middle-initial"
-              placeholder="MI."
-              readOnly
-              type="text"
-              value={form.middleInitial}
-            />
-          </div>
-
-          <div className="student-field">
-            <label htmlFor="batch-no">Batch No.</label>
-            <input
-              id="batch-no"
-              placeholder="e.g. Batch 7"
-              readOnly
-              type="text"
-              value={form.batchNo}
-            />
-          </div>
-
-          <div className="student-select-grid">
-            <div className="student-field">
-              <label htmlFor="status">Status</label>
-              <div className="student-select-wrap">
-                <select disabled id="status" value={form.status}>
-                  <option disabled value="">
-                    Select Status
-                  </option>
-                  {statusOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-                <span className="material-symbols-outlined">expand_more</span>
-              </div>
-            </div>
-
-            <div className="student-field">
-              <label htmlFor="semester">Semester</label>
-              <div className="student-select-wrap">
-                <select disabled id="semester" value={form.semester}>
-                  <option disabled value="">
-                    Select Semester
-                  </option>
-                  {semesterOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-                <span className="material-symbols-outlined">expand_more</span>
-              </div>
-            </div>
-
-            <div className="student-field">
-              <label htmlFor="school-year">School Year</label>
-              <div className="student-select-wrap">
-                <select disabled id="school-year" value={form.schoolYear}>
-                  <option disabled value="">
-                    Select School Year
-                  </option>
-                  {schoolYearOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-                <span className="material-symbols-outlined">expand_more</span>
-              </div>
-            </div>
-          </div>
-
+  const schoolIdUpload = (
           <section className="student-upload-section" aria-labelledby="student-upload-title">
             <div className="student-upload-copy">
               <h3 id="student-upload-title">
@@ -892,6 +414,16 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
             <div className="student-upload-field">
               <span className="student-upload-label">Upload File</span>
               <label
+                id="file-front-control"
+                role="button"
+                tabIndex={profileData?.submission.canUploadId && !isSavingUploads ? 0 : -1}
+                aria-disabled={!profileData?.submission.canUploadId || isSavingUploads}
+                onKeyDown={event => {
+                  if ((event.key === 'Enter' || event.key === ' ') && profileData?.submission.canUploadId && !isSavingUploads) {
+                    event.preventDefault()
+                    document.getElementById('file-front')?.click()
+                  }
+                }}
                 className={`student-upload-card${
                   frontIdFile || hasSavedFrontId ? ' student-upload-card--selected' : ''
                 }`}
@@ -899,7 +431,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
               >
                 <input
                   accept="application/pdf,.pdf"
-                  disabled={!studentRecord || isSavingUploads}
+                  disabled={!studentRecord || isSavingUploads || !profileData?.submission.canUploadId}
                   id="file-front"
                   type="file"
                   onChange={handleFileChange(setFrontIdFile)}
@@ -953,15 +485,56 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
             {uploadError && <p className="student-upload-message student-upload-message--error">{uploadError}</p>}
             <button
               className="student-save-button"
-              disabled={!studentRecord || isSavingUploads}
+              disabled={!studentRecord || isSavingUploads || !profileData?.submission.canUploadId}
               onClick={handleSaveUploads}
               type="button"
             >
-              <span>{isSavingUploads ? 'Saving Uploads...' : 'Save Uploaded ID'}</span>
-              <span className="material-symbols-outlined">check_circle</span>
+              <span>{isSavingUploads ? <IBACMILoader variant="inline" message={idUploadProgress>=100 ? "Saving uploaded School ID…" : "Uploading School ID…"} progress={idUploadProgress} /> : 'Save Uploaded ID'}</span>
+              <span className="material-symbols-outlined" aria-hidden="true">check_circle</span>
             </button>
           </section>
-        </form>
+  )
+
+  return (
+    <div className="student-page">
+      <header className="student-topbar">
+        <button
+          aria-label="Log out and return to landing page"
+          className="student-icon-button"
+          onClick={handleLogout}
+          type="button"
+        >
+          <span className="material-symbols-outlined">arrow_back</span>
+        </button>
+        <h1>Student Information</h1>
+      </header>
+
+      <main className="student-main">
+        <section className="student-hero" aria-labelledby="student-title">
+          <div className="student-badge">Academic Year Update</div>
+          <h2 id="student-title">Unifast Portal</h2>
+          <p>Please ensure all details match your official documents for successful validation.</p>
+        </section>
+
+        {hasStudentSession && <StudentInbox studentSession={studentSession} />}
+
+        {!hasStudentSession && (
+          <div className="student-state-box">
+            Please sign in with a student account to view your grantee information.
+          </div>
+        )}
+
+        {isLoading && hasStudentSession && <IBACMILoader message="Loading your grantee information…" />}
+
+        {showMissingRecord && (
+          <div className="student-state-box student-state-box--warning">
+            No allinfo record was found for Student ID {studentSession?.schoolId}.
+          </div>
+        )}
+
+        {profileData && <ProfileCompletion key={`${studentSession.sessionToken}:${profileData.submission.schoolYear}`} data={profileData} sessionToken={studentSession.sessionToken} record={studentRecord}>{schoolIdUpload}</ProfileCompletion>}
+
+
       </main>
 
       {uploadSuccess ? (
@@ -994,7 +567,7 @@ export default function StudentInfoForm({ studentSession, onLogout, onStudentSes
             </div>
 
             <span className="student-success-modal__eyebrow">Upload complete</span>
-            <h2 id="student-upload-success-title">Successfully submitted</h2>
+            <h2 id="student-upload-success-title">School ID uploaded</h2>
             <p id="student-upload-success-description">
               {uploadSuccess} Your document is now available for review.
             </p>

@@ -1,3 +1,5 @@
+import IBACMIServerErrorModal from './components/IBACMIServerErrorModal.jsx'
+import { logSanitizedError } from './errors/errorBus.js'
 import { StrictMode } from 'react'
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
 import { createRoot } from 'react-dom/client'
@@ -8,50 +10,23 @@ const defaultConvexUrl = 'https://ideal-crane-292.convex.cloud'
 const convexUrl = import.meta.env.VITE_CONVEX_URL || defaultConvexUrl
 
 function createMissingConvexConfig() {
-  return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 24,
-        background: '#fbfaf8',
-        color: '#1c1b1b',
-        fontFamily:
-          "'Hanken Grotesk', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      }}
-    >
-      <section style={{ maxWidth: 640 }}>
-        <p
-          style={{
-            color: '#c2410c',
-            fontSize: 12,
-            fontWeight: 800,
-            letterSpacing: '0.08em',
-            margin: '0 0 10px',
-            textTransform: 'uppercase',
-          }}
-        >
-          Deployment setup needed
-        </p>
-        <h1 style={{ fontSize: 32, lineHeight: 1.1, margin: '0 0 12px' }}>
-          Missing Convex URL
-        </h1>
-        <p style={{ color: '#584237', fontSize: 16, lineHeight: 1.6, margin: 0 }}>
-          Add <strong>VITE_CONVEX_URL</strong> in your Vercel project environment variables, then
-          redeploy. Use the same Convex cloud URL from your local <strong>.env.local</strong> file.
-        </p>
-      </section>
-    </main>
-  )
+  return <IBACMIServerErrorModal category="service" onRetry={()=>window.location.reload()} />
 }
 
-const root = createRoot(document.getElementById('root'))
+const root = createRoot(document.getElementById('root'), { onCaughtError: error => logSanitizedError(error, 'application.render'), onUncaughtError: error => logSanitizedError(error, 'application.startup') })
+
+// Fade the static shell without delaying rendering or navigation.
+const bootLoader = document.getElementById('ibacmi-boot-loader')
+if (bootLoader) {
+  bootLoader.classList.add('is-ready')
+  bootLoader.addEventListener('transitionend', () => bootLoader.remove(), { once: true })
+  window.setTimeout(() => bootLoader.remove(), 220)
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((error) => {
-      console.error('Unable to register the web app service worker:', error)
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL.replace(/\/+$/, '')}/sw.js`, { updateViaCache: 'none' }).catch((error) => {
+      logSanitizedError(error, 'application.worker')
     })
   })
 }
@@ -59,13 +34,14 @@ if ('serviceWorker' in navigator) {
 if (!convexUrl) {
   root.render(createMissingConvexConfig())
 } else {
-  const convex = new ConvexReactClient(convexUrl)
+  let convex
+  try { convex = new ConvexReactClient(convexUrl, { logger: false }) } catch (error) { logSanitizedError(error, 'application.configuration') }
 
-  root.render(
+  root.render(convex ? (
     <StrictMode>
       <ConvexProvider client={convex}>
         <App />
       </ConvexProvider>
-    </StrictMode>,
-  )
+    </StrictMode>
+  ) : createMissingConvexConfig())
 }

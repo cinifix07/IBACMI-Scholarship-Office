@@ -1,5 +1,7 @@
+import { userErrorMessage } from '../errors/errorBus.js'
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import ibacmiLogo from '../assets/IBACMI.png'
 import '../admin/student-support.css'
@@ -86,7 +88,7 @@ export default function StudentInbox({ studentSession }) {
       setDraft('')
       if (textareaRef.current) textareaRef.current.style.height = ''
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Your message could not be sent. Please try again.')
+      setNotice(userErrorMessage(error, 'Your message could not be sent. Please try again.', 'student.StudentInbox'))
     } finally {
       sendingRef.current = false
       setSending(false)
@@ -122,7 +124,7 @@ export default function StudentInbox({ studentSession }) {
           </header>
 
           <div className="student-chat-history" aria-live="polite" aria-label="Scholarship Support messages">
-            {conversations === undefined && <div className="student-chat-loading" aria-label="Loading conversation history"><i /><span><b /><b /></span><i /><span><b /><b /></span></div>}
+            {conversations === undefined && <IBACMILoader variant="compact" message="Connecting to your conversations…" />}
             {conversations !== undefined && messages.length === 0 && <div className="student-chat-welcome"><span className="material-symbols-outlined" aria-hidden="true">forum</span><p>{selected?.status === 'resolved' ? 'Your previous conversation is resolved. Send a message to reopen it or ask a new question.' : 'Hello! How can we help with your UniFAST application today?'}</p></div>}
             {messages.map((message, index) => {
               const previous = messages[index - 1]
@@ -138,7 +140,7 @@ export default function StudentInbox({ studentSession }) {
           {notice && <p className="student-chat-error" role="alert">{notice}</p>}
           <form className="student-chat-composer" onSubmit={submit}>
             <textarea ref={textareaRef} value={draft} maxLength={2000} aria-label="Write a message" placeholder="Write a message…" onChange={resizeDraft} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
-            <button type="submit" aria-label={sending ? 'Sending message' : 'Send message'} disabled={!draft.trim() || sending}><span className="material-symbols-outlined" aria-hidden="true">{sending ? 'hourglass_top' : 'send'}</span></button>
+            <button type="submit" aria-label={sending ? 'Sending message' : 'Send message'} disabled={!draft.trim() || sending}>{sending ? <IBACMILoader variant="inline" message="" /> : <span className="material-symbols-outlined" aria-hidden="true">send</span>}</button>
             <small>{sending ? 'Sending…' : 'Enter to send · Shift + Enter for a new line'}</small>
           </form>
         </section>

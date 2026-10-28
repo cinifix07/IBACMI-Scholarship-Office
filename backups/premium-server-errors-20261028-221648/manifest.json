@@ -1,0 +1,262 @@
+﻿[
+    {
+        "File":  "index.html",
+        "SHA256":  "1AAC5FCB2F8BF06F546702AD26C316A41CA1D116A3CBF377C7E7302D7767E85F"
+    },
+    {
+        "File":  "public/sw.js",
+        "SHA256":  "5991DA9667B664A74B1A440CC674EE0F274EE7C168467EE21C5C13C0F8C7209B"
+    },
+    {
+        "File":  "convex\\documentation.js",
+        "SHA256":  "4906DE25FD78BE9E9698E3CF8CD48F8CAA435AB7AD3DC557FECC7DE190BD8105"
+    },
+    {
+        "File":  "convex\\billingRules.js",
+        "SHA256":  "96152B2B07C2FCF6FFF2E98FBE596D47F063035CC1322E21B12B203EE4D46D43"
+    },
+    {
+        "File":  "convex\\billing.js",
+        "SHA256":  "59ACE4712964F1F97DEE0F068B67E6E7FA707CC3E2DCD4BE10EF84292E147CA4"
+    },
+    {
+        "File":  "convex\\archiveHelpers.js",
+        "SHA256":  "AD5CD4A8CB02B4F68B8B37B0640989C27AE9DA68ABA3D45870BBB09509054D5C"
+    },
+    {
+        "File":  "convex\\archive.js",
+        "SHA256":  "37C4EC671871CD1138E9387C76D3B0BA13487414051A4BDCFDA51CD606254A17"
+    },
+    {
+        "File":  "convex\\applicants.js",
+        "SHA256":  "2904270DC45462EB8E4FB58C2B310F44B9029316370F32F440CA7C0F71FAAC6D"
+    },
+    {
+        "File":  "convex\\applicantPortal.js",
+        "SHA256":  "96545CE25789F71C0D6662590EE1026D85DB0D9439506032E103063C399D2CC1"
+    },
+    {
+        "File":  "convex\\allinfo.js",
+        "SHA256":  "0BA6C043E0033FE97F92C3FAA484465E935F25AADDB9DF7FB0D5BCD6DA34C017"
+    },
+    {
+        "File":  "convex\\adminAuth.js",
+        "SHA256":  "87D9EAC80AE452941EFC48B86362022377A3F19BAC54DBD543268B936A7F686C"
+    },
+    {
+        "File":  "convex\\activityLogs.js",
+        "SHA256":  "F7BE3DFA213413B2C92B4C5BB9934EF1B7EB7AD8F3C48A7E0665A8ACB7FECB68"
+    },
+    {
+        "File":  "convex\\quickActions.js",
+        "SHA256":  "10ED00EACBF4F98F0232F4E9DADE67B289B982931155AEE6D85FECD992DE6031"
+    },
+    {
+        "File":  "convex\\http.js",
+        "SHA256":  "D87C73C76106EF6B6D15491A316DC167A08F066D7607ECAB11FFCE25EBCC8855"
+    },
+    {
+        "File":  "convex\\form2.js",
+        "SHA256":  "25653682DCB8CFDF2F9B0704B0541F040BBCDDCA1E85EEBAA4AF8C96906258CC"
+    },
+    {
+        "File":  "convex\\documentationRules.js",
+        "SHA256":  "E90FB3521337514B899B16AFE886A7931FAC8E3BF253F371EEB0B6685CA75B3A"
+    },
+    {
+        "File":  "convex\\documentationHttp.js",
+        "SHA256":  "2FC5D848492B4AB339CD573C4A6B7C0710F9D8F092824C0B641CD6089B93E3E0"
+    },
+    {
+        "File":  "src\\index.css",
+        "SHA256":  "6774D3B1A7EFD8C7AE3BE4A4CEC83FFC9D08DA571A110C1C6BB310D85514DB1B"
+    },
+    {
+        "File":  "src\\App.jsx",
+        "SHA256":  "14B28F3612A2F700685F5B3FA6AA7EE2EE9996F2FDC74A657B87B00131487593"
+    },
+    {
+        "File":  "src\\ErrorBoundary.jsx",
+        "SHA256":  "D8D4F2EA5CD0ED34A52206305FB25F9DEF7B9E1A5BFCE284118BA44F1A413586"
+    },
+    {
+        "File":  "src\\main.jsx",
+        "SHA256":  "F9139B0CF693AE18B9C9AD0C231B6807FF4A10E9C56D6FD9B3E798CE27880D43"
+    },
+    {
+        "File":  "convex\\studentProfileAuth.js",
+        "SHA256":  "4AD62F94DA2CFC242A86BE83678B4E57E1017D5A4566EF0B3448C49744BDD8A8"
+    },
+    {
+        "File":  "convex\\studentProfile.js",
+        "SHA256":  "6DE49C7531C375730E81D3AEAFAACA738982435E520D955D92BD66CF9A21EE84"
+    },
+    {
+        "File":  "convex\\schema.js",
+        "SHA256":  "CEA8848708B8B1ABBE6FBBF997EC950D7A86D880AE5853E6664F05013D76A2B4"
+    },
+    {
+        "File":  "convex\\studentProfileRules.js",
+        "SHA256":  "71091FED4F676C89125EE18BB5F7E1BE03437497BD96BF568CB57329E62E703E"
+    },
+    {
+        "File":  "convex\\support.js",
+        "SHA256":  "0A5BFC3D9B53559DAE154BBD40584794F8E8FDC1985809068C3ED94A7AAD95CF"
+    },
+    {
+        "File":  "convex\\_generated\\server.js",
+        "SHA256":  "AEA87B3EE367E0E870F3DA81FFCE8BABD8EA1AEA695A1E38689841AEBC09A1E8"
+    },
+    {
+        "File":  "src\\student\\StudentInbox.jsx",
+        "SHA256":  "11E90A69C5DF571B9740810A2ACFF7E2831934DE4A0099D98F82249DF3248483"
+    },
+    {
+        "File":  "convex\\_generated\\server.d.ts",
+        "SHA256":  "B0C8D708AAA165B10633BB6181DEA1AF4B9976A71AD001D75F42785DDFBCA458"
+    },
+    {
+        "File":  "src\\student\\student.jsx",
+        "SHA256":  "4480227D6566D56061CECEFB3A2F827B90FB92850E0ED7F9E03B5CBB427AA780"
+    },
+    {
+        "File":  "src\\student\\student.css",
+        "SHA256":  "37C6BF2F5D5ECC973084D75446D459FECC397480B526BB2145F6998731F1FA20"
+    },
+    {
+        "File":  "convex\\_generated\\dataModel.d.ts",
+        "SHA256":  "DB177073D16A4393C7A96BCDC3A2A904E88C2432D54D138CA7715CC431982C17"
+    },
+    {
+        "File":  "src\\student\\ProfileCompletion.jsx",
+        "SHA256":  "E1E78A37D12BCEB421D65120D2EF830E0B7775C09FC48776ED8171D24AAEFB49"
+    },
+    {
+        "File":  "convex\\_generated\\api.d.ts",
+        "SHA256":  "388086905C5091504FE613B2B28574ED481D1D641C6EDBF37C6A28C638EE7F0D"
+    },
+    {
+        "File":  "convex\\_generated\\api.js",
+        "SHA256":  "F513058549831E85376F8D19CAFAF2A4A770B6EB1B859FB371141F2C9DEC0D70"
+    },
+    {
+        "File":  "src\\landingpage\\VisitorSupport.jsx",
+        "SHA256":  "8603556E8C2D8A63B93AC657EB975D8B273DE2E2EA75463429C560DADF15D3B0"
+    },
+    {
+        "File":  "src\\landingpage\\visitor-support.css",
+        "SHA256":  "CB4BA74D18D7D410F7826CAC9E6748929BCF48C58A0109437A0ED93E77E0367B"
+    },
+    {
+        "File":  "src\\landingpage\\lan.css",
+        "SHA256":  "E3958C110E795D9BC05DEB6AE5104BF159109F43EDF134DB594859A2DBFF7B2B"
+    },
+    {
+        "File":  "src\\landingpage\\alllanding.jsx",
+        "SHA256":  "DCE5611DB14BF441C855EF12C73331B5C1B0B6B86AB41BD4883896584A75F725"
+    },
+    {
+        "File":  "src\\landingpage\\AccountVerification.jsx",
+        "SHA256":  "2C66FB830AAA9671F2C56467AE0DF23B0BDD4BCA7EF599FD37C791E8895FE7DD"
+    },
+    {
+        "File":  "src\\landingpage\\account-verification.css",
+        "SHA256":  "B289C56C1765057D9C948C3913BD5F3A417D95C29D5727875E2FEBE8C6967926"
+    },
+    {
+        "File":  "src\\documentation\\imageCache.js",
+        "SHA256":  "D55D34333ADE91F8954D443EDEDAC37877461E8CE253917DA75A96976356959F"
+    },
+    {
+        "File":  "src\\admin\\StudentSupport.jsx",
+        "SHA256":  "F80D8A2A67B2A048097AB3F85FE2C338901692137D21CBC740414DDEF321B127"
+    },
+    {
+        "File":  "src\\admin\\student-support.css",
+        "SHA256":  "642CFE071077729046729E987E691091EBDEFCE113FC4FA2D8AE1E508C5866A4"
+    },
+    {
+        "File":  "src\\admin\\Form2Management.jsx",
+        "SHA256":  "BB8CF46C295A8BE85113851E1579CAE9D07455E241E2935F775FF8DC2A25FE11"
+    },
+    {
+        "File":  "src\\documentation\\DocumentationViewer.jsx",
+        "SHA256":  "C999913548E4C835C2104BE3EF87B5020B94A5FDF4CCD53CCA17D8EEADFC38C9"
+    },
+    {
+        "File":  "src\\admin\\form2Export.js",
+        "SHA256":  "070489F718A23CEAB339EC806E680BDEDE0207DF16F49F56FE1D0C45DE6ED304"
+    },
+    {
+        "File":  "src\\documentation\\DocumentationImage.jsx",
+        "SHA256":  "4A62329A0231B81D5C72BD2C70AD56BE6F2D09D8206FBE4B362F4E510DB38FC9"
+    },
+    {
+        "File":  "src\\admin\\form2-management.css",
+        "SHA256":  "1E98F8EA336EB1A82A8DA21CA112297A56E304587BB63186DD53A5C92274856F"
+    },
+    {
+        "File":  "src\\documentation\\DocumentationGallery.jsx",
+        "SHA256":  "26589EFEAC259892E726A9F6457E1E07CA50D7FF0CB967E4433FA262863516D7"
+    },
+    {
+        "File":  "src\\admin\\DocumentationManagement.jsx",
+        "SHA256":  "9F9A283AE15F8E2279901743D8E5FA873B601521E0257E9CA9124C2FE1C80521"
+    },
+    {
+        "File":  "src\\documentation\\documentation.css",
+        "SHA256":  "8396DB2F2A0995D0767CD24EBEBA8ECB59F20C55034A9B2FED927342DB578087"
+    },
+    {
+        "File":  "src\\admin\\documentation-management.css",
+        "SHA256":  "0F153857AB23A12CA3F2448129E8131E6DFEA2810AD65BBBA807DC5576616E15"
+    },
+    {
+        "File":  "src\\documentation\\api.js",
+        "SHA256":  "11475986CD3EECC74A218FA0A8AB61D7F4A8966938BE59A762DCEE2390CFA084"
+    },
+    {
+        "File":  "src\\admin\\BillingManagement.jsx",
+        "SHA256":  "8614189782AA2D1B562170306A566A65AA54B578001151638395465225D8F278"
+    },
+    {
+        "File":  "src\\admin\\billingExport.js",
+        "SHA256":  "AD9FAC686BF1B65E453CE5332B866B2159387471F9768D28850C101F18FAB35C"
+    },
+    {
+        "File":  "src\\admin\\billing-management.css",
+        "SHA256":  "88996D2E827771FCD286E5B67CB8335A306C3D95E512FAAC6818F2240AE246E5"
+    },
+    {
+        "File":  "src\\admin\\AdminSidebar.jsx",
+        "SHA256":  "69AB5A110C273088DCA6E4C83D44C0B3EF32E4C82B834BC1AA299A28461BA5C3"
+    },
+    {
+        "File":  "src\\admin\\admin.jsx",
+        "SHA256":  "93A2187095666F39FB23B01C3E22DB19D11A18575F0F84C5F58576137D136777"
+    },
+    {
+        "File":  "src\\admin\\admin-sidebar.css",
+        "SHA256":  "798CE4A9429296A8728A0DD5F6FCA7251369B753C66C843707EB8E653B0ABFF6"
+    },
+    {
+        "File":  "src\\components\\useFileOperation.js",
+        "SHA256":  "A014382598D06D132583AC48F2633EA485853D445A442C7056268DEB4741A173"
+    },
+    {
+        "File":  "src\\components\\transfer.js",
+        "SHA256":  "513AA91609F75B15BF12C61508B869D257BA0F5F577D09810D5E932304409A6A"
+    },
+    {
+        "File":  "src\\components\\IBACMILoader.jsx",
+        "SHA256":  "00C0FE0FB3DFF222C5B0F17FEB079B2E5CA40DD9A067E274477FA1BB665A5846"
+    },
+    {
+        "File":  "src\\components\\ibacmi-loader.css",
+        "SHA256":  "1F085D74F27AE5AB4F7FDA96544676FB5AF1C8015CE4A91CB9C74D4A1B990195"
+    },
+    {
+        "File":  "src\\components\\FileOperationDialog.jsx",
+        "SHA256":  "8948951C48B2FFD41C5598F088A2B37235A1E4517ACBB50C273043C153781A27"
+    }
+]

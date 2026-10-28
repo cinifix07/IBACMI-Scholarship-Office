@@ -1,0 +1,23 @@
+.ibacmi-server-error{box-sizing:border-box;width:min(460px,94vw);max-height:calc(100dvh - 24px);overflow-y:auto;padding:clamp(24px,5vw,34px);border:1px solid #fff;border-radius:26px;background:#fffaf7;color:#63342c;box-shadow:12px 12px 42px #49302b40,-5px -5px 20px #ffffff50;font-family:'Hanken Grotesk',system-ui,sans-serif;animation:ibacmi-error-enter .18s ease-out}
+.ibacmi-server-error *{box-sizing:border-box}
+.ibacmi-server-error::backdrop{background:#2e212380;backdrop-filter:blur(4px)}
+.ibacmi-server-error__brand{display:flex;align-items:center;gap:12px;margin-bottom:26px}
+.ibacmi-server-error__brand img{width:56px;height:56px;object-fit:contain}
+.ibacmi-server-error__brand div{display:grid;gap:3px}
+.ibacmi-server-error__brand strong{font-size:17px;color:#742e35}
+.ibacmi-server-error__brand span{font-size:12px;color:#887168}
+.ibacmi-server-error__symbol{display:grid;place-items:center;width:76px;height:76px;margin-bottom:24px;border-radius:23px;color:#be6329;background:linear-gradient(145deg,#fff3e3,#f4e1d0);box-shadow:5px 5px 13px #e8d5c7,-5px -5px 13px #fff;animation:ibacmi-disconnected 3s ease-in-out infinite}
+.ibacmi-server-error__symbol svg{width:43px;height:43px}
+.ibacmi-server-error__eyebrow{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a14c26}
+.ibacmi-server-error h2{font-size:clamp(24px,5vw,29px);line-height:1.2;letter-spacing:-.025em;color:#742e35;margin:10px 0 14px}
+.ibacmi-server-error p{font-size:14px;line-height:1.75;margin:0 0 25px;color:#7c635b;overflow-wrap:anywhere}
+.ibacmi-server-error__actions{display:grid;gap:10px}
+.ibacmi-server-error__actions + .ibacmi-server-error__actions{margin-top:10px}
+.ibacmi-server-error__actions button{width:100%;min-height:46px;padding:12px 16px;border-radius:13px;font:700 14px 'Hanken Grotesk',system-ui,sans-serif;cursor:pointer}
+.ibacmi-server-error__primary{border:1px solid #d66821;background:linear-gradient(135deg,#ef8c39,#d56724);color:#fff;box-shadow:4px 4px 11px #dcb89a50}
+.ibacmi-server-error__secondary{border:1px solid #e5d4ca;background:#fffaf7;color:#783d2c}
+.ibacmi-server-error button:focus-visible{outline:3px solid #e9b287;outline-offset:3px}
+.ibacmi-error-fallback{display:grid;place-content:center;min-height:65dvh;padding:28px;text-align:center;color:#785b50;background:#fcf9f8}
+@keyframes ibacmi-error-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes ibacmi-disconnected{50%{transform:translateY(-2px);opacity:.8}}
+@media(prefers-reduced-motion:reduce){.ibacmi-server-error,.ibacmi-server-error__symbol{animation:none}.ibacmi-server-error::backdrop{backdrop-filter:none}}

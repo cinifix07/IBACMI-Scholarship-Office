@@ -1,5 +1,7 @@
+import { userErrorMessage } from '../errors/errorBus.js'
+import IBACMILoader from '../components/IBACMILoader.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from '../errors/convex.js'
 import { api } from '../../convex/_generated/api'
 import quickActionsData from '../../data.json'
 import ibacmiLogo from '../assets/IBACMI.png'
@@ -8,6 +10,7 @@ import VisitorSupport from './VisitorSupport'
 import AccountVerification from './AccountVerification'
 import DocumentationGallery from '../documentation/DocumentationGallery'
 import './lan.css'
+import { DEGREE_PROGRAMS } from '../../convex/studentProfileRules'
 
 function StatusBadge({ status, tone }) {
   return (
@@ -151,15 +154,7 @@ const motherPortalFields = [
   { label: 'Middle Name', name: 'motherMiddleName', autoComplete: 'additional-name' },
 ]
 
-const portalCourseOptions = [
-  'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
-  'BACHELOR OF SCIENCE IN ENTREPRENEURSHIP',
-  'BACHELOR OF SCIENCE IN CRIMINOLOGY',
-  'BACHELOR OF ELEMENTARY EDUCATION',
-  'BACHELOR OF EARLY CHILDHOOD EDUCATION',
-  'BACHELOR OF SCIENCE IN HOSPITALITY MANAGEMENT',
-  'BACHELOR OF PUBLIC ADMINISTRATION',
-]
+const portalCourseOptions = DEGREE_PROGRAMS
 
 const portalFormSteps = [
   'Student Information',
@@ -200,7 +195,7 @@ const contactPortalFields = [
   },
 ]
 
-function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
+function AllLanding({ initialSignIn = false, onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const granteeSearchRef = useRef(null)
   const [isAccountVerificationOpen, setIsAccountVerificationOpen] = useState(false)
   const [granteeSearchGuidance, setGranteeSearchGuidance] = useState('')
@@ -217,7 +212,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
   const [isUnifastPortalOpen, setIsUnifastPortalOpen] = useState(false)
   const [isGranteeQuestionOpen, setIsGranteeQuestionOpen] = useState(false)
-  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false)
+  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(initialSignIn)
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
   const [isSignUpOpen, setIsSignUpOpen] = useState(false)
   const [isPortalPrivacyOpen, setIsPortalPrivacyOpen] = useState(false)
@@ -539,6 +534,8 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     const result = await new Promise((resolve, reject) => {
       const request = new XMLHttpRequest()
       request.open('POST', uploadUrl)
+      request.timeout = 120000
+      request.ontimeout = () => reject(new Error('Document upload timed out. Please try again.'))
       request.setRequestHeader('Content-Type', 'application/pdf')
       request.upload.onprogress = (event) => {
         if (event.lengthComputable) setPortalUploadProgress((current) => ({ ...current, [documentKey]: Math.round((event.loaded / event.total) * 100) }))
@@ -583,7 +580,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
         <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); previewApplicantPdf(file) }}>Preview</button>
         <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeApplicantPdf(name) }}>Remove</button>
       </>}
-      {isSubmittingPortal && portalUploadProgress[name] !== undefined && <progress max="100" value={portalUploadProgress[name]} aria-label={`${name} upload progress`} />}
+      {isSubmittingPortal && portalUploadProgress[name] !== undefined && <IBACMILoader variant="compact" progress={portalUploadProgress[name]} message={portalUploadProgress[name] >= 100 ? "Saving uploaded document…" : "Uploading application document…"} />}
     </span>
   }
 
@@ -967,7 +964,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
     } catch (error) {
       setIsPortalPrivacyOpen(false)
       setPortalError(
-        error instanceof Error ? error.message : 'Unable to submit applicant information right now.',
+        userErrorMessage(error, 'Unable to submit applicant information right now.', 'landingpage.alllanding'),
       )
     } finally {
       setIsSubmittingPortal(false)
@@ -1186,7 +1183,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       )
     } catch (error) {
       setForgotPasswordError(
-        error instanceof Error ? error.message : 'Unable to request OTP right now.',
+        userErrorMessage(error, 'Unable to request OTP right now.', 'landingpage.alllanding'),
       )
     } finally {
       setIsRequestingOtp(false)
@@ -1273,7 +1270,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setAdminLoginPassword('')
     } catch (error) {
       setForgotPasswordError(
-        error instanceof Error ? error.message : 'Unable to change password right now.',
+        userErrorMessage(error, 'Unable to change password right now.', 'landingpage.alllanding'),
       )
     } finally {
       setIsChangingPassword(false)
@@ -1344,7 +1341,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       }
     } catch (error) {
       setAdminLoginError(
-        error instanceof Error ? error.message : 'Unable to login right now.',
+        userErrorMessage(error, 'Unable to login right now.', 'landingpage.alllanding'),
       )
     } finally {
       setIsSubmittingAdminLogin(false)
@@ -1504,7 +1501,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
       setQuickActionSuccess('Your request has been submitted.')
     } catch (error) {
       setQuickActionError(
-        error instanceof Error ? error.message : 'Unable to submit your request right now.',
+        userErrorMessage(error, 'Unable to submit your request right now.', 'landingpage.alllanding'),
       )
     } finally {
       setIsSubmittingQuickAction(false)
@@ -1647,7 +1644,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                     {allInfoRecords === undefined && debouncedStudentIdSearch && (
                       <tr>
                         <td className="empty-state" colSpan={10}>
-                          Searching grantee record...
+                          <IBACMILoader variant="table" message="Fetching official grantee records…" />
                         </td>
                       </tr>
                     )}
@@ -1754,6 +1751,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
             </section>
           )}
 
+          {isPortalStatusLoading && <IBACMILoader variant="compact" message="Loading UniFAST information…" />}
           {isApplicantPortalOpen && <section className="portal-cta" aria-labelledby="portal-cta-title">
             <div className="portal-cta__icon" aria-hidden="true">
               <span className="material-symbols-outlined">assignment</span>
@@ -1787,9 +1785,9 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               onClick={openUnifastPortal}
               type="button"
             >
-              <span className="portal-status-dot" aria-hidden="true" />
+              {!isPortalStatusLoading && <span className="portal-status-dot" aria-hidden="true" />}
               {isPortalStatusLoading
-                ? 'CHECKING PORTAL'
+                ? <IBACMILoader variant="inline" message="Loading UniFAST information…" />
                 : isApplicantPortalOpen
                   ? 'PORTAL OPEN'
                   : 'PORTAL IS CLOSED'}
@@ -2495,7 +2493,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 onClick={handleConfirmPortalSubmit}
                 type="button"
               >
-                {isSubmittingPortal ? 'Submitting...' : 'I UNDERSTAND'}
+                {isSubmittingPortal ? <IBACMILoader variant="inline" message="Submitting your application…" /> : 'I UNDERSTAND'}
               </button>
             </div>
           </section>
@@ -2710,7 +2708,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </button>
 
               <button className="button" disabled={isSubmittingQuickAction} type="submit">
-                {isSubmittingQuickAction ? 'Submitting...' : 'Submit'}
+                {isSubmittingQuickAction ? <IBACMILoader variant="inline" message="Submitting your request…" /> : 'Submit'}
               </button>
             </div>
           </form>
@@ -2835,7 +2833,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </button>
 
               <button className="button" disabled={isSubmittingAdminLogin} type="submit">
-                {isSubmittingAdminLogin ? 'Logging in...' : 'Login'}
+                {isSubmittingAdminLogin ? <IBACMILoader variant="inline" message="Signing you in securely…" /> : 'Login'}
               </button>
             </div>
           </form>
@@ -2986,7 +2984,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
               </button>
 
               <button className="button" disabled={isRegisteringAccount} type="submit">
-                {isRegisteringAccount ? 'Registering...' : 'Register Now'}
+                {isRegisteringAccount ? <IBACMILoader variant="inline" message="Creating your student account…" /> : 'Register Now'}
               </button>
             </div>
           </form>
@@ -3123,7 +3121,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 onClick={handleRequestOtp}
                 type="button"
               >
-                {isRequestingOtp ? 'Sending OTP...' : isOtpRequested ? 'Resend OTP' : 'Send OTP'}
+                {isRequestingOtp ? <IBACMILoader variant="inline" message="Sending your verification code…" /> : isOtpRequested ? 'Resend OTP' : 'Send OTP'}
               </button>
 
               {isOtpRequested && (
@@ -3196,7 +3194,7 @@ function AllLanding({ onAdminLoginSuccess, onStudentRegistrationSuccess }) {
                 disabled={!isOtpRequested || isRequestingOtp || isChangingPassword}
                 type="submit"
               >
-                {isChangingPassword ? 'Changing Password...' : 'Change Password'}
+                {isChangingPassword ? <IBACMILoader variant="inline" message="Updating your password…" /> : 'Change Password'}
               </button>
             </div>
           </form>

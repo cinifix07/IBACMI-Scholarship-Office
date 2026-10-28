@@ -2,6 +2,7 @@ import { internal } from './_generated/api'
 import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
 import { archiveFields, archiveRecord } from './archiveHelpers'
+import { requireStudentOwnership, requireSchoolIdUpload } from './studentProfileAuth'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -26,7 +27,7 @@ function getSchoolIdUploadTimestamp(record) {
   return record.idFilesUploadedAt ?? record.uploadedAt ?? record._creationTime ?? 0
 }
 
-function shareSchoolIdUploadsAcrossDuplicates(records) {
+export function shareSchoolIdUploadsAcrossDuplicates(records) {
   const uploadByStudentAndYear = new Map()
 
   for (const record of records) {
@@ -68,9 +69,11 @@ function shareSchoolIdUploadsAcrossDuplicates(records) {
 
 export const listByStudentId = query({
   args: {
+    sessionToken: v.string(),
     studentId: v.string(),
   },
   handler: async (ctx, args) => {
+    await requireStudentOwnership(ctx, args.sessionToken, args.studentId)
     const studentId = args.studentId.trim()
     if (!studentId) return []
 
@@ -549,12 +552,15 @@ export const migrateStudentIdFilesToGoogleDrive = action({
 
 export const saveStudentIdUploads = mutation({
   args: {
+    sessionToken: v.string(),
     studentId: v.string(),
     schoolYear: v.optional(v.string()),
     frontIdStorageId: v.optional(v.id('_storage')),
     frontIdUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const account = await requireStudentOwnership(ctx, args.sessionToken, args.studentId)
+    await requireSchoolIdUpload(ctx, account, args.schoolYear)
     const studentId = args.studentId.trim().toLowerCase()
 
     if (!studentId) {

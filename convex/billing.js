@@ -18,7 +18,7 @@ async function configFor(ctx, period) {
   return ctx.db.query('billingConfigs').withIndex('by_period', q => q.eq('periodKey', periodKey(period))).first()
 }
 const clean = value => String(value ?? '').trim()
-const sourceVersion = record => previewVersion([record._id, record.studentId, record.tesAwardNumber, record.lastName, record.firstName, record.middleInitial, record.batchId, record.status, record.semester, record.schoolYear])
+const sourceVersion = record => previewVersion([record._id, record.studentId, record.tesAwardNumber, record.lastName, record.firstName, record.middleInitial, record.batchId, record.status, record.semester, record.schoolYear, ...(record.studentInformationUpdatedAt ? [record.studentInformationUpdatedAt] : [])])
 const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
 
 export const options = query({
@@ -147,7 +147,12 @@ export async function buildPreview(ctx, filters) {
       const candidates = await ctx.db.query('applicants').withIndex('by_student_id_application_year', q => q.eq('studentId', record.studentId).eq('applicationYear', filters.schoolYear)).take(2)
       if (candidates.length === 1) applicant = candidates[0]
     }
-    const details = profile || { lastName: record.lastName || '', firstName: record.firstName || '', middleInitial: record.middleInitial || '', campus: '', college: '', program: applicant?.course || '', yearLevel: applicant?.year || '', sex: applicant?.gender === 'Male' ? 'M' : applicant?.gender === 'Female' ? 'F' : '', birthDate: applicant?.birthDate || '', units: 0, zip: applicant?.zipCode || '', email: applicant?.emailAddress || '', phone: applicant?.mobileNumber || '', actualFees: 0, category: '', disabilityVerified: false, eligible: false, reviewNote: '' }
+    const details = profile ? { ...profile } : { lastName: record.lastName || '', firstName: record.firstName || '', middleInitial: record.middleInitial || '', campus: '', college: '', program: applicant?.course || '', yearLevel: applicant?.year || '', sex: applicant?.gender === 'Male' ? 'M' : applicant?.gender === 'Female' ? 'F' : '', birthDate: applicant?.birthDate || '', units: 0, zip: applicant?.zipCode || '', email: applicant?.emailAddress || '', phone: applicant?.mobileNumber || '', actualFees: 0, category: '', disabilityVerified: false, eligible: false, reviewNote: '' }
+    const account = record.studentInformationUpdatedAt ? await ctx.db.query('admins').withIndex('by_school_id', q => q.eq('schoolId', record.studentId)).first() : null
+    const student = account?.role === 'student' ? account.studentInformation : null
+    if (student && record.studentInformationUpdatedAt && (!profile || profile.sourceVersion !== sourceVersion(record))) {
+      Object.assign(details, { lastName: student.lastName, firstName: student.firstName, middleInitial: student.middleInitial, program: student.course, yearLevel: String(student.yearLevelCode), sex: student.sexCode === 0 ? 'M' : 'F', birthDate: student.birthDate, zip: student.zipCode, email: student.emailAddress, phone: account.phoneNumber || details.phone })
+    }
     for (const key of ['lastName', 'firstName', 'campus', 'college', 'program', 'yearLevel', 'zip']) if (!clean(details[key])) issues.push(`Missing ${key}.`)
     if (!['M','F'].includes(details.sex)) issues.push('Sex at birth must be M or F.')
     if (!validDate(details.birthDate) || details.birthDate > new Date().toISOString().slice(0, 10)) issues.push('Missing or invalid birthdate.')

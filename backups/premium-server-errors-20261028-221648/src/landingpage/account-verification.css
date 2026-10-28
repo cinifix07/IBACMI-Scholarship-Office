@@ -1,0 +1,52 @@
+.account-verification {
+  box-sizing: border-box;
+  width: min(500px, 94vw);
+  max-width: 94vw;
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: clamp(20px, 5vw, 32px);
+  overflow-y: auto;
+  border: 1px solid #fff;
+  border-radius: 24px;
+  background: #f6f7f9;
+  color: #1f2937;
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  box-shadow: 16px 20px 60px #1f293733, inset 1px 1px 0 #fff;
+}
+.account-verification::backdrop { background: #231a2366; backdrop-filter: blur(6px); }
+.account-verification[open] { animation: verification-appear 220ms ease-out; }
+.account-verification *, .account-verification *::before, .account-verification *::after { box-sizing: border-box; }
+.verification-topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.verification-brand { display: flex; align-items: center; gap: 12px; }
+.verification-brand img { width: 44px; height: 44px; object-fit: contain; }
+.verification-brand strong { display: block; color: #881337; font-size: 17px; letter-spacing: .05em; }
+.verification-brand div > span { display: block; margin-top: 3px; color: #64748b; font-size: 11px; }
+.account-verification button { font: inherit; cursor: pointer; }
+.verification-icon-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 10px; flex-shrink: 0; border: 1px solid #e5e7eb; border-radius: 14px; background: #f6f7f9; color: #881337; box-shadow: 3px 3px 8px #1f29370c, -3px -3px 8px #fff; }
+.verification-icon-button svg { width: 22px; height: 22px; }
+.verification-progress { display: flex; align-items: center; gap: 10px; margin: 28px 0; }
+.verification-progress > span { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #d5dae2; border-radius: 50%; color: #64748b; font-size: 12px; font-weight: 700; }
+.verification-progress > .is-current { border-color: #f97316; background: #fff1e6; color: #a64108; }
+.verification-progress > .is-complete { border-color: #881337; background: #881337; color: #fff; }
+.verification-progress > i { width: 30px; height: 1px; background: #d5dae2; }
+.verification-progress > p { margin: 0 0 0 auto; color: #64748b; font-size: 12px; }
+.verification-kicker { color: #881337; font-size: 10px; letter-spacing: .1em; font-weight: 800; text-transform: uppercase; }
+.verification-question h2 { margin: 10px 0 12px; font-size: clamp(23px, 5.8vw, 29px); line-height: 1.2; letter-spacing: -.03em; }
+.verification-question h2:focus { outline: none; }
+.verification-question > p { margin: 0; color: #64748b; font-size: 14px; line-height: 1.7; }
+.verification-options { display: grid; gap: 14px; margin-top: 26px; }
+.verification-option { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 62px; padding: 15px 16px; border: 1px solid #e5e7eb; border-radius: 16px; color: #374151; background: #f6f7f9; box-shadow: 5px 5px 12px #1f29370c, -5px -5px 12px #fff; text-align: left; font-weight: 700 !important; font-size: 14px !important; transition: box-shadow 180ms ease, background 180ms ease; }
+.verification-option svg { width: 24px; height: 24px; flex: 0 0 24px; }
+.verification-option > span:last-child { margin-left: auto; }
+.verification-option--primary { border-color: #e9660d; color: #fff; background: #c94c08; box-shadow: 4px 5px 12px #c94c0829, inset 0 1px 0 #ffffff38; }
+.verification-option:hover { background: #fff; box-shadow: inset 2px 2px 6px #1f293712, inset -2px -2px 6px #fff; }
+.verification-option--primary:hover { background: #ad3d03; box-shadow: inset 2px 2px 6px #6b27042b; }
+.verification-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 24px; margin-top: 28px; border-top: 1px solid #e5e7eb; }
+.verification-back { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; color: #881337; background: transparent; font-size: 13px !important; font-weight: 700 !important; }
+.verification-footer > span { color: #64748b; font-size: 10px; }
+.account-verification button:focus-visible { outline: 3px solid #881337; outline-offset: 3px; }
+.grantee-verification-guidance { padding: 14px 18px; margin: 0 0 20px; border: 1px solid #f1c6a3; border-radius: 14px; background: #fff4e9; color: #7e3412; font-size: 14px; line-height: 1.6; }
+.registration-help { padding: 14px; border: 1px solid #e5e7eb; border-radius: 12px; color: #584237; font-size: 12px; line-height: 1.6; }
+.registration-help p { margin: 8px 0 0; }
+@keyframes verification-appear { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .account-verification[open] { animation: none; } .verification-option { transition: none; } }

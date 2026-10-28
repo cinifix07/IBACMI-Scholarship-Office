@@ -1,0 +1,130 @@
+﻿[
+    {
+        "File":  "index.html",
+        "SHA256":  "E19992CA279BF27C0FB5020E5115AFD153342500D12825B3B8F98C36C39584F2"
+    },
+    {
+        "File":  "src/main.jsx",
+        "SHA256":  "C52797D1A0480B23CE0B5066E5105B3709EB5CA0CFF66594036B9564098C1E7E"
+    },
+    {
+        "File":  "src/App.jsx",
+        "SHA256":  "14B28F3612A2F700685F5B3FA6AA7EE2EE9996F2FDC74A657B87B00131487593"
+    },
+    {
+        "File":  "src/ErrorBoundary.jsx",
+        "SHA256":  "C5FEC4EEE65846D0FEDD91B96EC056C82832588FFFE2AA367118DB4EBF15BE88"
+    },
+    {
+        "File":  "src/index.css",
+        "SHA256":  "6774D3B1A7EFD8C7AE3BE4A4CEC83FFC9D08DA571A110C1C6BB310D85514DB1B"
+    },
+    {
+        "File":  "src/assets/IBACMI.png",
+        "SHA256":  "57F244049E0D1B4E581FEFC1E3FE18E4D5465F92284C5829A851C4D9751C7DDC"
+    },
+    {
+        "File":  "public/IBACMI.png",
+        "SHA256":  "57F244049E0D1B4E581FEFC1E3FE18E4D5465F92284C5829A851C4D9751C7DDC"
+    },
+    {
+        "File":  "src/student/student.jsx",
+        "SHA256":  "61343D95FF1598DA8BED7019B17DA7B2BD72441F070AAA36DE94DC740A4E15C9"
+    },
+    {
+        "File":  "src/student/student.css",
+        "SHA256":  "37C6BF2F5D5ECC973084D75446D459FECC397480B526BB2145F6998731F1FA20"
+    },
+    {
+        "File":  "src/student/ProfileCompletion.jsx",
+        "SHA256":  "F9F9590294020403A0ECFB622D0A0CA3187F00CDEFE42B5AA157D70FAB8CB98B"
+    },
+    {
+        "File":  "src/student/StudentInbox.jsx",
+        "SHA256":  "C0EF60EF951C2C8D6F80A394949030104C052F7385D1238360426F44C69C7C08"
+    },
+    {
+        "File":  "src/landingpage/alllanding.jsx",
+        "SHA256":  "28C930BC2197D8CD5DBB74158BBDF3026B9702DCBFCEDD8710176C0CA22080C5"
+    },
+    {
+        "File":  "src/landingpage/lan.css",
+        "SHA256":  "E3958C110E795D9BC05DEB6AE5104BF159109F43EDF134DB594859A2DBFF7B2B"
+    },
+    {
+        "File":  "src/landingpage/VisitorSupport.jsx",
+        "SHA256":  "FACAB24AE7B1FD5D76867CB3927E8CA2EBEF8150A760687B8918DAD18D5288BF"
+    },
+    {
+        "File":  "src/landingpage/visitor-support.css",
+        "SHA256":  "CB4BA74D18D7D410F7826CAC9E6748929BCF48C58A0109437A0ED93E77E0367B"
+    },
+    {
+        "File":  "src/landingpage/AccountVerification.jsx",
+        "SHA256":  "2C66FB830AAA9671F2C56467AE0DF23B0BDD4BCA7EF599FD37C791E8895FE7DD"
+    },
+    {
+        "File":  "src/admin/admin.jsx",
+        "SHA256":  "D11AF2D8A46033D2B572C95F1F6FB6D2599BA3F03FC1E39666D314326FBCC248"
+    },
+    {
+        "File":  "src/admin/StudentSupport.jsx",
+        "SHA256":  "FEBD6BD5A24AC00A3C05ACF06582CD9F546AC72E27F690470C4FAD5AF07598A5"
+    },
+    {
+        "File":  "src/admin/student-support.css",
+        "SHA256":  "642CFE071077729046729E987E691091EBDEFCE113FC4FA2D8AE1E508C5866A4"
+    },
+    {
+        "File":  "src/admin/BillingManagement.jsx",
+        "SHA256":  "F6F54C4C9A6B00D9158D486E5076674F472BC13EEE376761CCCDDD481E66FE14"
+    },
+    {
+        "File":  "src/admin/billing-management.css",
+        "SHA256":  "88996D2E827771FCD286E5B67CB8335A306C3D95E512FAAC6818F2240AE246E5"
+    },
+    {
+        "File":  "src/admin/billingExport.js",
+        "SHA256":  "9E7CD51E3E4C2AA2B68C8F01E8ADAE7217832952F146E86ACBFB89C4D6C327B9"
+    },
+    {
+        "File":  "src/admin/Form2Management.jsx",
+        "SHA256":  "FD8C14EF8668193BED5C73949886DE2C65760FE30C730935D13A99FEE17EAD95"
+    },
+    {
+        "File":  "src/admin/form2-management.css",
+        "SHA256":  "1E98F8EA336EB1A82A8DA21CA112297A56E304587BB63186DD53A5C92274856F"
+    },
+    {
+        "File":  "src/admin/form2Export.js",
+        "SHA256":  "73F2F49BF008566B07D28FB6C2F05F1EB5A91E10D17F8AB56B99F857225CABD7"
+    },
+    {
+        "File":  "src/admin/DocumentationManagement.jsx",
+        "SHA256":  "D1076B9CED15A810FEB51F4E21EEE55D3DA6CECA0E885595A189CE035BBD73F7"
+    },
+    {
+        "File":  "src/admin/documentation-management.css",
+        "SHA256":  "0F153857AB23A12CA3F2448129E8131E6DFEA2810AD65BBBA807DC5576616E15"
+    },
+    {
+        "File":  "src/documentation/DocumentationGallery.jsx",
+        "SHA256":  "A4D3D0DB2B9A32946825B0C9C3F0D27162F8105252ADDAD5C002B0B6006CE61B"
+    },
+    {
+        "File":  "src/documentation/DocumentationImage.jsx",
+        "SHA256":  "36051BFB8C07D6E478022FAF55F329DFBF9A4CA80F101234376CE19C7A72FDF3"
+    },
+    {
+        "File":  "src/documentation/DocumentationViewer.jsx",
+        "SHA256":  "C999913548E4C835C2104BE3EF87B5020B94A5FDF4CCD53CCA17D8EEADFC38C9"
+    },
+    {
+        "File":  "src/documentation/api.js",
+        "SHA256":  "11475986CD3EECC74A218FA0A8AB61D7F4A8966938BE59A762DCEE2390CFA084"
+    },
+    {
+        "File":  "src/documentation/documentation.css",
+        "SHA256":  "8396DB2F2A0995D0767CD24EBEBA8ECB59F20C55034A9B2FED927342DB578087"
+    }
+]
