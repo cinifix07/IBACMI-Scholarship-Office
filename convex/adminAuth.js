@@ -2,6 +2,8 @@ import { v } from 'convex/values'
 import { archiveRecord } from './archiveHelpers'
 import { mutation, query } from './_generated/server'
 import { requireStudentOwnership, requireProfileEditable } from './studentProfileAuth'
+import { requireAdmin } from './billing'
+import { studentAccountView } from './studentAccountRules'
 
 async function logActivity(ctx, log) {
   await ctx.db.insert('activityLogs', {
@@ -26,36 +28,35 @@ function generateOtp() {
 }
 
 export const listStudentAccounts = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { sessionToken: v.string() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.sessionToken)
     const admins = await ctx.db
       .query('admins')
       .withIndex('by_role', (queryBuilder) => queryBuilder.eq('role', 'student'))
       .collect()
 
-    return admins.map((admin) => ({
-      id: admin._id,
-      email: admin.email,
-      schoolId: admin.schoolId ?? '',
-      phoneNumber: admin.phoneNumber ?? '',
-      currentAddress: admin.currentAddress ?? '',
-      facebookProfileUrl: admin.facebookProfileUrl ?? '',
-      name: admin.name,
-      role: admin.role,
-      status: admin.status,
-      createdAt: admin.createdAt ?? null,
-      updatedAt: admin.updatedAt ?? null,
+    return Promise.all(admins.map(async account => {
+      const studentId = account.schoolId?.trim()
+      if (!studentId) return studentAccountView(account)
+      const [records, applicants] = await Promise.all([
+        ctx.db.query('allinfo').withIndex('by_student_id', q => q.eq('studentId', studentId)).collect(),
+        ctx.db.query('applicants').withIndex('by_student_id_application_year', q => q.eq('studentId', studentId)).collect(),
+      ])
+      return studentAccountView(account, records, applicants)
     }))
   },
 })
 
 export const updateStudentAccount = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.id('admins'),
     email: v.string(),
     phoneNumber: v.string(),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.sessionToken)
     const account = await ctx.db.get(args.id)
     const email = args.email.trim().toLowerCase()
     const phoneNumber = normalizePhoneNumber(args.phoneNumber)
@@ -99,8 +100,9 @@ export const updateStudentAccount = mutation({
 })
 
 export const deleteStudentAccount = mutation({
-  args: { id: v.id('admins') },
+  args: { id: v.id('admins'), sessionToken: v.string() },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.sessionToken)
     const account = await ctx.db.get(args.id)
 
     if (!account || account.role !== 'student') {

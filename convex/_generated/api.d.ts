@@ -28,6 +28,7 @@ import type * as http from "../http.js";
 import type * as noIdList from "../noIdList.js";
 import type * as noIdRules from "../noIdRules.js";
 import type * as quickActions from "../quickActions.js";
+import type * as studentAccountRules from "../studentAccountRules.js";
 import type * as studentProfile from "../studentProfile.js";
 import type * as studentProfileAuth from "../studentProfileAuth.js";
 import type * as studentProfileRules from "../studentProfileRules.js";
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   noIdList: typeof noIdList;
   noIdRules: typeof noIdRules;
   quickActions: typeof quickActions;
+  studentAccountRules: typeof studentAccountRules;
   studentProfile: typeof studentProfile;
   studentProfileAuth: typeof studentProfileAuth;
   studentProfileRules: typeof studentProfileRules;

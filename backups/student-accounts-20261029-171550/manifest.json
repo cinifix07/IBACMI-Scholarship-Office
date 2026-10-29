@@ -1,0 +1,42 @@
+﻿[
+    {
+        "Path":  "src/admin/admin.jsx",
+        "SHA256":  "5057AE5D2C810228B801F292260AD5361533FE3F563DA09ED3E64F46DA0A8382"
+    },
+    {
+        "Path":  "src/admin/AdminSidebar.jsx",
+        "SHA256":  "AE85F2CC35EA279127A9DCDC896C4B368D8F6E2995C71301F75D00C64DD4AC80"
+    },
+    {
+        "Path":  "src/errors/convex.js",
+        "SHA256":  "74A15CD8D13F6B22888CFF6ADC3B101D32D969380731C8A3A8908F1214A8441B"
+    },
+    {
+        "Path":  "convex/adminAuth.js",
+        "SHA256":  "87D9EAC80AE452941EFC48B86362022377A3F19BAC54DBD543268B936A7F686C"
+    },
+    {
+        "Path":  "convex/schema.js",
+        "SHA256":  "A84AD28935627348B6036320BF9FB4262787FB326EDEA003FF4CB188533754FE"
+    },
+    {
+        "Path":  "convex/studentProfile.js",
+        "SHA256":  "6DE49C7531C375730E81D3AEAFAACA738982435E520D955D92BD66CF9A21EE84"
+    },
+    {
+        "Path":  "convex/studentProfileRules.js",
+        "SHA256":  "71091FED4F676C89125EE18BB5F7E1BE03437497BD96BF568CB57329E62E703E"
+    },
+    {
+        "Path":  "convex/studentProfileAuth.js",
+        "SHA256":  "4AD62F94DA2CFC242A86BE83678B4E57E1017D5A4566EF0B3448C49744BDD8A8"
+    },
+    {
+        "Path":  "convex/billing.js",
+        "SHA256":  "59ACE4712964F1F97DEE0F068B67E6E7FA707CC3E2DCD4BE10EF84292E147CA4"
+    },
+    {
+        "Path":  "convex/_generated/api.d.ts",
+        "SHA256":  "22671679FA7D6CE9886C8CE965487595BCC296A1A6D74C46418760EAFAFBAA8A"
+    }
+]

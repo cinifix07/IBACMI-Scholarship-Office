@@ -14,6 +14,8 @@ import StudentSupport from './StudentSupport.jsx'
 import DownloadBatchModal from './DownloadBatchModal.jsx'
 import NoIdListModal from './NoIdListModal.jsx'
 import ValidationManagement from './ValidationManagement.jsx'
+import StudentAccountDetails, { StudentAccountIcon } from './StudentAccountDetails.jsx'
+import './student-accounts.css'
 
 const granteesPerPage = 5
 const usersPerPage = 5
@@ -492,6 +494,7 @@ function Admin({ adminSession, onLogout }) {
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false)
   const [selectedUser, setSelectedUser] = useState(null)
+  const [viewUserId, setViewUserId] = useState(null)
   const [userToDelete, setUserToDelete] = useState(null)
   const [userForm, setUserForm] = useState({ email: '', phoneNumber: '' })
   const [userMessage, setUserMessage] = useState('')
@@ -569,7 +572,7 @@ function Admin({ adminSession, onLogout }) {
     adminSession?.sessionToken ? { sessionToken: adminSession.sessionToken } : 'skip',
   )
   const applicantPortal = useQuery(api.applicantPortal.get)
-  const studentAccounts = useQuery(api.adminAuth.listStudentAccounts)
+  const studentAccounts = useQuery(api.adminAuth.listStudentAccounts, adminSession?.sessionToken ? { sessionToken: adminSession.sessionToken } : 'skip')
   const setReceivingApplicants = useMutation(api.applicantPortal.setReceivingApplicants)
   const createAllInfoRecords = useMutation(api.allinfo.bulkCreate)
   const updateAllInfoRecord = useMutation(api.allinfo.update)
@@ -939,6 +942,12 @@ function Admin({ adminSession, onLogout }) {
     return studentAccountRows.filter((account) => {
       return [
         account.schoolId,
+        account.lastName,
+        account.firstName,
+        account.middleName,
+        account.completeName,
+        [account.lastName, account.firstName, account.middleName].filter(Boolean).join(' '),
+        account.currentAddress,
         account.email,
         account.phoneNumber,
         account.facebookProfileUrl,
@@ -1825,6 +1834,7 @@ function Admin({ adminSession, onLogout }) {
 
     try {
       const result = await updateStudentAccount({
+        sessionToken: adminSession?.sessionToken,
         id: selectedUser.id,
         email: userForm.email,
         phoneNumber: userForm.phoneNumber,
@@ -1851,7 +1861,7 @@ function Admin({ adminSession, onLogout }) {
     setUserMessage('')
 
     try {
-      const result = await deleteStudentAccount({ id: userToDelete.id })
+      const result = await deleteStudentAccount({ id: userToDelete.id, sessionToken: adminSession?.sessionToken })
 
       if (!result.success) {
         setUserMessage(result.message)
@@ -4499,21 +4509,21 @@ function Admin({ adminSession, onLogout }) {
                 onClick={() => setIsUserManagementOpen(false)}
                 type="button"
               >
-                <span className="material-symbols-outlined">close</span>
+                <StudentAccountIcon name="close" />
               </button>
             </div>
 
             {userMessage && <p className="admin-user-message" role="status">{userMessage}</p>}
 
             <div className="admin-search-field admin-user-search">
-              <span className="material-symbols-outlined">search</span>
+              <StudentAccountIcon name="search" />
               <input
                 aria-label="Search student accounts"
                 onChange={(event) => {
                   setUserSearchQuery(event.target.value)
                   setCurrentUserPage(1)
                 }}
-                placeholder="Search Student ID, email, phone, or Facebook link"
+                placeholder="Search Student ID, Name, Address, Email, Phone, or Facebook..."
                 type="search"
                 value={userSearchQuery}
               />
@@ -4525,6 +4535,10 @@ function Admin({ adminSession, onLogout }) {
                   <tr>
                     <th>No.</th>
                     <th>Student ID</th>
+                    <th>Last Name</th>
+                    <th>First Name</th>
+                    <th>Middle Name</th>
+                    <th>Complete Permanent Address</th>
                     <th>Email Address</th>
                     <th>Phone Number</th>
                     <th>Facebook Profile</th>
@@ -4533,22 +4547,27 @@ function Admin({ adminSession, onLogout }) {
                 </thead>
                 <tbody>
                   {studentAccounts === undefined && (
-                    <tr><td className="admin-empty-state" colSpan={6}><IBACMILoader variant="table" message="Loading student accounts…" /></td></tr>
+                    <tr><td className="admin-empty-state" colSpan={10}><IBACMILoader variant="table" message="Loading student accounts…" /></td></tr>
                   )}
                   {studentAccounts !== undefined && filteredStudentAccountRows.length === 0 && (
-                    <tr><td className="admin-empty-state" colSpan={6}>No student accounts found.</td></tr>
+                    <tr><td className="admin-empty-state" colSpan={10}>No student accounts found.</td></tr>
                   )}
                   {currentUsers.map((user, index) => (
-                    <tr key={user.id}>
+                    <tr key={user.id} className="student-account-row" onClick={() => setViewUserId(user.id)}>
                       <td data-label="No.">{firstUserIndex + index + 1}</td>
-                      <td data-label="Student ID">{user.schoolId || 'Not provided'}</td>
-                      <td data-label="Email Address">{user.email}</td>
+                      <td data-label="Student ID"><button type="button" className="student-account-view" aria-label={`View student account ${user.schoolId || user.email}`} onClick={event => { event.stopPropagation(); setViewUserId(user.id) }}>{user.schoolId || 'Not provided'}</button></td>
+                      <td data-label="Last Name">{user.lastName || 'Not provided'}</td>
+                      <td data-label="First Name">{user.firstName || 'Not provided'}</td>
+                      <td data-label="Middle Name">{user.middleName || 'Not provided'}</td>
+                      <td data-label="Complete Permanent Address">{user.currentAddress || 'Not provided'}</td>
+                      <td data-label="Email Address">{user.email || 'Not provided'}</td>
                       <td data-label="Phone Number">{user.phoneNumber || 'Not provided'}</td>
                       <td data-label="Facebook Profile">
                         {user.facebookProfileUrl ? (
                           <a
                             className="admin-user-facebook-link"
                             href={user.facebookProfileUrl}
+                            onClick={event => event.stopPropagation()}
                             rel="noreferrer"
                             target="_blank"
                           >
@@ -4560,16 +4579,16 @@ function Admin({ adminSession, onLogout }) {
                       </td>
                       <td data-label="Actions">
                         <div className="admin-user-actions">
-                          <button aria-label={`Edit ${user.email}`} onClick={() => openEditUser(user)} type="button">
-                            <span className="material-symbols-outlined">edit</span>
+                          <button aria-label={`Edit ${user.email}`} onClick={event => { event.stopPropagation(); openEditUser(user) }} type="button">
+                            <StudentAccountIcon name="edit" />
                           </button>
                           <button
                             aria-label={`Delete ${user.email}`}
                             className="admin-user-action--delete"
-                            onClick={() => { setUserToDelete(user); setUserMessage('') }}
+                            onClick={event => { event.stopPropagation(); setUserToDelete(user); setUserMessage('') }}
                             type="button"
                           >
-                            <span className="material-symbols-outlined">delete</span>
+                            <StudentAccountIcon name="delete" />
                           </button>
                         </div>
                       </td>
@@ -4580,10 +4599,10 @@ function Admin({ adminSession, onLogout }) {
             </div>
 
             <div className="admin-pagination admin-user-pagination">
-              <p>Showing <strong>{userShowingStart}</strong> to <strong>{userShowingEnd}</strong> of <strong>{filteredStudentAccountRows.length}</strong> users</p>
+              <p>Showing <strong>{userShowingStart}</strong> to <strong>{userShowingEnd}</strong> of <strong>{filteredStudentAccountRows.length}</strong> matching users · <strong>{studentAccountRows.length}</strong> total</p>
               <div className="admin-pagination__buttons">
                 <button aria-label="Previous users page" disabled={activeUserPage === 1 || filteredStudentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage - 1)} type="button">
-                  <span className="material-symbols-outlined">chevron_left</span>
+                  <StudentAccountIcon name="previous" />
                 </button>
                 {userPaginationItems.map((pageItem) => typeof pageItem === 'string' ? (
                   <span className="admin-pagination__ellipsis" key={pageItem}>...</span>
@@ -4591,13 +4610,15 @@ function Admin({ adminSession, onLogout }) {
                   <button className={activeUserPage === pageItem ? 'admin-page-button--active' : undefined} disabled={filteredStudentAccountRows.length === 0} key={pageItem} onClick={() => setCurrentUserPage(pageItem)} type="button">{pageItem}</button>
                 ))}
                 <button aria-label="Next users page" disabled={activeUserPage === totalUserPages || filteredStudentAccountRows.length === 0} onClick={() => setCurrentUserPage(activeUserPage + 1)} type="button">
-                  <span className="material-symbols-outlined">chevron_right</span>
+                  <StudentAccountIcon name="next" />
                 </button>
               </div>
             </div>
           </section>
         </div>
       )}
+
+      {viewUserId && studentAccountRows.some(user => user.id === viewUserId) && <StudentAccountDetails user={studentAccountRows.find(user => user.id === viewUserId)} onClose={() => setViewUserId(null)} onEdit={user => { setViewUserId(null); openEditUser(user) }} onDelete={user => { setViewUserId(null); setUserToDelete(user); setUserMessage('') }} />}
 
       {selectedUser && (
         <div aria-labelledby="admin-edit-user-title" aria-modal="true" className="admin-modal-overlay admin-modal-overlay--nested" role="dialog">

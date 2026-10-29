@@ -7,6 +7,7 @@ import { reportError, resolveError } from './errorBus.js'
 import { safeErrorMessage, validSessionToken } from './errorPolicy.js'
 
 const protectedQueries = new Set([
+  'adminAuth:listStudentAccounts',
   'validation:options', 'validation:history',
   'batchExport:options',
   'noIdList:options',
